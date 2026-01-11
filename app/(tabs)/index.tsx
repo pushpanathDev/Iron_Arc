@@ -1,98 +1,319 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { router } from "expo-router";
+import { collection, getDocs, limit, orderBy, query } from "firebase/firestore";
+import { useEffect, useState } from "react";
+import { ScrollView, Text, View } from "react-native";
+import AnimatedCardWrapper from "../../components/ui/AnimatedCardWrapper";
+import Card from "../../components/ui/Card";
+import PrimaryButton from "../../components/ui/PrimaryButton";
+import StatChip from "../../components/ui/StatChip";
+import { firestoreDb } from "../../src/firebase/config";
+import { useTheme } from "../../src/theme/theme";
+import {
+  getWeeklyWorkoutStats,
+  getWorkoutStreak,
+} from "../../src/utils/weeklyStats";
+import {
+  calculateWeeklyReps,
+  calculateWorkoutStreak,
+} from "../../src/utils/workoutStats";
+import * as WebBrowser from "expo-web-browser";
+WebBrowser.maybeCompleteAuthSession();
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
 
-export default function HomeScreen() {
+export default function Home() {
+  const { colors, spacing } = useTheme();
+  const [totalWorkouts, setTotalWorkouts] = useState(0);
+  const [lastWorkoutDate, setLastWorkoutDate] = useState<string | null>(null);
+  const [lastWeight, setLastWeight] = useState<number | null>(null);
+  const [weeklyReps, setWeeklyReps] = useState(0);
+  const [streak, setStreak] = useState<number>(0);
+  const [weightTrend, setWeightTrend] = useState<number[]>([]);
+  const [weeklyStats, setWeeklyStats] = useState<{
+    workouts: number;
+    sets: number;
+    reps: number;
+    volume: number;
+  } | null>(null);
+  const loadWeeklyStats = async () => {
+    const stats = await getWeeklyWorkoutStats();
+    setWeeklyStats(stats);
+  };
+
+  const loadStreak = async () => {
+    const count = await getWorkoutStreak();
+    setStreak(count);
+  };
+
+  useEffect(() => {
+    fetchWorkoutStats();
+    fetchWeightStats();
+    loadWeeklyStats();
+    loadStreak();
+  }, []);
+
+  const fetchWorkoutStats = async () => {
+    const q = query(collection(firestoreDb, "workouts"), orderBy("createdAt", "desc"));
+
+    const snapshot = await getDocs(q);
+    const workouts = snapshot.docs.map((doc) => doc.data());
+
+    setTotalWorkouts(workouts.length);
+
+    if (workouts.length > 0) {
+      setLastWorkoutDate(workouts[0].date);
+    }
+
+    setWeeklyReps(calculateWeeklyReps(workouts));
+    setStreak(calculateWorkoutStreak(workouts));
+  };
+
+  const fetchWeightStats = async () => {
+    const q = query(
+      collection(firestoreDb, "bodyWeight"),
+      orderBy("weekStart", "desc"),
+      limit(6)
+    );
+
+    const snapshot = await getDocs(q);
+
+    if (!snapshot.empty) {
+      const data = snapshot.docs.map((doc) => doc.data()).reverse();
+
+      setLastWeight(data[data.length - 1].weight);
+
+      setWeightTrend(data.map((item) => item.weight));
+      console.log(
+        "Weight trend:",
+        data.map((i) => i.weight)
+      );
+    }
+  };
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+    <ScrollView
+      style={{
+        flex: 1,
+        backgroundColor: colors.background,
+        padding: spacing.md,
+      }}
+    >
+      {/* Welcome Header */}
+      <Text
+        style={{
+          fontSize: 28,
+          fontWeight: "700",
+          color: colors.textPrimary,
+          marginBottom: spacing.lg,
+        }}
+      >
+        Welcome to GymTracker 💪
+      </Text>
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+      {weeklyStats && (
+        <Card>
+          <Text
+            style={{
+              fontSize: 20,
+              fontWeight: "600",
+              color: colors.textPrimary,
+              marginBottom: spacing.sm,
+            }}
+          >
+            This Week
+          </Text>
+
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: spacing.sm,
+            }}
+          >
+            <StatChip
+              label="Workouts"
+              value={weeklyStats.workouts}
+              icon={
+                <Ionicons
+                  name="barbell-outline"
+                  size={16}
+                  color={colors.accent}
+                />
+              }
+            />
+
+            <StatChip
+              label="Sets"
+              value={weeklyStats.sets}
+              icon={
+                <Ionicons
+                  name="layers-outline"
+                  size={16}
+                  color={colors.accent}
+                />
+              }
+            />
+
+            <StatChip
+              label="Reps"
+              value={weeklyStats.reps}
+              icon={
+                <Ionicons
+                  name="repeat-outline"
+                  size={16}
+                  color={colors.accent}
+                />
+              }
+            />
+
+            {/* Streak chip */}
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                backgroundColor: colors.card,
+                paddingVertical: spacing.xs,
+                paddingHorizontal: spacing.sm,
+                borderRadius: 10,
+                gap: spacing.xs,
+              }}
+            >
+              <Ionicons
+                name="flame"
+                size={18}
+                color={streak > 0 ? "#FF6B00" : colors.textSecondary}
+              />
+              <Text
+                style={{
+                  fontSize: 16,
+                  fontWeight: "700",
+                  color: colors.textPrimary,
+                }}
+              >
+                {streak}
+              </Text>
+            </View>
+          </View>
+
+          {streak === 0 && (
+            <Text
+              style={{
+                marginTop: spacing.sm,
+                color: colors.textSecondary,
+                fontSize: 13,
+              }}
+            >
+              Log at least one workout this week to start your streak 🔥
+            </Text>
+          )}
+        </Card>
+      )}
+      <Text
+        style={{
+          color: colors.textSecondary,
+          fontSize: 16,
+          marginBottom: spacing.lg,
+        }}
+      >
+        Track your workouts, sets, and weekly body weight progress effortlessly.
+      </Text>
+
+      {/* Workout Stats Card */}
+      <AnimatedCardWrapper delay={0}>
+        <Card>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              marginBottom: spacing.sm,
+            }}
+          >
+            <Ionicons name="barbell-outline" size={24} color={colors.accent} />
+            <Text
+              style={{
+                fontSize: 20,
+                fontWeight: "600",
+                color: colors.textPrimary,
+                marginLeft: spacing.sm,
+              }}
+            >
+              Workouts
+            </Text>
+          </View>
+          <Text
+            style={{ color: colors.textSecondary, marginBottom: spacing.sm }}
+          >
+            Total: {totalWorkouts} | Last: {lastWorkoutDate ?? "-"}
+          </Text>
+          <PrimaryButton
+            title="Add Workout"
+            onPress={() => router.push("/add-workout")}
+          />
+          <PrimaryButton
+            title="View History"
+            onPress={() => router.push("/history")}
+          />
+        </Card>
+      </AnimatedCardWrapper>
+
+      {/* Body Weight Stats Card */}
+      <AnimatedCardWrapper delay={0}>
+        <Card>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              marginBottom: spacing.sm,
+            }}
+          >
+            <MaterialCommunityIcons
+              name="weight-lifter"
+              size={24}
+              color={colors.accent}
+            />
+            <Text
+              style={{
+                fontSize: 20,
+                fontWeight: "600",
+                color: colors.textPrimary,
+                marginLeft: spacing.sm,
+              }}
+            >
+              Body Weight
+            </Text>
+          </View>
+          <Text
+            style={{ color: colors.textSecondary, marginBottom: spacing.sm }}
+          >
+            Last logged: {lastWeight ?? "-"} kg
+          </Text>
+          <PrimaryButton
+            title="Add / Update Weight"
+            onPress={() => router.push("/body-weight")}
+          />
+        </Card>
+      </AnimatedCardWrapper>
+
+      {/* Motivational Card */}
+      <AnimatedCardWrapper delay={0}>
+        <Card>
+          <Text
+            style={{
+              fontSize: 18,
+              fontWeight: "600",
+              color: colors.accent,
+              marginBottom: spacing.sm,
+            }}
+          >
+            Keep pushing!
+          </Text>
+          <Text style={{ color: colors.textSecondary }}>
+            Consistency is key. Log your workouts regularly and watch your
+            progress.
+          </Text>
+        </Card>
+      </AnimatedCardWrapper>
+    </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
-});

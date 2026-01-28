@@ -1,6 +1,6 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { RefreshControl, ScrollView, Text, View } from "react-native";
 import Animated, { FadeInUp } from "react-native-reanimated";
 
 import Card from "../../components/ui/Card";
@@ -9,6 +9,7 @@ import MiniLineChart from "../../components/ui/MiniLineChart";
 import WorkoutBarChart, {
   WeeklyWorkoutBar,
 } from "../../components/ui/WorkoutBarChart";
+import { UserHeader } from "../../components/UserHeader";
 
 import { useAuth } from "../../src/auth/AuthContext";
 import { typography, useTheme } from "../../src/theme/theme";
@@ -26,6 +27,7 @@ export default function Analytics() {
   const [selectedWeek, setSelectedWeek] = useState<WeeklyWorkoutBar | null>(
     null,
   );
+  const [refreshing, setRefreshing] = useState(false);
 
   /* =========================
      RELOAD SQLITE (SAFE)
@@ -56,6 +58,18 @@ export default function Analytics() {
       reloadData();
     }, [reloadData]),
   );
+
+  /* =========================
+     PULL-TO-REFRESH
+     ========================= */
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await reloadData();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [reloadData]);
 
   /* =========================
      WORKOUT ANALYTICS
@@ -148,6 +162,9 @@ export default function Analytics() {
         backgroundColor: colors.background,
         padding: spacing.md,
       }}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+      }
     >
       {/* HEADER */}
       <Text
@@ -160,6 +177,9 @@ export default function Analytics() {
       >
         Analytics
       </Text>
+
+      {/* Show logged-in user */}
+      <UserHeader variant="subtle" />
 
       <Text
         style={{

@@ -1,12 +1,14 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import { collection, getDocs, limit, orderBy, query } from "firebase/firestore";
 import { useEffect, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { RefreshControl, ScrollView, Text, View } from "react-native";
 import AnimatedCardWrapper from "../../components/ui/AnimatedCardWrapper";
 import Card from "../../components/ui/Card";
 import PrimaryButton from "../../components/ui/PrimaryButton";
 import StatChip from "../../components/ui/StatChip";
+import { UserHeader } from "../../components/UserHeader";
 import { firestoreDb } from "../../src/firebase/config";
 import { useTheme } from "../../src/theme/theme";
 import {
@@ -17,9 +19,7 @@ import {
   calculateWeeklyReps,
   calculateWorkoutStreak,
 } from "../../src/utils/workoutStats";
-import * as WebBrowser from "expo-web-browser";
 WebBrowser.maybeCompleteAuthSession();
-
 
 export default function Home() {
   const { colors, spacing } = useTheme();
@@ -35,15 +35,7 @@ export default function Home() {
     reps: number;
     volume: number;
   } | null>(null);
-  const loadWeeklyStats = async () => {
-    const stats = await getWeeklyWorkoutStats();
-    setWeeklyStats(stats);
-  };
-
-  const loadStreak = async () => {
-    const count = await getWorkoutStreak();
-    setStreak(count);
-  };
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     fetchWorkoutStats();
@@ -52,8 +44,38 @@ export default function Home() {
     loadStreak();
   }, []);
 
+  const loadStreak = async () => {
+    const count = await getWorkoutStreak();
+    setStreak(count);
+  };
+
+  const loadWeeklyStats = async () => {
+    const stats = await getWeeklyWorkoutStats();
+    setWeeklyStats(stats);
+  };
+
+  /* =========================
+     PULL-TO-REFRESH
+     ========================= */
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        fetchWorkoutStats(),
+        fetchWeightStats(),
+        loadWeeklyStats(),
+        loadStreak(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const fetchWorkoutStats = async () => {
-    const q = query(collection(firestoreDb, "workouts"), orderBy("createdAt", "desc"));
+    const q = query(
+      collection(firestoreDb, "workouts"),
+      orderBy("createdAt", "desc"),
+    );
 
     const snapshot = await getDocs(q);
     const workouts = snapshot.docs.map((doc) => doc.data());
@@ -72,7 +94,7 @@ export default function Home() {
     const q = query(
       collection(firestoreDb, "bodyWeight"),
       orderBy("weekStart", "desc"),
-      limit(6)
+      limit(6),
     );
 
     const snapshot = await getDocs(q);
@@ -85,7 +107,7 @@ export default function Home() {
       setWeightTrend(data.map((item) => item.weight));
       console.log(
         "Weight trend:",
-        data.map((i) => i.weight)
+        data.map((i) => i.weight),
       );
     }
   };
@@ -97,6 +119,9 @@ export default function Home() {
         backgroundColor: colors.background,
         padding: spacing.md,
       }}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+      }
     >
       {/* Welcome Header */}
       <Text
@@ -109,6 +134,9 @@ export default function Home() {
       >
         Welcome to GymTracker 💪
       </Text>
+
+      {/* Show logged-in user */}
+      <UserHeader variant="subtle" />
 
       {weeklyStats && (
         <Card>

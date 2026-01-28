@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   TextInput,
@@ -10,27 +11,23 @@ import {
 } from "react-native";
 
 import Card from "../../components/ui/Card";
-import { useTheme } from "../../src/theme/theme";
-import {
-  formatDate,
-  getWeekStart,
-  isFutureWeek,
-} from "../../src/utils/weekUtils";
 import { useAuth } from "../../src/auth/AuthContext";
+import { useTheme } from "../../src/theme/theme";
+import { formatDate, getWeekStart } from "../../src/utils/weekUtils";
 
 import {
   BodyWeight,
-  deleteWeightById,
   getAllWeights,
   insertWeight,
+  softDeleteWeight,
 } from "../../src/db/weights";
 
-import {
-  syncWeightAdd,
-  syncWeightDelete,
-} from "../../src/firebase/weights";
+import { syncWeightQueue } from "../../src/db/syncQueue";
+import { createPageLogger } from "../../src/utils/logger";
 
 import * as Crypto from "expo-crypto";
+
+const log = createPageLogger("BodyWeight");
 
 export default function BodyWeightScreen() {
   const { colors, spacing, radius } = useTheme();
@@ -38,11 +35,13 @@ export default function BodyWeightScreen() {
 
   const [weight, setWeight] = useState("");
   const [history, setHistory] = useState<BodyWeight[]>([]);
-  const [selectedWeek, setSelectedWeek] = useState(getWeekStart(new Date()));
-  const [showWeekPicker, setShowWeekPicker] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const weekDate = formatDate(selectedWeek);
+  const logDate = formatDate(selectedDate);
+  const weekStart = getWeekStart(selectedDate);
 
   /* =========================
      LOAD SQLITE
@@ -53,20 +52,54 @@ export default function BodyWeightScreen() {
     const data = await getAllWeights(user.uid);
 
     // Latest first
-    const sorted = [...data].sort((a, b) =>
-      b.date.localeCompare(a.date)
-    );
+    const sorted = [...data].sort((a, b) => b.date.localeCompare(a.date));
 
     setHistory(sorted);
 
-    const currentWeek = sorted.find((w) => w.date === weekDate);
-    setWeight(currentWeek ? String(currentWeek.weight) : "");
-  }, [user, weekDate]);
+    // Find entry for selected date (allow daily updates)
+    const existingEntry = sorted.find((w) => w.date === logDate);
+    setWeight(existingEntry ? String(existingEntry.weight) : "");
+  }, [user, logDate]);
 
   useEffect(() => {
     loadWeights();
   }, [loadWeights]);
 
+  /* =========================
+     PULL-TO-REFRESH SYNC
+     ========================= */
+  const handleRefresh = async () => {
+    if (!user) return;
+
+    setRefreshing(true);
+    try {
+      log.info("Pull-to-refresh triggered");
+      const result = await syncWeightQueue(user.uid);
+
+      if (result.success) {
+        log.success(
+          "Sync completed",
+          `Synced: ${result.synced}, Failed: ${result.failed}, Pending: ${result.pendingCount}`,
+        );
+        setMessage(`Synced ${result.synced} records ✓`);
+      } else if (result.failed > 0) {
+        log.warn("Sync partial", `${result.failed} records failed to sync`);
+        setMessage(`Synced ${result.synced}, Failed: ${result.failed}`);
+      }
+
+      // Reload data after sync
+      await loadWeights();
+    } catch (error) {
+      log.error(
+        "Refresh sync failed",
+        error instanceof Error ? error.message : String(error),
+      );
+      setMessage("Sync failed - check your connection");
+    } finally {
+      setRefreshing(false);
+      setTimeout(() => setMessage(null), 2000);
+    }
+  };
   /* =========================
      SAVE / UPDATE
      ========================= */
@@ -76,27 +109,23 @@ export default function BodyWeightScreen() {
       return;
     }
 
-    // Enforce one weight per week
-    const existing = history.find((w) => w.date === weekDate);
-
-    if (existing) {
-      await deleteWeightById(existing.id);
-      syncWeightDelete(user.uid, existing.id);
-    }
-
+    // Allow multiple entries per week (daily flexibility)
+    // Just add/update entry for this date
     const newWeight: BodyWeight = {
-      id: generateId(),
+      id: `${user.uid}_${logDate}`, // Use date as part of ID
       userId: user.uid,
-      date: weekDate,
+      date: logDate, // Actual date user picked
+      weekStart: formatDate(weekStart), // For grouping in analytics
       weight: Number(weight),
       createdAt: Date.now(),
+      isSynced: 0, // Mark as unsynced - will sync on app focus
     };
 
     await insertWeight(newWeight);
-    syncWeightAdd(user.uid, newWeight);
 
-    setMessage("Weight saved ✓");
+    setMessage("Weight saved ✓ (syncing...)");
     loadWeights();
+    log.success("Weight saved", `${weight}kg on ${logDate}`);
 
     setTimeout(() => setMessage(null), 1500);
   }
@@ -107,10 +136,14 @@ export default function BodyWeightScreen() {
   async function deleteWeight(item: BodyWeight) {
     if (!user) return;
 
-    await deleteWeightById(item.id);
-    syncWeightDelete(user.uid, item.id);
+    // Soft delete (will be synced later)
+    await softDeleteWeight(item.id);
 
+    setMessage("Weight deleted ✓ (syncing...)");
     loadWeights();
+    log.success("Weight deleted", item.id);
+
+    setTimeout(() => setMessage(null), 1500);
   }
 
   /* =========================
@@ -138,6 +171,15 @@ export default function BodyWeightScreen() {
         backgroundColor: colors.background,
         padding: spacing.md,
       }}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor={colors.accent}
+          title="Pull to sync weights..."
+          titleColor={colors.textSecondary}
+        />
+      }
     >
       <Text
         style={{
@@ -147,7 +189,7 @@ export default function BodyWeightScreen() {
           marginBottom: spacing.md,
         }}
       >
-        Weekly Body Weight
+        Body Weight Tracker
       </Text>
 
       {/* INPUT */}
@@ -169,9 +211,9 @@ export default function BodyWeightScreen() {
         />
       </Card>
 
-      {/* WEEK PICKER */}
+      {/* DATE PICKER (Allow daily updates) */}
       <Pressable
-        onPress={() => setShowWeekPicker(true)}
+        onPress={() => setShowDatePicker(true)}
         style={{
           flexDirection: "row",
           justifyContent: "space-between",
@@ -183,9 +225,16 @@ export default function BodyWeightScreen() {
           marginBottom: spacing.md,
         }}
       >
-        <Text style={{ color: colors.textPrimary }}>
-          Week: {weekDate}
-        </Text>
+        <View>
+          <Text style={{ color: colors.textPrimary, fontWeight: "600" }}>
+            {logDate}
+          </Text>
+          <Text
+            style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }}
+          >
+            Week of {formatDate(weekStart)}
+          </Text>
+        </View>
         <Ionicons
           name="calendar-outline"
           size={20}
@@ -193,22 +242,17 @@ export default function BodyWeightScreen() {
         />
       </Pressable>
 
-      {showWeekPicker && (
+      {showDatePicker && (
         <DateTimePicker
-          value={selectedWeek}
+          value={selectedDate}
           mode="date"
           maximumDate={new Date()}
           onChange={(_, date) => {
-            setShowWeekPicker(false);
+            setShowDatePicker(false);
             if (!date) return;
-
-            const weekStart = getWeekStart(date);
-            if (isFutureWeek(weekStart)) {
-              setMessage("Future weeks not allowed");
-              return;
-            }
-
-            setSelectedWeek(weekStart);
+            // Allow any past date
+            setSelectedDate(date);
+            log.info(`Date selected: ${formatDate(date)}`);
           }}
         />
       )}
@@ -229,9 +273,7 @@ export default function BodyWeightScreen() {
           marginBottom: spacing.lg,
         }}
       >
-        <Text style={{ color: "#fff", fontWeight: "600" }}>
-          Save / Update
-        </Text>
+        <Text style={{ color: "#fff", fontWeight: "600" }}>Save / Update</Text>
       </Pressable>
 
       {/* HISTORY */}

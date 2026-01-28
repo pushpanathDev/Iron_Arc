@@ -14,6 +14,8 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../src/auth/AuthContext";
 import { initDB } from "../src/db/schema";
 import { initSyncMeta } from "../src/db/syncMeta";
+import { useDailySync } from "../src/hooks/useDailySync";
+import { logDBStartup } from "../src/utils/diagnostics";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -22,13 +24,19 @@ function RootNavigator() {
 
   if (loading) return null;
 
+  // 🌅 Run daily sync on app focus
+  useDailySync(user?.uid);
+
+  // 📊 Log DB state on user change
+  useEffect(() => {
+    if (user?.uid) {
+      logDBStartup(user.uid).catch(console.error);
+    }
+  }, [user?.uid]);
+
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      {user ? (
-        <Stack.Screen name="(tabs)" />
-      ) : (
-        <Stack.Screen name="login" />
-      )}
+      {user ? <Stack.Screen name="(tabs)" /> : <Stack.Screen name="login" />}
     </Stack>
   );
 }

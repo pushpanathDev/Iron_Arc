@@ -28,6 +28,8 @@ import {
   syncWorkoutDelete,
 } from "../../src/firebase/sync";
 
+import { sqliteDb } from "../../src/db/sqlite";
+
 const SWIPE_THRESHOLD = -60;
 const DELETE_WIDTH = 80;
 
@@ -78,6 +80,8 @@ export default function History() {
     await fetchWorkouts();
     setDeletedWorkout(null);
   };
+
+  
 
   return (
     <SafeAreaView
@@ -243,4 +247,18 @@ function SwipeRow({
       </GestureDetector>
     </View>
   );
+}
+
+export async function debugSQLite(userId?: string) {
+  const workouts = await sqliteDb.getAllAsync(
+    userId
+      ? "SELECT * FROM workouts WHERE userId = ?"
+      : "SELECT * FROM workouts",
+    userId ? [userId] : []
+  );
+
+  const sets = await sqliteDb.getAllAsync("SELECT * FROM workout_sets");
+
+  console.log("🗄️ SQLite workouts:", workouts);
+  console.log("🗄️ SQLite workout_sets:", sets);
 }

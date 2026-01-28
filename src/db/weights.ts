@@ -5,9 +5,9 @@ import { sqliteDb } from "./sqlite";
    ========================= */
 
 export type BodyWeight = {
-  id: string;
+  id: string;          // weekStart YYYY-MM-DD
   userId: string;
-  date: string;        // YYYY-MM-DD
+  date: string;        // weekStart YYYY-MM-DD
   weight: number;
   createdAt: number;
 };
@@ -39,10 +39,10 @@ export async function getAllWeights(
   userId: string
 ): Promise<BodyWeight[]> {
   return sqliteDb.getAllAsync<BodyWeight>(
-    `SELECT * 
-     FROM body_weight 
+    `SELECT *
+     FROM body_weight
      WHERE userId = ?
-     ORDER BY date ASC`,
+     ORDER BY date DESC`,
     [userId]
   );
 }

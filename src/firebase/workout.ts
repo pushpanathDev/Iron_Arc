@@ -1,5 +1,6 @@
 import { doc, setDoc, deleteDoc } from "firebase/firestore";
-import { firestoreDb } from "./config";
+import { auth, firestoreDb } from "./config";
+import { syncWorkoutAdd } from "./sync";
 
 export async function pushWorkoutToFirebase(
   userId: string,
@@ -14,6 +15,13 @@ export async function pushWorkoutToFirebase(
     "workouts",
     workout.id
   );
+  // 👇 PASTE LOGS HERE (TOP OF FUNCTION)
+  console.log(
+    "🔥 Firebase write path:",
+    `users/${userId}/workouts/${workout.id}`
+  );
+  console.log("🔐 Auth UID:", auth.currentUser?.uid);
+
 
   await setDoc(ref, workout, { merge: true });
 }

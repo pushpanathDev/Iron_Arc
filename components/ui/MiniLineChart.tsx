@@ -25,13 +25,37 @@ export default function MiniLineChart({
   height = 120,
   strokeWidth = 3,
 }: Props) {
+  /* ------------------ HOOKS (ALWAYS RUN) ------------------ */
+
   const { width } = useWindowDimensions();
   const { colors } = useTheme();
-  const AnimatedPath = Animated.createAnimatedComponent(Path);
 
-  if (data.length < 2) return null;
+  const progress = useSharedValue(0);
+  const pulse = useSharedValue(1);
+
+  const AnimatedPath = Animated.createAnimatedComponent(Path);
+  const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+  useEffect(() => {
+    progress.value = withTiming(1, { duration: 600 });
+  }, [data]);
+
+  useEffect(() => {
+    pulse.value = withTiming(1.15, { duration: 300 }, () => {
+      pulse.value = withTiming(1);
+    });
+  }, [data]);
+
+  /* ------------------ SAFE EARLY EXIT (AFTER HOOKS) ------------------ */
+
+  if (!data || data.length < 2) {
+    return null;
+  }
+
+  /* ------------------ CHART CALCULATIONS ------------------ */
 
   const chartWidth = width - 64;
+
   const max = Math.max(...data);
   const min = Math.min(...data);
   const range = max - min || 1;
@@ -46,32 +70,18 @@ export default function MiniLineChart({
     .map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`))
     .join(" ");
 
-  const fillPath = `
-    ${path}
-    L ${points[points.length - 1].x} ${height}
-    L 0 ${height}
-    Z
-  `;
-
   const lastPoint = points[points.length - 1];
-  const progress = useSharedValue(0);
-
-  useEffect(() => {
-    progress.value = withTiming(1, { duration: 600 });
-  }, []);
-  const pulse = useSharedValue(1);
-
-  useEffect(() => {
-    pulse.value = withTiming(1.15, { duration: 300 }, () => {
-      pulse.value = withTiming(1);
-    });
-  }, []);
-
   const pathLength = path.length;
-  const animatedProps = useAnimatedProps(() => ({
+
+  const animatedPathProps = useAnimatedProps(() => ({
     strokeDashoffset: pathLength * (1 - progress.value),
   }));
-  const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+  const animatedCircleProps = useAnimatedProps(() => ({
+    r: 5 * pulse.value,
+  }));
+
+  /* ------------------ UI ------------------ */
 
   return (
     <View>
@@ -83,18 +93,6 @@ export default function MiniLineChart({
           </LinearGradient>
         </Defs>
 
-        {/* Gradient Fill */}
-        <AnimatedPath
-          d={path}
-          fill="none"
-          stroke={colors.accent}
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeDasharray={pathLength}
-          animatedProps={animatedProps}
-        />
-
         {/* Main Line */}
         <AnimatedPath
           d={path}
@@ -104,18 +102,15 @@ export default function MiniLineChart({
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeDasharray={pathLength}
-          animatedProps={animatedProps}
+          animatedProps={animatedPathProps}
         />
 
         {/* Highlight Latest Point */}
         <AnimatedCircle
           cx={lastPoint.x}
           cy={lastPoint.y}
-          r={5}
           fill={colors.accent}
-          animatedProps={useAnimatedProps(() => ({
-            r: 5 * pulse.value,
-          }))}
+          animatedProps={animatedCircleProps}
         />
       </Svg>
     </View>

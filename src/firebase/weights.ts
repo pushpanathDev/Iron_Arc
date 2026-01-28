@@ -5,6 +5,7 @@ import {
   orderBy,
   query,
   setDoc,
+  deleteDoc,
   serverTimestamp,
 } from "firebase/firestore";
 import { firestoreDb } from "./config";
@@ -12,7 +13,7 @@ import { insertWeight, BodyWeight } from "../db/weights";
 import { setLastSync } from "../db/syncMeta";
 
 /* ======================================================
-   PUSH → Firebase
+   PUSH → Firebase (ADD / UPDATE)
    ====================================================== */
 export async function syncWeightAdd(
   userId: string,
@@ -29,6 +30,20 @@ export async function syncWeightAdd(
   );
 
   console.log("☁️ Weight synced to Firebase:", weight.id);
+}
+
+/* ======================================================
+   DELETE → Firebase
+   ====================================================== */
+export async function syncWeightDelete(
+  userId: string,
+  weightId: string
+) {
+  await deleteDoc(
+    doc(firestoreDb, "users", userId, "weights", weightId)
+  );
+
+  console.log("☁️ Weight deleted from Firebase:", weightId);
 }
 
 /* ======================================================

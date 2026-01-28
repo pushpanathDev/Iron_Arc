@@ -1,7 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { useEffect, useState } from "react";
-import { Pressable, ScrollView, Text, TextInput } from "react-native";
+import { useEffect, useState, useCallback } from "react";
+import {
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import Card from "../../components/ui/Card";
 import { useTheme } from "../../src/theme/theme";
@@ -11,12 +17,20 @@ import {
   isFutureWeek,
 } from "../../src/utils/weekUtils";
 import { useAuth } from "../../src/auth/AuthContext";
+
 import {
   BodyWeight,
+  deleteWeightById,
   getAllWeights,
   insertWeight,
 } from "../../src/db/weights";
-import { syncWeightAdd } from "../../src/firebase/weights";
+
+import {
+  syncWeightAdd,
+  syncWeightDelete,
+} from "../../src/firebase/weights";
+
+import * as Crypto from "expo-crypto";
 
 export default function BodyWeightScreen() {
   const { colors, spacing, radius } = useTheme();
@@ -30,46 +44,93 @@ export default function BodyWeightScreen() {
 
   const weekDate = formatDate(selectedWeek);
 
-  /* ---------------- LOAD FROM SQLITE ---------------- */
-  const loadWeights = async () => {
+  /* =========================
+     LOAD SQLITE
+     ========================= */
+  const loadWeights = useCallback(async () => {
     if (!user) return;
 
     const data = await getAllWeights(user.uid);
-    setHistory(data);
 
-    const current = data.find((w) => w.date === weekDate);
-    setWeight(current ? String(current.weight) : "");
-  };
+    // Latest first
+    const sorted = [...data].sort((a, b) =>
+      b.date.localeCompare(a.date)
+    );
+
+    setHistory(sorted);
+
+    const currentWeek = sorted.find((w) => w.date === weekDate);
+    setWeight(currentWeek ? String(currentWeek.weight) : "");
+  }, [user, weekDate]);
 
   useEffect(() => {
     loadWeights();
-  }, [selectedWeek, user]);
+  }, [loadWeights]);
 
-  /* ---------------- SAVE ---------------- */
-  const saveWeight = async () => {
-    if (!weight || !user) {
+  /* =========================
+     SAVE / UPDATE
+     ========================= */
+  async function saveWeight() {
+    if (!user || !weight) {
       setMessage("Please enter weight");
       return;
     }
 
-    const record: BodyWeight = {
-      id: weekDate,
+    // Enforce one weight per week
+    const existing = history.find((w) => w.date === weekDate);
+
+    if (existing) {
+      await deleteWeightById(existing.id);
+      syncWeightDelete(user.uid, existing.id);
+    }
+
+    const newWeight: BodyWeight = {
+      id: generateId(),
       userId: user.uid,
       date: weekDate,
       weight: Number(weight),
       createdAt: Date.now(),
     };
 
-    // SQLite first
-    await insertWeight(record);
-
-    // Firebase background sync
-    await syncWeightAdd(user.uid, record);
+    await insertWeight(newWeight);
+    syncWeightAdd(user.uid, newWeight);
 
     setMessage("Weight saved ✓");
     loadWeights();
-  };
 
+    setTimeout(() => setMessage(null), 1500);
+  }
+
+  /* =========================
+     DELETE
+     ========================= */
+  async function deleteWeight(item: BodyWeight) {
+    if (!user) return;
+
+    await deleteWeightById(item.id);
+    syncWeightDelete(user.uid, item.id);
+
+    loadWeights();
+  }
+
+  /* =========================
+     SAFE UUID
+     ========================= */
+  function generateId() {
+    try {
+      return Crypto.randomUUID();
+    } catch {
+      return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === "x" ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      });
+    }
+  }
+
+  /* =========================
+     UI
+     ========================= */
   return (
     <ScrollView
       style={{
@@ -89,6 +150,7 @@ export default function BodyWeightScreen() {
         Weekly Body Weight
       </Text>
 
+      {/* INPUT */}
       <Card>
         <TextInput
           placeholder="Weight (kg)"
@@ -107,6 +169,7 @@ export default function BodyWeightScreen() {
         />
       </Card>
 
+      {/* WEEK PICKER */}
       <Pressable
         onPress={() => setShowWeekPicker(true)}
         style={{
@@ -123,7 +186,11 @@ export default function BodyWeightScreen() {
         <Text style={{ color: colors.textPrimary }}>
           Week: {weekDate}
         </Text>
-        <Ionicons name="calendar-outline" size={20} color={colors.textSecondary} />
+        <Ionicons
+          name="calendar-outline"
+          size={20}
+          color={colors.textSecondary}
+        />
       </Pressable>
 
       {showWeekPicker && (
@@ -159,7 +226,7 @@ export default function BodyWeightScreen() {
           padding: spacing.md,
           borderRadius: radius.md,
           alignItems: "center",
-          marginBottom: spacing.md,
+          marginBottom: spacing.lg,
         }}
       >
         <Text style={{ color: "#fff", fontWeight: "600" }}>
@@ -167,7 +234,15 @@ export default function BodyWeightScreen() {
         </Text>
       </Pressable>
 
-      <Text style={{ fontSize: 18, color: colors.textPrimary }}>
+      {/* HISTORY */}
+      <Text
+        style={{
+          fontSize: 18,
+          fontWeight: "600",
+          color: colors.textPrimary,
+          marginBottom: spacing.sm,
+        }}
+      >
         History
       </Text>
 
@@ -177,15 +252,31 @@ export default function BodyWeightScreen() {
 
         return (
           <Card key={item.id}>
-            <Text style={{ color: colors.textPrimary }}>
-              {item.date}: {item.weight} kg{" "}
-              {prev && (
-                <Text>
-                  {diff > 0 ? "↑" : diff < 0 ? "↓" : "→"}{" "}
-                  {Math.abs(diff).toFixed(1)} kg
-                </Text>
-              )}
-            </Text>
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ color: colors.textPrimary }}>
+                {item.date}: {item.weight} kg{" "}
+                {prev && (
+                  <Text>
+                    {diff > 0 ? "↑" : diff < 0 ? "↓" : "→"}{" "}
+                    {Math.abs(diff).toFixed(1)} kg
+                  </Text>
+                )}
+              </Text>
+
+              <Pressable onPress={() => deleteWeight(item)}>
+                <Ionicons
+                  name="trash-outline"
+                  size={18}
+                  color={colors.textSecondary}
+                />
+              </Pressable>
+            </View>
           </Card>
         );
       })}

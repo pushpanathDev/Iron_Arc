@@ -16,6 +16,7 @@ import { ExerciseCategory } from "../src/data/exercises";
 import { getAllWorkouts, insertWorkout } from "../src/db/workouts";
 import { syncWorkoutAdd } from "../src/firebase/sync";
 import { useTheme } from "../src/theme/theme";
+import { debugSQLite } from "./(tabs)/history";
 
 /* =========================
    SAFE UUID GENERATOR
@@ -77,6 +78,8 @@ export default function AddWorkout() {
     loadWorkout();
   }, [id, user]);
 
+  
+
   /* =========================
      SET HELPERS
      ========================= */
@@ -123,6 +126,7 @@ export default function AddWorkout() {
 
       // ✅ SQLite (source of truth for UI)
       await insertWorkout(workout);
+      await debugSQLite(user.uid);
 
       // ☁️ Firebase sync (background, non-blocking UX)
       await syncWorkoutAdd(user.uid, workout);

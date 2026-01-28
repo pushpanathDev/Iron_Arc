@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useFocusEffect } from "expo-router";
+import React, { useCallback, useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import Animated, { FadeInUp } from "react-native-reanimated";
 
@@ -9,16 +10,12 @@ import WorkoutBarChart, {
   WeeklyWorkoutBar,
 } from "../../components/ui/WorkoutBarChart";
 
+import { useAuth } from "../../src/auth/AuthContext";
 import { typography, useTheme } from "../../src/theme/theme";
 import { getWorkoutInsight } from "../../src/utils/insightEngine";
-import { useAuth } from "../../src/auth/AuthContext";
 
+import { BodyWeight, getAllWeights } from "../../src/db/weights";
 import { getAllWorkouts, Workout } from "../../src/db/workouts";
-import { getAllWeights, BodyWeight } from "../../src/db/weights";
-
-/* =========================
-   ANALYTICS SCREEN
-   ========================= */
 
 export default function Analytics() {
   const { colors, spacing } = useTheme();
@@ -26,23 +23,43 @@ export default function Analytics() {
 
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [weights, setWeights] = useState<BodyWeight[]>([]);
-  const [selectedWeek, setSelectedWeek] =
-    useState<WeeklyWorkoutBar | null>(null);
+  const [selectedWeek, setSelectedWeek] = useState<WeeklyWorkoutBar | null>(
+    null,
+  );
 
-  /* ------------------ LOAD LOCAL DATA ------------------ */
+  /* =========================
+     RELOAD SQLITE (SAFE)
+     ========================= */
 
-  useEffect(() => {
-    if (!user) return;
+  const reloadData = useCallback(async () => {
+    if (!user) {
+      // 🔑 IMPORTANT: reset state deterministically
+      setWorkouts([]);
+      setWeights([]);
+      setSelectedWeek(null);
+      return;
+    }
 
-    (async () => {
-      const w = await getAllWorkouts(user.uid);
-      const bw = await getAllWeights(user.uid);
-      setWorkouts(w);
-      setWeights(bw);
-    })();
+    const [w, bw] = await Promise.all([
+      getAllWorkouts(user.uid),
+      getAllWeights(user.uid),
+    ]);
+
+    bw.sort((a, b) => a.date.localeCompare(b.date));
+
+    setWorkouts(w);
+    setWeights(bw);
   }, [user]);
 
-  /* ------------------ DERIVED ANALYTICS ------------------ */
+  useFocusEffect(
+    useCallback(() => {
+      reloadData();
+    }, [reloadData]),
+  );
+
+  /* =========================
+     WORKOUT ANALYTICS
+     ========================= */
 
   const workoutTrend: WeeklyWorkoutBar[] = useMemo(() => {
     const map = new Map<string, number>();
@@ -68,10 +85,7 @@ export default function Analytics() {
 
     workouts.forEach((w) => {
       const weekStart = getWeekStart(w.date);
-      const volume = w.sets.reduce(
-        (sum, s) => sum + s.reps * s.weight,
-        0
-      );
+      const volume = w.sets.reduce((sum, s) => sum + s.reps * s.weight, 0);
       map.set(weekStart, (map.get(weekStart) ?? 0) + volume);
     });
 
@@ -80,21 +94,41 @@ export default function Analytics() {
       .map(([, volume]) => volume);
   }, [workouts]);
 
-  const weightTrend = useMemo(
-    () => weights.map((w) => w.weight),
-    [weights]
-  );
+  /* =========================
+     BODY WEIGHT ANALYTICS
+     ========================= */
 
-  /* ------------------ INSIGHTS ------------------ */
+  const weightStats = useMemo(() => {
+    if (weights.length === 0) return null;
+
+    const values = weights.map((w) => w.weight);
+    const first = values[0];
+    const latest = values[values.length - 1];
+
+    const delta = +(latest - first).toFixed(1);
+    const avg = +(values.reduce((s, v) => s + v, 0) / values.length).toFixed(1);
+
+    return {
+      latest,
+      delta,
+      avg,
+      min: Math.min(...values),
+      max: Math.max(...values),
+      trend: delta > 0.3 ? "up" : delta < -0.3 ? "down" : "stable",
+      chart: values,
+    };
+  }, [weights]);
+
+  /* =========================
+     INSIGHTS
+     ========================= */
 
   const workoutAvg =
     workoutTrend.length > 0
-      ? workoutTrend.reduce((s, w) => s + w.workouts, 0) /
-        workoutTrend.length
+      ? workoutTrend.reduce((s, w) => s + w.workouts, 0) / workoutTrend.length
       : 0;
 
-  const latestWeek =
-    workoutTrend[workoutTrend.length - 1]?.workouts ?? 0;
+  const latestWeek = workoutTrend[workoutTrend.length - 1]?.workouts ?? 0;
 
   const globalInsight = getWorkoutInsight(latestWeek, workoutAvg);
 
@@ -103,7 +137,9 @@ export default function Analytics() {
       ? getWorkoutInsight(selectedWeek.workouts, workoutAvg)
       : null;
 
-  /* ------------------ UI ------------------ */
+  /* =========================
+     UI
+     ========================= */
 
   return (
     <ScrollView
@@ -191,7 +227,6 @@ export default function Analytics() {
               )}
 
               <View style={{ height: spacing.lg }} />
-
               <MiniLineChart data={volumeTrend} />
             </>
           ) : (
@@ -213,14 +248,47 @@ export default function Analytics() {
               marginBottom: spacing.sm,
             }}
           >
-            Body Weight Trends
+            Body Weight
           </Text>
 
-          {weightTrend.length > 1 ? (
-            <MiniLineChart data={weightTrend} />
+          {weightStats ? (
+            <>
+              <Text
+                style={{
+                  fontSize: 32,
+                  fontWeight: "700",
+                  color: colors.textPrimary,
+                }}
+              >
+                {weightStats.latest} kg
+              </Text>
+
+              <Text
+                style={{
+                  color:
+                    weightStats.trend === "down"
+                      ? "#22C55E"
+                      : weightStats.trend === "up"
+                        ? "#EF4444"
+                        : colors.textSecondary,
+                  marginBottom: spacing.sm,
+                }}
+              >
+                {weightStats.delta >= 0 ? "↑" : "↓"}{" "}
+                {Math.abs(weightStats.delta)} kg overall
+              </Text>
+
+              <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+                Avg {weightStats.avg} · Min {weightStats.min} · Max{" "}
+                {weightStats.max}
+              </Text>
+
+              <View style={{ height: spacing.md }} />
+              <MiniLineChart data={weightStats.chart} />
+            </>
           ) : (
             <Text style={{ color: colors.textSecondary }}>
-              Add more weights to see progress.
+              Add body weight entries to see progress.
             </Text>
           )}
         </Card>
@@ -245,14 +313,11 @@ function getWeekLabel(weekStart: string) {
 }
 
 function getMonthLabel(weekStart: string) {
-  return new Date(weekStart).toLocaleString("default", {
-    month: "short",
-  });
+  return new Date(weekStart).toLocaleString("default", { month: "short" });
 }
 
 function isCurrentWeek(weekStart: string) {
   const now = new Date();
   const start = new Date(weekStart);
-  return Math.abs(now.getTime() - start.getTime()) <
-    7 * 24 * 60 * 60 * 1000;
+  return Math.abs(now.getTime() - start.getTime()) < 7 * 24 * 60 * 60 * 1000;
 }

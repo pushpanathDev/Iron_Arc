@@ -12,7 +12,7 @@ export type UserProfile = {
   email: string | null;
   avatarUrl: string | null;
   height: number | null;
-  weeklyGoal: number; // Target workouts per DAY (default: 1, max: 10)
+  weeklyGoal: number; // Target workouts per WEEK (default: 1, max: 10)
   authProvider: "email" | "google" | null;
   createdAt: number;
   updatedAt: number;

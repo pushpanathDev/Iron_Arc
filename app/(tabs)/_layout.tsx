@@ -1,10 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../../src/theme/theme";
+import { useTheme } from "../../theme/theme";
 
 export default function TabLayout() {
-  const { colors } = useTheme();
+  const { colors, shadows } = useTheme();
 
   return (
     <SafeAreaView
@@ -15,10 +15,19 @@ export default function TabLayout() {
         screenOptions={{
           headerShown: false,
           tabBarActiveTintColor: colors.accent,
-          tabBarInactiveTintColor: colors.textSecondary,
+          tabBarInactiveTintColor: colors.textMuted,
           tabBarStyle: {
-            backgroundColor: colors.card,
-            borderTopColor: colors.border,
+            backgroundColor: colors.surface,
+            borderTopColor: colors.cardBorder,
+            borderTopWidth: 1,
+            paddingTop: 8,
+            paddingBottom: 8,
+            height: 60,
+            ...shadows.sm,
+          },
+          tabBarLabelStyle: {
+            fontSize: 11,
+            fontWeight: "500",
           },
         }}
       >
@@ -37,7 +46,7 @@ export default function TabLayout() {
           options={{
             title: "Weight",
             tabBarIcon: ({ color, size }) => (
-              <Ionicons name="barbell" size={size} color={color} />
+              <Ionicons name="scale-outline" size={size} color={color} />
             ),
           }}
         />
@@ -47,7 +56,7 @@ export default function TabLayout() {
           options={{
             title: "Analytics",
             tabBarIcon: ({ color, size }) => (
-              <Ionicons name="stats-chart-outline" size={size} color={color} />
+              <Ionicons name="stats-chart" size={size} color={color} />
             ),
           }}
         />
@@ -57,18 +66,16 @@ export default function TabLayout() {
           options={{
             title: "History",
             tabBarIcon: ({ color, size }) => (
-              <Ionicons name="list" size={size} color={color} />
+              <Ionicons name="time-outline" size={size} color={color} />
             ),
           }}
         />
 
+        {/* Profile is now accessed via icon on Home page header */}
         <Tabs.Screen
           name="profile"
           options={{
-            title: "Profile",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="person" size={size} color={color} />
-            ),
+            href: null, // Hide from tab bar
           }}
         />
       </Tabs>

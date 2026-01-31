@@ -1,22 +1,21 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useState } from "react";
-import { Pressable, ScrollView, Text, TextInput } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import * as Crypto from "expo-crypto";
 
-import Card from "../components/ui/Card";
 import CategoryPicker from "../components/ui/CategoryPicker";
 import ExercisePicker from "../components/ui/ExercisePicker";
-import PrimaryButton from "../components/ui/PrimaryButton";
 
-import { useAuth } from "../src/auth/AuthContext";
-import { ExerciseCategory } from "../src/data/exercises";
-import { getAllWorkouts, insertWorkout } from "../src/db/workouts";
-import { syncWorkoutAdd } from "../src/firebase/sync";
-import { useTheme } from "../src/theme/theme";
-import { debugSQLite } from "./(tabs)/history";
+import { useAuth } from "../auth/AuthContext";
+import { ExerciseCategory } from "../data/exercises";
+import { getAllWorkouts, insertWorkout } from "../db/workouts";
+import { useTheme } from "../theme/theme";
+import { formatDate } from "../utils/weekUtils";
 
 /* =========================
    SAFE UUID GENERATOR
@@ -34,10 +33,57 @@ function generateWorkoutId() {
   }
 }
 
+/* =========================
+   LONG PRESS BUTTON (for hold-to-increment)
+   ========================= */
+interface LongPressButtonProps {
+  onIncrement: () => void;
+  children: React.ReactNode;
+  style?: any;
+  initialDelay?: number;
+  repeatInterval?: number;
+}
+
+function LongPressButton({
+  onIncrement,
+  children,
+  style,
+  initialDelay = 400,
+  repeatInterval = 80,
+}: LongPressButtonProps) {
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const start = useCallback(() => {
+    onIncrement();
+    timeoutRef.current = setTimeout(() => {
+      intervalRef.current = setInterval(onIncrement, repeatInterval);
+    }, initialDelay);
+  }, [onIncrement, initialDelay, repeatInterval]);
+
+  const stop = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
+
+  return (
+    <Pressable onPressIn={start} onPressOut={stop} style={style}>
+      {children}
+    </Pressable>
+  );
+}
+
 export default function AddWorkout() {
-  const { colors, spacing, radius } = useTheme();
+  const { colors, spacing, radius, typography, shadows } = useTheme();
   const { id } = useLocalSearchParams();
   const isEdit = Boolean(id);
+  const insets = useSafeAreaInsets();
 
   const { user } = useAuth();
 
@@ -49,8 +95,6 @@ export default function AddWorkout() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-
-  const formatDate = (date: Date) => date.toISOString().split("T")[0];
 
   /* =========================
      LOAD WORKOUT (EDIT MODE)
@@ -71,14 +115,12 @@ export default function AddWorkout() {
         workout.sets.map((s) => ({
           reps: String(s.reps),
           weight: String(s.weight),
-        }))
+        })),
       );
     };
 
     loadWorkout();
   }, [id, user]);
-
-  
 
   /* =========================
      SET HELPERS
@@ -88,10 +130,23 @@ export default function AddWorkout() {
   const updateSet = (
     index: number,
     field: "reps" | "weight",
-    value: string
+    value: string,
   ) => {
     const updated = [...sets];
     updated[index][field] = value;
+    setSets(updated);
+  };
+
+  const incrementValue = (
+    index: number,
+    field: "reps" | "weight",
+    step: number = 1,
+  ) => {
+    const updated = [...sets];
+    const currentValue = parseFloat(updated[index][field]) || 0;
+    const newValue = Math.max(0, currentValue + step);
+    updated[index][field] =
+      field === "weight" ? newValue.toFixed(1) : String(Math.floor(newValue));
     setSets(updated);
   };
 
@@ -124,12 +179,9 @@ export default function AddWorkout() {
         })),
       };
 
-      // ✅ SQLite (source of truth for UI)
+      // ✅ SQLite only (offline-first)
+      // Firebase sync happens on pull-to-refresh via syncWorkoutQueue()
       await insertWorkout(workout);
-      await debugSQLite(user.uid);
-
-      // ☁️ Firebase sync (background, non-blocking UX)
-      await syncWorkoutAdd(user.uid, workout);
 
       setMessage(isEdit ? "Workout updated ✓" : "Workout saved ✓");
       setTimeout(() => router.back(), 600);
@@ -146,42 +198,91 @@ export default function AddWorkout() {
      ========================= */
   return (
     <ScrollView
-      style={{
-        flex: 1,
-        backgroundColor: colors.background,
+      style={{ flex: 1, backgroundColor: colors.background }}
+      contentContainerStyle={{
         padding: spacing.md,
+        paddingTop: insets.top + spacing.md,
+        paddingBottom: spacing.xxl,
       }}
     >
-      <Text
+      {/* HEADER */}
+      <Animated.View entering={FadeInDown.duration(400)}>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            marginBottom: spacing.xs,
+          }}
+        >
+          <Pressable
+            onPress={() => router.back()}
+            style={{ marginRight: spacing.sm }}
+          >
+            <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
+          </Pressable>
+          <Text style={{ ...typography.h1, color: colors.textPrimary }}>
+            {isEdit ? "Edit Workout" : "Add Workout"}
+          </Text>
+        </View>
+        <Text
+          style={{
+            ...typography.body,
+            color: colors.textSecondary,
+            marginBottom: spacing.lg,
+          }}
+        >
+          {isEdit ? "Update your workout details" : "Log your training session"}
+        </Text>
+      </Animated.View>
+
+      {/* DATE PICKER */}
+      <Animated.View
+        entering={FadeInUp.delay(100).duration(400)}
         style={{
-          fontSize: 24,
-          fontWeight: "700",
-          color: colors.textPrimary,
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          padding: spacing.lg,
           marginBottom: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
         }}
       >
-        {isEdit ? "Edit Workout" : "Add Workout"}
-      </Text>
-
-      {/* DATE + PICKERS */}
-      <Card>
+        <Text
+          style={{
+            ...typography.label,
+            color: colors.textMuted,
+            marginBottom: spacing.md,
+          }}
+        >
+          DATE
+        </Text>
         <Pressable
           onPress={() => setShowDatePicker(true)}
           style={{
             flexDirection: "row",
             justifyContent: "space-between",
+            alignItems: "center",
             padding: spacing.md,
-            borderRadius: radius.md,
+            borderRadius: radius.lg,
+            backgroundColor: colors.surfaceElevated,
           }}
         >
-          <Text style={{ color: colors.textPrimary }}>
+          <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
             {formatDate(workoutDate)}
           </Text>
-          <Ionicons
-            name="calendar-outline"
-            size={20}
-            color={colors.textSecondary}
-          />
+          <View
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: radius.md,
+              backgroundColor: colors.accentLight,
+              justifyContent: "center",
+              alignItems: "center",
+            }}
+          >
+            <Ionicons name="calendar-outline" size={18} color={colors.accent} />
+          </View>
         </Pressable>
 
         {showDatePicker && (
@@ -195,94 +296,353 @@ export default function AddWorkout() {
             }}
           />
         )}
+      </Animated.View>
 
+      {/* EXERCISE SELECTION */}
+      <Animated.View
+        entering={FadeInUp.delay(150).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          padding: spacing.lg,
+          marginBottom: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+        }}
+      >
+        <Text
+          style={{
+            ...typography.label,
+            color: colors.textMuted,
+            marginBottom: spacing.md,
+          }}
+        >
+          EXERCISE
+        </Text>
         <CategoryPicker value={category} onChange={setCategory} />
         <ExercisePicker
           category={category}
           value={exercise}
           onChange={setExercise}
         />
-      </Card>
+      </Animated.View>
 
       {/* SETS */}
-      {sets.map((set, index) => (
-        <Card key={index}>
-          <Text style={{ color: colors.textPrimary }}>
-            Set {index + 1}
+      <Animated.View entering={FadeInUp.delay(200).duration(400)}>
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: spacing.sm,
+          }}
+        >
+          <Text style={{ ...typography.label, color: colors.textMuted }}>
+            SETS
           </Text>
-
-          <TextInput
-            placeholder="Reps"
-            placeholderTextColor={colors.textSecondary}
-            keyboardType="numeric"
-            value={set.reps}
-            onChangeText={(v) => updateSet(index, "reps", v)}
+          <Pressable
+            onPress={addSet}
             style={{
-              borderWidth: 1,
-              borderColor: colors.border,
-              padding: spacing.sm,
-              marginTop: spacing.sm,
-              color: colors.textPrimary,
+              flexDirection: "row",
+              alignItems: "center",
+              paddingVertical: spacing.xs,
+              paddingHorizontal: spacing.sm,
+              backgroundColor: colors.accentLight,
+              borderRadius: radius.lg,
             }}
-          />
+          >
+            <Ionicons name="add" size={16} color={colors.accent} />
+            <Text
+              style={{
+                color: colors.accent,
+                fontWeight: "600",
+                fontSize: 14,
+                marginLeft: 4,
+              }}
+            >
+              Add Set
+            </Text>
+          </Pressable>
+        </View>
 
-          <TextInput
-            placeholder="Weight (kg)"
-            placeholderTextColor={colors.textSecondary}
-            keyboardType="numeric"
-            value={set.weight}
-            onChangeText={(v) => updateSet(index, "weight", v)}
+        {sets.map((set, index) => (
+          <Animated.View
+            key={index}
+            entering={FadeInUp.delay(250 + index * 30).duration(300)}
             style={{
+              backgroundColor: colors.surface,
+              borderRadius: radius.xl,
+              padding: spacing.md,
+              marginBottom: spacing.sm,
               borderWidth: 1,
-              borderColor: colors.border,
-              padding: spacing.sm,
-              marginTop: spacing.sm,
-              color: colors.textPrimary,
+              borderColor: colors.cardBorder,
+              ...shadows.sm,
             }}
-          />
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: spacing.sm,
+              }}
+            >
+              <View
+                style={{
+                  backgroundColor: colors.accent,
+                  paddingVertical: spacing.xxs,
+                  paddingHorizontal: spacing.sm,
+                  borderRadius: radius.md,
+                }}
+              >
+                <Text
+                  style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}
+                >
+                  SET {index + 1}
+                </Text>
+              </View>
+              {sets.length > 1 && (
+                <Pressable
+                  onPress={() => removeSet(index)}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: radius.md,
+                    backgroundColor: colors.errorLight,
+                    justifyContent: "center",
+                    alignItems: "center",
+                  }}
+                >
+                  <Ionicons
+                    name="trash-outline"
+                    size={16}
+                    color={colors.error}
+                  />
+                </Pressable>
+              )}
+            </View>
 
-          {sets.length > 1 && (
-            <PrimaryButton
-              title="Remove Set"
-              onPress={() => removeSet(index)}
-            />
-          )}
-        </Card>
-      ))}
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              {/* Reps with +/- buttons */}
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    ...typography.caption,
+                    color: colors.textSecondary,
+                    marginBottom: spacing.xs,
+                  }}
+                >
+                  Reps
+                </Text>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: spacing.xs,
+                  }}
+                >
+                  <LongPressButton
+                    onIncrement={() => incrementValue(index, "reps", -1)}
+                    style={{
+                      width: 40,
+                      height: 48,
+                      borderRadius: radius.md,
+                      backgroundColor: colors.surfaceElevated,
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Ionicons
+                      name="remove"
+                      size={20}
+                      color={colors.textSecondary}
+                    />
+                  </LongPressButton>
+                  <TextInput
+                    placeholder="0"
+                    placeholderTextColor={colors.textMuted}
+                    keyboardType="numeric"
+                    value={set.reps}
+                    onChangeText={(v) => updateSet(index, "reps", v)}
+                    style={{
+                      flex: 1,
+                      paddingVertical: spacing.sm,
+                      paddingHorizontal: spacing.xs,
+                      borderRadius: radius.md,
+                      backgroundColor: colors.surfaceElevated,
+                      color: colors.textPrimary,
+                      fontSize: 16,
+                      fontWeight: "600",
+                      textAlign: set.reps ? "center" : "left",
+                      minWidth: 50,
+                    }}
+                  />
+                  <LongPressButton
+                    onIncrement={() => incrementValue(index, "reps", 1)}
+                    style={{
+                      width: 40,
+                      height: 48,
+                      borderRadius: radius.md,
+                      backgroundColor: colors.accentLight,
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Ionicons name="add" size={20} color={colors.accent} />
+                  </LongPressButton>
+                </View>
+              </View>
 
-      <PrimaryButton title="+ Add Set" onPress={addSet} />
+              {/* Weight with +/- buttons */}
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    ...typography.caption,
+                    color: colors.textSecondary,
+                    marginBottom: spacing.xs,
+                  }}
+                >
+                  Weight (kg)
+                </Text>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: spacing.xs,
+                  }}
+                >
+                  <LongPressButton
+                    onIncrement={() => incrementValue(index, "weight", -2.5)}
+                    style={{
+                      width: 40,
+                      height: 48,
+                      borderRadius: radius.md,
+                      backgroundColor: colors.surfaceElevated,
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Ionicons
+                      name="remove"
+                      size={20}
+                      color={colors.textSecondary}
+                    />
+                  </LongPressButton>
+                  <TextInput
+                    placeholder="0"
+                    placeholderTextColor={colors.textMuted}
+                    keyboardType="numeric"
+                    value={set.weight}
+                    onChangeText={(v) => updateSet(index, "weight", v)}
+                    style={{
+                      flex: 1,
+                      paddingVertical: spacing.sm,
+                      paddingHorizontal: spacing.xs,
+                      borderRadius: radius.md,
+                      backgroundColor: colors.surfaceElevated,
+                      color: colors.textPrimary,
+                      fontSize: 16,
+                      fontWeight: "600",
+                      textAlign: set.weight ? "center" : "left",
+                      minWidth: 50,
+                    }}
+                  />
+                  <LongPressButton
+                    onIncrement={() => incrementValue(index, "weight", 2.5)}
+                    style={{
+                      width: 40,
+                      height: 48,
+                      borderRadius: radius.md,
+                      backgroundColor: colors.accentLight,
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Ionicons name="add" size={20} color={colors.accent} />
+                  </LongPressButton>
+                </View>
+              </View>
+            </View>
+          </Animated.View>
+        ))}
+      </Animated.View>
 
       {/* NOTES */}
-      <Card>
+      <Animated.View
+        entering={FadeInUp.delay(300).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          padding: spacing.lg,
+          marginBottom: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+        }}
+      >
+        <Text
+          style={{
+            ...typography.label,
+            color: colors.textMuted,
+            marginBottom: spacing.md,
+          }}
+        >
+          NOTES (OPTIONAL)
+        </Text>
         <TextInput
-          placeholder="Notes (optional)"
-          placeholderTextColor={colors.textSecondary}
+          placeholder="Add any notes about your workout..."
+          placeholderTextColor={colors.textMuted}
           value={notes}
           onChangeText={setNotes}
           multiline
           style={{
-            borderWidth: 1,
-            borderColor: colors.border,
-            padding: spacing.sm,
-            minHeight: 80,
+            padding: spacing.md,
+            borderRadius: radius.md,
+            backgroundColor: colors.surfaceElevated,
             color: colors.textPrimary,
+            minHeight: 80,
+            textAlignVertical: "top",
+            fontSize: typography.body.fontSize,
           }}
         />
-      </Card>
+      </Animated.View>
 
+      {/* MESSAGE */}
       {message && (
-        <Text style={{ color: colors.accent, marginVertical: spacing.sm }}>
-          {message}
-        </Text>
+        <Animated.View entering={FadeInUp.duration(200)}>
+          <Text
+            style={{
+              textAlign: "center",
+              color: message.includes("✓") ? colors.success : colors.error,
+              marginBottom: spacing.md,
+              fontWeight: "500",
+            }}
+          >
+            {message}
+          </Text>
+        </Animated.View>
       )}
 
-      <PrimaryButton
-        title={
-          saving ? "Saving..." : isEdit ? "Update Workout" : "Save Workout"
-        }
-        disabled={saving}
-        onPress={saveWorkout}
-      />
+      {/* SAVE BUTTON */}
+      <Animated.View entering={FadeInUp.delay(350).duration(400)}>
+        <Pressable
+          onPress={saveWorkout}
+          disabled={saving}
+          style={{
+            backgroundColor: colors.accent,
+            padding: spacing.md,
+            borderRadius: radius.xl,
+            alignItems: "center",
+            opacity: saving ? 0.6 : 1,
+            ...shadows.md,
+          }}
+        >
+          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 18 }}>
+            {saving ? "Saving..." : isEdit ? "Update Workout" : "Save Workout"}
+          </Text>
+        </Pressable>
+      </Animated.View>
     </ScrollView>
   );
 }

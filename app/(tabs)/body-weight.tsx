@@ -1,7 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { useCallback, useEffect, useState } from "react";
+import { LinearGradient } from "expo-linear-gradient";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Dimensions,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -9,29 +11,95 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  FadeInDown,
+  FadeInUp,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
+import Svg, {
+  Circle,
+  Defs,
+  Line,
+  Polyline,
+  Stop,
+  LinearGradient as SvgGradient,
+} from "react-native-svg";
 
-import Card from "../../components/ui/Card";
-import { useAuth } from "../../src/auth/AuthContext";
-import { useTheme } from "../../src/theme/theme";
-import { formatDate, getWeekStart } from "../../src/utils/weekUtils";
+import { useAuth } from "../../auth/AuthContext";
+import { useTheme } from "../../theme/theme";
+import { formatDate, getWeekStart } from "../../utils/weekUtils";
 
 import {
   BodyWeight,
   getAllWeights,
   insertWeight,
   softDeleteWeight,
-} from "../../src/db/weights";
+} from "../../db/weights";
 
-import { syncWeightQueue } from "../../src/db/syncQueue";
-import { createPageLogger } from "../../src/utils/logger";
+import { SyncState } from "../../components/SyncBadge";
+import { WeightScale } from "../../components/WeightScale";
+import { useGlobalSync } from "../../context/SyncContext";
+import { createPageLogger } from "../../utils/logger";
 
 import * as Crypto from "expo-crypto";
-
 const log = createPageLogger("BodyWeight");
+const SCREEN_WIDTH = Dimensions.get("window").width;
+const SWIPE_THRESHOLD = -60;
+const DELETE_WIDTH = 80;
+
+/* =========================
+   LONG PRESS BUTTON (for hold-to-increment)
+   ========================= */
+interface LongPressButtonProps {
+  onIncrement: () => void;
+  children: React.ReactNode;
+  style?: any;
+  initialDelay?: number;
+  repeatInterval?: number;
+}
+
+function LongPressButton({
+  onIncrement,
+  children,
+  style,
+  initialDelay = 400,
+  repeatInterval = 80,
+}: LongPressButtonProps) {
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const start = useCallback(() => {
+    onIncrement();
+    timeoutRef.current = setTimeout(() => {
+      intervalRef.current = setInterval(onIncrement, repeatInterval);
+    }, initialDelay);
+  }, [onIncrement, initialDelay, repeatInterval]);
+
+  const stop = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
+
+  return (
+    <Pressable onPressIn={start} onPressOut={stop} style={style}>
+      {children}
+    </Pressable>
+  );
+}
 
 export default function BodyWeightScreen() {
-  const { colors, spacing, radius } = useTheme();
+  const { colors, spacing, radius, typography, shadows } = useTheme();
   const { user } = useAuth();
+  const { globalSync, refreshVersion, startSync, endSync } = useGlobalSync();
 
   const [weight, setWeight] = useState("");
   const [history, setHistory] = useState<BodyWeight[]>([]);
@@ -39,6 +107,11 @@ export default function BodyWeightScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [deletedWeight, setDeletedWeight] = useState<BodyWeight | null>(null);
+  const [syncState, setSyncState] = useState<SyncState>("synced");
+  const [isSaving, setIsSaving] = useState(false);
+
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const logDate = formatDate(selectedDate);
   const weekStart = getWeekStart(selectedDate);
@@ -66,7 +139,7 @@ export default function BodyWeightScreen() {
   }, [loadWeights]);
 
   /* =========================
-     PULL-TO-REFRESH SYNC
+     PULL-TO-REFRESH (GLOBAL SYNC)
      ========================= */
   const handleRefresh = async () => {
     if (!user) return;
@@ -74,21 +147,14 @@ export default function BodyWeightScreen() {
     setRefreshing(true);
     try {
       log.info("Pull-to-refresh triggered");
-      const result = await syncWeightQueue(user.uid);
 
-      if (result.success) {
-        log.success(
-          "Sync completed",
-          `Synced: ${result.synced}, Failed: ${result.failed}, Pending: ${result.pendingCount}`,
-        );
-        setMessage(`Synced ${result.synced} records ✓`);
-      } else if (result.failed > 0) {
-        log.warn("Sync partial", `${result.failed} records failed to sync`);
-        setMessage(`Synced ${result.synced}, Failed: ${result.failed}`);
-      }
+      // Trigger global sync - pushes local changes THEN pulls from Firebase
+      await globalSync(user.uid);
 
       // Reload data after sync
       await loadWeights();
+      setMessage("Synced ✓");
+      log.success("Body weight synced via global sync");
     } catch (error) {
       log.error(
         "Refresh sync failed",
@@ -100,6 +166,12 @@ export default function BodyWeightScreen() {
       setTimeout(() => setMessage(null), 2000);
     }
   };
+
+  // Refresh when global sync happens on another screen
+  useEffect(() => {
+    if (!user || refreshVersion === 0) return;
+    loadWeights();
+  }, [refreshVersion]);
   /* =========================
      SAVE / UPDATE
      ========================= */
@@ -109,42 +181,92 @@ export default function BodyWeightScreen() {
       return;
     }
 
-    // Allow multiple entries per week (daily flexibility)
-    // Just add/update entry for this date
-    const newWeight: BodyWeight = {
-      id: `${user.uid}_${logDate}`, // Use date as part of ID
-      userId: user.uid,
-      date: logDate, // Actual date user picked
-      weekStart: formatDate(weekStart), // For grouping in analytics
-      weight: Number(weight),
-      createdAt: Date.now(),
-      isSynced: 0, // Mark as unsynced - will sync on app focus
-    };
+    // Guard against double saves
+    if (isSaving || refreshing) {
+      setMessage("Please wait...");
+      return;
+    }
 
-    await insertWeight(newWeight);
+    setIsSaving(true);
+    setSyncState("syncing");
 
-    setMessage("Weight saved ✓ (syncing...)");
-    loadWeights();
-    log.success("Weight saved", `${weight}kg on ${logDate}`);
+    try {
+      // Allow multiple entries per week (daily flexibility)
+      // Just add/update entry for this date
+      const newWeight: BodyWeight = {
+        id: `${user.uid}_${logDate}`, // Use date as part of ID
+        userId: user.uid,
+        date: logDate, // Actual date user picked
+        weekStart: formatDate(weekStart), // For grouping in analytics
+        weight: Number(weight),
+        createdAt: Date.now(),
+        isSynced: 0, // Mark as unsynced - will sync on app focus
+      };
 
-    setTimeout(() => setMessage(null), 1500);
+      await insertWeight(newWeight);
+
+      setMessage("Weight saved ✓ (syncing...)");
+      loadWeights();
+      log.success("Weight saved", `${weight}kg on ${logDate}`);
+      setSyncState("pending");
+
+      setTimeout(() => setMessage(null), 1500);
+    } catch (error) {
+      log.error(
+        "Save failed",
+        error instanceof Error ? error.message : String(error),
+      );
+      setMessage("Failed to save weight");
+      setSyncState("failed");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   /* =========================
-     DELETE
+     DELETE WITH UNDO
      ========================= */
   async function deleteWeight(item: BodyWeight) {
     if (!user) return;
 
+    // Guard against delete while syncing/refreshing
+    if (refreshing || isSaving) {
+      setMessage("Please wait until sync completes");
+      return;
+    }
+
+    // Store for undo
+    setDeletedWeight(item);
+
+    // Remove from UI immediately
+    setHistory((prev) => prev.filter((w) => w.id !== item.id));
+
     // Soft delete (will be synced later)
     await softDeleteWeight(item.id);
-
-    setMessage("Weight deleted ✓ (syncing...)");
-    loadWeights();
     log.success("Weight deleted", item.id);
 
-    setTimeout(() => setMessage(null), 1500);
+    // Start undo timer (5 seconds)
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = setTimeout(() => {
+      setDeletedWeight(null);
+    }, 5000);
   }
+
+  const undoDelete = async () => {
+    if (!deletedWeight || !user) return;
+
+    // Re-insert the weight
+    await insertWeight({
+      ...deletedWeight,
+      isDeleted: 0,
+    });
+
+    setDeletedWeight(null);
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+
+    loadWeights();
+    log.info(`Undo delete ${deletedWeight.id}`);
+  };
 
   /* =========================
      SAFE UUID
@@ -161,167 +283,730 @@ export default function BodyWeightScreen() {
     }
   }
 
+  // Calculate stats
+  const currentWeight = history[0]?.weight || 0;
+  const previousWeight = history[1]?.weight || currentWeight;
+  const weightChange = currentWeight - previousWeight;
+  const firstWeight = history[history.length - 1]?.weight || currentWeight;
+  const totalChange = currentWeight - firstWeight;
+
+  // Chart data (last 7 entries)
+  const chartData = [...history].reverse().slice(-7);
+  const chartWidth = SCREEN_WIDTH - spacing.md * 4;
+  const chartHeight = 120;
+
   /* =========================
      UI
      ========================= */
   return (
     <ScrollView
-      style={{
-        flex: 1,
-        backgroundColor: colors.background,
+      style={{ flex: 1, backgroundColor: colors.background }}
+      contentContainerStyle={{
         padding: spacing.md,
+        paddingBottom: spacing.xxl,
       }}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
           onRefresh={handleRefresh}
           tintColor={colors.accent}
-          title="Pull to sync weights..."
-          titleColor={colors.textSecondary}
         />
       }
     >
-      <Text
+      {/* HEADER */}
+      <Animated.View entering={FadeInDown.duration(400)}>
+        <Text
+          style={{
+            ...typography.h1,
+            color: colors.textPrimary,
+            marginBottom: spacing.xs,
+          }}
+        >
+          Body Weight
+        </Text>
+        <Text
+          style={{
+            ...typography.body,
+            color: colors.textSecondary,
+            marginBottom: spacing.lg,
+          }}
+        >
+          Track your progress • Pull to refresh
+        </Text>
+      </Animated.View>
+
+      {/* HERO CARD - Current Weight */}
+      <Animated.View entering={FadeInUp.delay(100).duration(400)}>
+        <LinearGradient
+          colors={[colors.gradientStart, colors.gradientEnd]}
+          style={{
+            borderRadius: radius.xl,
+            padding: spacing.lg,
+            marginBottom: spacing.md,
+            ...shadows.lg,
+          }}
+        >
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+            }}
+          >
+            <View>
+              <Text
+                style={{
+                  ...typography.caption,
+                  color: "rgba(255,255,255,0.7)",
+                  marginBottom: spacing.xs,
+                }}
+              >
+                Current Weight
+              </Text>
+              <View style={{ flexDirection: "row", alignItems: "baseline" }}>
+                <Text style={{ ...typography.display, color: "#fff" }}>
+                  {currentWeight || "—"}
+                </Text>
+                <Text
+                  style={{
+                    ...typography.h3,
+                    color: "rgba(255,255,255,0.8)",
+                    marginLeft: spacing.xs,
+                  }}
+                >
+                  kg
+                </Text>
+              </View>
+            </View>
+
+            {/* Change Indicator */}
+            {history.length > 1 && (
+              <View
+                style={{
+                  backgroundColor: "rgba(255,255,255,0.2)",
+                  paddingVertical: spacing.xs,
+                  paddingHorizontal: spacing.sm,
+                  borderRadius: radius.lg,
+                  flexDirection: "row",
+                  alignItems: "center",
+                }}
+              >
+                <Ionicons
+                  name={
+                    weightChange > 0
+                      ? "arrow-up"
+                      : weightChange < 0
+                        ? "arrow-down"
+                        : "remove"
+                  }
+                  size={14}
+                  color="#fff"
+                />
+                <Text
+                  style={{
+                    color: "#fff",
+                    fontWeight: "600",
+                    fontSize: 14,
+                    marginLeft: 4,
+                  }}
+                >
+                  {Math.abs(weightChange).toFixed(1)} kg
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Mini Stats */}
+          <View
+            style={{
+              flexDirection: "row",
+              marginTop: spacing.lg,
+              gap: spacing.lg,
+            }}
+          >
+            <View>
+              <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}>
+                Total Change
+              </Text>
+              <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
+                {totalChange > 0 ? "+" : ""}
+                {totalChange.toFixed(1)} kg
+              </Text>
+            </View>
+            <View>
+              <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}>
+                Entries
+              </Text>
+              <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
+                {history.length}
+              </Text>
+            </View>
+          </View>
+        </LinearGradient>
+      </Animated.View>
+
+      {/* WEIGHT TREND CHART */}
+      {chartData.length >= 2 && (
+        <Animated.View
+          entering={FadeInUp.delay(150).duration(400)}
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: radius.xl,
+            padding: spacing.md,
+            marginBottom: spacing.md,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            ...shadows.sm,
+          }}
+        >
+          <Text
+            style={{
+              ...typography.label,
+              color: colors.textMuted,
+              marginBottom: spacing.md,
+            }}
+          >
+            WEIGHT TREND
+          </Text>
+          <WeightChart
+            data={chartData}
+            width={chartWidth}
+            height={chartHeight}
+            colors={colors}
+          />
+        </Animated.View>
+      )}
+
+      {/* INPUT SECTION */}
+      <Animated.View
+        entering={FadeInUp.delay(200).duration(400)}
         style={{
-          fontSize: 24,
-          fontWeight: "700",
-          color: colors.textPrimary,
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          padding: spacing.lg,
           marginBottom: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
         }}
       >
-        Body Weight Tracker
-      </Text>
-
-      {/* INPUT */}
-      <Card>
-        <TextInput
-          placeholder="Weight (kg)"
-          placeholderTextColor={colors.textSecondary}
-          value={weight}
-          onChangeText={setWeight}
-          keyboardType="decimal-pad"
+        <Text
           style={{
-            padding: spacing.md,
-            borderRadius: radius.md,
-            borderWidth: 1,
-            borderColor: colors.border,
-            color: colors.textPrimary,
+            ...typography.label,
+            color: colors.textMuted,
             marginBottom: spacing.md,
           }}
-        />
-      </Card>
-
-      {/* DATE PICKER (Allow daily updates) */}
-      <Pressable
-        onPress={() => setShowDatePicker(true)}
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          backgroundColor: colors.card,
-          padding: spacing.md,
-          borderRadius: radius.md,
-          borderWidth: 1,
-          borderColor: colors.border,
-          marginBottom: spacing.md,
-        }}
-      >
-        <View>
-          <Text style={{ color: colors.textPrimary, fontWeight: "600" }}>
-            {logDate}
-          </Text>
-          <Text
-            style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }}
-          >
-            Week of {formatDate(weekStart)}
-          </Text>
-        </View>
-        <Ionicons
-          name="calendar-outline"
-          size={20}
-          color={colors.textSecondary}
-        />
-      </Pressable>
-
-      {showDatePicker && (
-        <DateTimePicker
-          value={selectedDate}
-          mode="date"
-          maximumDate={new Date()}
-          onChange={(_, date) => {
-            setShowDatePicker(false);
-            if (!date) return;
-            // Allow any past date
-            setSelectedDate(date);
-            log.info(`Date selected: ${formatDate(date)}`);
-          }}
-        />
-      )}
-
-      {message && (
-        <Text style={{ textAlign: "center", color: colors.textSecondary }}>
-          {message}
+        >
+          LOG WEIGHT
         </Text>
-      )}
 
-      <Pressable
-        onPress={saveWeight}
-        style={{
-          backgroundColor: colors.accent,
-          padding: spacing.md,
-          borderRadius: radius.md,
-          alignItems: "center",
-          marginBottom: spacing.lg,
-        }}
-      >
-        <Text style={{ color: "#fff", fontWeight: "600" }}>Save / Update</Text>
-      </Pressable>
+        {/* Animated Weight Scale */}
+        <View style={{ alignItems: "center", marginBottom: spacing.md }}>
+          <WeightScale
+            weight={parseFloat(weight) || 0}
+            size={200}
+            maxWeight={200}
+            colors={colors}
+          />
+        </View>
 
-      {/* HISTORY */}
-      <Text
-        style={{
-          fontSize: 18,
-          fontWeight: "600",
-          color: colors.textPrimary,
-          marginBottom: spacing.sm,
-        }}
-      >
-        History
-      </Text>
-
-      {history.map((item, index) => {
-        const prev = history[index + 1];
-        const diff = prev ? item.weight - prev.weight : 0;
-
-        return (
-          <Card key={item.id}>
-            <View
+        {/* Weight Input with +/- buttons */}
+        <View style={{ marginBottom: spacing.md }}>
+          <Text
+            style={{
+              ...typography.caption,
+              color: colors.textSecondary,
+              marginBottom: spacing.xs,
+            }}
+          >
+            Enter Weight
+          </Text>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: spacing.sm,
+            }}
+          >
+            <LongPressButton
+              onIncrement={() => {
+                const current = parseFloat(weight) || 0;
+                if (current > 0.5) setWeight((current - 0.5).toFixed(1));
+              }}
               style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
+                width: 48,
+                height: 48,
+                borderRadius: radius.md,
+                backgroundColor: colors.surfaceElevated,
+                justifyContent: "center",
                 alignItems: "center",
               }}
             >
-              <Text style={{ color: colors.textPrimary }}>
-                {item.date}: {item.weight} kg{" "}
-                {prev && (
-                  <Text>
-                    {diff > 0 ? "↑" : diff < 0 ? "↓" : "→"}{" "}
-                    {Math.abs(diff).toFixed(1)} kg
-                  </Text>
-                )}
-              </Text>
+              <Ionicons name="remove" size={24} color={colors.textSecondary} />
+            </LongPressButton>
+            <TextInput
+              placeholder="0.0"
+              placeholderTextColor={colors.textMuted}
+              value={weight}
+              onChangeText={setWeight}
+              keyboardType="decimal-pad"
+              style={{
+                flex: 1,
+                padding: spacing.md,
+                borderRadius: radius.md,
+                backgroundColor: colors.surfaceElevated,
+                color: colors.textPrimary,
+                fontSize: 24,
+                fontWeight: "600",
+                textAlign: weight ? "center" : "left",
+              }}
+            />
+            <LongPressButton
+              onIncrement={() => {
+                const current = parseFloat(weight) || 0;
+                setWeight((current + 0.5).toFixed(1));
+              }}
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: radius.md,
+                backgroundColor: colors.accentLight,
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <Ionicons name="add" size={24} color={colors.accent} />
+            </LongPressButton>
+            <Text style={{ ...typography.body, color: colors.textSecondary }}>
+              kg
+            </Text>
+          </View>
+        </View>
 
-              <Pressable onPress={() => deleteWeight(item)}>
-                <Ionicons
-                  name="trash-outline"
-                  size={18}
-                  color={colors.textSecondary}
-                />
-              </Pressable>
+        {/* Date Picker */}
+        <View style={{ marginBottom: spacing.md }}>
+          <Text
+            style={{
+              ...typography.caption,
+              color: colors.textSecondary,
+              marginBottom: spacing.xs,
+            }}
+          >
+            Date
+          </Text>
+          <Pressable
+            onPress={() => setShowDatePicker(true)}
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: spacing.md,
+              borderRadius: radius.md,
+              backgroundColor: colors.surfaceElevated,
+            }}
+          >
+            <View>
+              <Text
+                style={{ ...typography.bodyMedium, color: colors.textPrimary }}
+              >
+                {logDate}
+              </Text>
+              <Text style={{ ...typography.caption, color: colors.textMuted }}>
+                Week of {formatDate(weekStart)}
+              </Text>
             </View>
-          </Card>
-        );
-      })}
+            <View
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: radius.md,
+                backgroundColor: colors.accentLight,
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <Ionicons
+                name="calendar-outline"
+                size={18}
+                color={colors.accent}
+              />
+            </View>
+          </Pressable>
+        </View>
+
+        {showDatePicker && (
+          <DateTimePicker
+            value={selectedDate}
+            mode="date"
+            maximumDate={new Date()}
+            onChange={(_, date) => {
+              setShowDatePicker(false);
+              if (!date) return;
+              setSelectedDate(date);
+              log.info(`Date selected: ${formatDate(date)}`);
+            }}
+          />
+        )}
+
+        {/* Message */}
+        {message && (
+          <Text
+            style={{
+              textAlign: "center",
+              color: message.includes("✓")
+                ? colors.success
+                : colors.textSecondary,
+              marginBottom: spacing.md,
+              fontWeight: "500",
+            }}
+          >
+            {message}
+          </Text>
+        )}
+
+        {/* Save Button */}
+        <Pressable
+          onPress={saveWeight}
+          style={{
+            backgroundColor: colors.accent,
+            padding: spacing.md,
+            borderRadius: radius.lg,
+            alignItems: "center",
+            ...shadows.md,
+          }}
+        >
+          <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
+            Save Weight
+          </Text>
+        </Pressable>
+      </Animated.View>
+
+      {/* HISTORY */}
+      <Animated.View entering={FadeInUp.delay(300).duration(400)}>
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: spacing.md,
+            marginTop: spacing.sm,
+          }}
+        >
+          <Text style={{ ...typography.label, color: colors.textMuted }}>
+            HISTORY
+          </Text>
+          <Text style={{ ...typography.caption, color: colors.textMuted }}>
+            Swipe left to delete
+          </Text>
+        </View>
+
+        {history.length === 0 ? (
+          <View
+            style={{
+              backgroundColor: colors.surface,
+              borderRadius: radius.xl,
+              padding: spacing.xl,
+              alignItems: "center",
+              borderWidth: 1,
+              borderColor: colors.cardBorder,
+            }}
+          >
+            <Ionicons name="scale-outline" size={40} color={colors.textMuted} />
+            <Text
+              style={{
+                ...typography.body,
+                color: colors.textSecondary,
+                marginTop: spacing.sm,
+              }}
+            >
+              No entries yet
+            </Text>
+          </View>
+        ) : (
+          history.map((item, index) => (
+            <WeightSwipeRow
+              key={item.id}
+              item={item}
+              prevItem={history[index + 1]}
+              onDelete={() => deleteWeight(item)}
+              index={index}
+              disabled={refreshing || isSaving}
+            />
+          ))
+        )}
+      </Animated.View>
+
+      {/* UNDO TOAST */}
+      {deletedWeight && (
+        <Animated.View
+          entering={FadeInUp.duration(200)}
+          style={{
+            position: "absolute",
+            bottom: spacing.xxl,
+            left: spacing.md,
+            right: spacing.md,
+            backgroundColor: colors.surface,
+            borderRadius: radius.xl,
+            padding: spacing.md,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            ...shadows.lg,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+          }}
+        >
+          <Text style={{ ...typography.body, color: colors.textPrimary }}>
+            Weight deleted
+          </Text>
+          <Pressable
+            onPress={undoDelete}
+            style={{
+              backgroundColor: colors.accent,
+              paddingVertical: spacing.xs,
+              paddingHorizontal: spacing.md,
+              borderRadius: radius.lg,
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "600" }}>Undo</Text>
+          </Pressable>
+        </Animated.View>
+      )}
     </ScrollView>
+  );
+}
+
+/* =========================
+   SWIPE ROW COMPONENT
+   ========================= */
+function WeightSwipeRow({
+  item,
+  prevItem,
+  onDelete,
+  index,
+  disabled = false,
+}: {
+  item: BodyWeight;
+  prevItem?: BodyWeight;
+  onDelete: () => void;
+  index: number;
+  disabled?: boolean;
+}) {
+  const { colors, spacing, radius, typography, shadows } = useTheme();
+  const translateX = useSharedValue(0);
+
+  const diff = prevItem ? item.weight - prevItem.weight : 0;
+
+  const pan = Gesture.Pan()
+    .enabled(!disabled)
+    .onUpdate((e) => {
+      translateX.value = Math.min(0, e.translationX);
+    })
+    .onEnd(() => {
+      if (translateX.value < SWIPE_THRESHOLD) {
+        translateX.value = withTiming(-DELETE_WIDTH);
+      } else {
+        translateX.value = withTiming(0);
+      }
+    });
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  return (
+    <Animated.View
+      entering={FadeInUp.delay(350 + index * 30).duration(300)}
+      style={{
+        marginBottom: spacing.sm,
+        borderRadius: radius.xl,
+        overflow: "hidden",
+      }}
+    >
+      {/* DELETE ACTION */}
+      <View
+        style={{
+          position: "absolute",
+          right: 0,
+          top: 0,
+          bottom: 0,
+          width: DELETE_WIDTH,
+          backgroundColor: colors.error,
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <Pressable onPress={onDelete} style={{ padding: spacing.md }}>
+          <Ionicons name="trash" size={22} color="#FFF" />
+        </Pressable>
+      </View>
+
+      <GestureDetector gesture={pan}>
+        <Animated.View
+          style={[
+            animatedStyle,
+            {
+              backgroundColor: colors.surface,
+              padding: spacing.md,
+              borderRadius: radius.xl,
+              borderWidth: 1,
+              borderColor: colors.cardBorder,
+              flexDirection: "row",
+              alignItems: "center",
+              ...shadows.sm,
+            },
+          ]}
+        >
+          {/* Date */}
+          <View
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: radius.lg,
+              backgroundColor: colors.surfaceElevated,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: spacing.sm,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 18,
+                fontWeight: "700",
+                color: colors.textPrimary,
+              }}
+            >
+              {new Date(item.date).getDate()}
+            </Text>
+            <Text
+              style={{
+                fontSize: 10,
+                color: colors.textMuted,
+                textTransform: "uppercase",
+              }}
+            >
+              {new Date(item.date).toLocaleDateString("en", { month: "short" })}
+            </Text>
+          </View>
+
+          {/* Weight */}
+          <View style={{ flex: 1 }}>
+            <Text style={{ ...typography.h3, color: colors.textPrimary }}>
+              {item.weight} kg
+            </Text>
+            {prevItem && (
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Ionicons
+                  name={
+                    diff > 0 ? "arrow-up" : diff < 0 ? "arrow-down" : "remove"
+                  }
+                  size={12}
+                  color={
+                    diff > 0
+                      ? colors.error
+                      : diff < 0
+                        ? colors.success
+                        : colors.textMuted
+                  }
+                />
+                <Text
+                  style={{
+                    ...typography.caption,
+                    color:
+                      diff > 0
+                        ? colors.error
+                        : diff < 0
+                          ? colors.success
+                          : colors.textMuted,
+                    marginLeft: 2,
+                  }}
+                >
+                  {Math.abs(diff).toFixed(1)} kg
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Chevron hint */}
+          <Ionicons name="chevron-back" size={16} color={colors.textMuted} />
+        </Animated.View>
+      </GestureDetector>
+    </Animated.View>
+  );
+}
+
+/* =========================
+   WEIGHT CHART COMPONENT
+   ========================= */
+function WeightChart({
+  data,
+  width,
+  height,
+  colors,
+}: {
+  data: BodyWeight[];
+  width: number;
+  height: number;
+  colors: any;
+}) {
+  if (data.length < 2) return null;
+
+  const weights = data.map((d) => d.weight);
+  const minWeight = Math.min(...weights) - 1;
+  const maxWeight = Math.max(...weights) + 1;
+  const range = maxWeight - minWeight || 1;
+
+  const xStep = width / (data.length - 1);
+  const points = data.map((d, i) => ({
+    x: i * xStep,
+    y: height - ((d.weight - minWeight) / range) * height,
+  }));
+
+  const polylinePoints = points.map((p) => `${p.x},${p.y}`).join(" ");
+
+  return (
+    <Svg width={width} height={height + 20}>
+      <Defs>
+        <SvgGradient id="lineGradient" x1="0" y1="0" x2="1" y2="0">
+          <Stop offset="0" stopColor={colors.accent} stopOpacity="0.3" />
+          <Stop offset="1" stopColor={colors.accent} stopOpacity="1" />
+        </SvgGradient>
+      </Defs>
+
+      {/* Grid lines */}
+      {[0, 0.5, 1].map((ratio, i) => (
+        <Line
+          key={i}
+          x1={0}
+          y1={height * ratio}
+          x2={width}
+          y2={height * ratio}
+          stroke={colors.divider}
+          strokeWidth={1}
+          strokeDasharray="4,4"
+        />
+      ))}
+
+      {/* Line */}
+      <Polyline
+        points={polylinePoints}
+        fill="none"
+        stroke="url(#lineGradient)"
+        strokeWidth={3}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+
+      {/* Points */}
+      {points.map((p, i) => (
+        <Circle
+          key={i}
+          cx={p.x}
+          cy={p.y}
+          r={i === points.length - 1 ? 6 : 4}
+          fill={colors.accent}
+        />
+      ))}
+    </Svg>
   );
 }

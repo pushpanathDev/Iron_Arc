@@ -1,4 +1,6 @@
+import { Ionicons } from "@expo/vector-icons";
 import * as Google from "expo-auth-session/providers/google";
+import Constants from "expo-constants";
 import * as WebBrowser from "expo-web-browser";
 import {
   createUserWithEmailAndPassword,
@@ -9,21 +11,31 @@ import {
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { router } from "expo-router";
-import { auth } from "../src/firebase/config";
-import { useTheme } from "../src/theme/theme";
-import { useAuth } from "../src/auth/AuthContext";
+import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
+import { useAuth } from "../auth/AuthContext";
+import { auth } from "../firebase/config";
+import { useTheme } from "../theme/theme";
 
 WebBrowser.maybeCompleteAuthSession();
 
+// Android Client ID - Create in Google Cloud Console:
+// 1. Go to https://console.cloud.google.com/apis/credentials
+// 2. Create OAuth Client ID > Android
+// 3. Package: com.pushpanath_mr.GymTracker
+// 4. SHA-1: Get from `eas credentials`
+// 5. Paste the client ID below
+const ANDROID_CLIENT_ID =
+  "89046456850-s6069mv6aljj1cs3knio49fmtt6b4v6e.apps.googleusercontent.com";
+
 export default function LoginScreen() {
-  const { colors, spacing, radius } = useTheme();
-  const { user } = useAuth();
+  const { colors, spacing, radius, typography, shadows } = useTheme();
+  const { user, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -31,15 +43,13 @@ export default function LoginScreen() {
   const [isSignup, setIsSignup] = useState(false);
 
   const [request, response, promptAsync] = Google.useAuthRequest({
-    androidClientId: "YOUR_ANDROID_CLIENT_ID",
-    webClientId: "YOUR_WEB_CLIENT_ID",
+    webClientId:
+      "89046456850-3sfgpbt5fg60uv1735p3lnedo5pvq8sd.apps.googleusercontent.com",
+    androidClientId: ANDROID_CLIENT_ID,
   });
 
-  useEffect(() => {
-  if (user) {
-    router.replace("/(tabs)");
-  }
-}, [user]);
+  // Navigation is handled by _layout.tsx - no need to navigate here
+  // Just show loading state while auth is processing
 
   /* =====================
      EMAIL / PASSWORD AUTH
@@ -59,14 +69,12 @@ export default function LoginScreen() {
       } else {
         await signInWithEmailAndPassword(auth, email, password);
       }
-
-      // ✅ FORCE navigation immediately
-      router.replace("/(tabs)");
+      // Navigation handled by _layout.tsx after auth state changes
     } catch (err: any) {
       setError(err.message);
-    } finally {
       setLoading(false);
     }
+    // Don't setLoading(false) on success - keep showing loader until navigation
   };
 
   /* =====================
@@ -81,19 +89,33 @@ export default function LoginScreen() {
         return;
       }
 
+      setLoading(true);
       const credential = GoogleAuthProvider.credential(idToken);
 
-      signInWithCredential(auth, credential)
-        .then(() => {
-          // ✅ FORCE navigation
-          router.replace("/(tabs)");
-        })
-        .catch((err) => {
-          console.error("Google Sign-In error", err);
-          setError("Google Sign-In failed");
-        });
+      signInWithCredential(auth, credential).catch((err) => {
+        console.error("Google Sign-In error", err);
+        setError("Google Sign-In failed");
+        setLoading(false);
+      });
+      // Navigation handled by _layout.tsx after auth state changes
     }
   }, [response]);
+
+  // Show loading overlay while authenticating or if user exists (about to navigate)
+  if (user || authLoading) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: colors.background,
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <ActivityIndicator size="large" color={colors.accent} />
+      </View>
+    );
+  }
 
   return (
     <View
@@ -104,120 +126,275 @@ export default function LoginScreen() {
         justifyContent: "center",
       }}
     >
-      <Text
-        style={{
-          fontSize: 28,
-          fontWeight: "700",
-          color: colors.textPrimary,
-          marginBottom: spacing.sm,
-        }}
+      {/* LOGO / BRAND */}
+      <Animated.View
+        entering={FadeInDown.delay(100).duration(500)}
+        style={{ alignItems: "center", marginBottom: spacing.xl }}
       >
-        {isSignup ? "Create Account" : "Welcome Back"}
-      </Text>
-
-      <Text
-        style={{
-          color: colors.textSecondary,
-          marginBottom: spacing.lg,
-        }}
-      >
-        {isSignup
-          ? "Sign up to start tracking your workouts"
-          : "Log in to continue your fitness journey"}
-      </Text>
-
-      {/* Email */}
-      <TextInput
-        placeholder="Email"
-        placeholderTextColor={colors.textSecondary}
-        autoCapitalize="none"
-        keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
-        style={{
-          borderWidth: 1,
-          borderColor: colors.border,
-          borderRadius: radius.md,
-          padding: spacing.sm,
-          color: colors.textPrimary,
-          marginBottom: spacing.sm,
-        }}
-      />
-
-      {/* Password */}
-      <TextInput
-        placeholder="Password"
-        placeholderTextColor={colors.textSecondary}
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-        style={{
-          borderWidth: 1,
-          borderColor: colors.border,
-          borderRadius: radius.md,
-          padding: spacing.sm,
-          color: colors.textPrimary,
-          marginBottom: spacing.md,
-        }}
-      />
-
-      {error && (
-        <Text style={{ color: "red", marginBottom: spacing.sm }}>
-          {error}
+        <View
+          style={{
+            width: 100,
+            height: 100,
+            borderRadius: radius.full,
+            justifyContent: "center",
+            alignItems: "center",
+            marginBottom: spacing.md,
+            backgroundColor: "#000",
+            overflow: "hidden",
+            ...shadows.lg,
+          }}
+        >
+          <Image
+            source={require("../assets/images/icon.png")}
+            style={{ width: 100, height: 100 }}
+            resizeMode="contain"
+          />
+        </View>
+        <Text style={{ ...typography.h1, color: colors.textPrimary }}>
+          Iron Arc
         </Text>
-      )}
-
-      {/* Login / Signup */}
-      <Pressable
-        onPress={handleAuth}
-        disabled={loading}
-        style={{
-          backgroundColor: colors.accent,
-          padding: spacing.sm,
-          borderRadius: radius.md,
-          alignItems: "center",
-          marginBottom: spacing.md,
-        }}
-      >
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
-            {isSignup ? "Sign Up" : "Login"}
-          </Text>
-        )}
-      </Pressable>
-
-      {/* Google */}
-      <Pressable
-        onPress={() => promptAsync()}
-        style={{
-          borderWidth: 1,
-          borderColor: colors.border,
-          padding: spacing.sm,
-          borderRadius: radius.md,
-          alignItems: "center",
-          marginBottom: spacing.md,
-        }}
-      >
-        <Text style={{ color: colors.textPrimary, fontWeight: "600" }}>
-          Continue with Google
+        <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+          Forge your strength
         </Text>
-      </Pressable>
+      </Animated.View>
 
-      {/* Toggle */}
-      <Pressable onPress={() => setIsSignup(!isSignup)}>
+      {/* HEADER */}
+      <Animated.View entering={FadeInUp.delay(200).duration(400)}>
         <Text
           style={{
+            ...typography.h2,
+            color: colors.textPrimary,
+            marginBottom: spacing.xs,
+          }}
+        >
+          {isSignup ? "Create Account" : "Welcome Back"}
+        </Text>
+
+        <Text
+          style={{
+            ...typography.body,
             color: colors.textSecondary,
-            textAlign: "center",
+            marginBottom: spacing.lg,
           }}
         >
           {isSignup
-            ? "Already have an account? Login"
-            : "New here? Create an account"}
+            ? "Sign up to start tracking your workouts"
+            : "Log in to continue your fitness journey"}
         </Text>
-      </Pressable>
+      </Animated.View>
+
+      {/* FORM */}
+      <Animated.View entering={FadeInUp.delay(300).duration(400)}>
+        {/* Email */}
+        <View style={{ marginBottom: spacing.sm }}>
+          <Text
+            style={{
+              ...typography.caption,
+              color: colors.textSecondary,
+              marginBottom: spacing.xs,
+            }}
+          >
+            Email
+          </Text>
+          <TextInput
+            placeholder="your@email.com"
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+            style={{
+              backgroundColor: colors.surface,
+              borderWidth: 1,
+              borderColor: colors.cardBorder,
+              borderRadius: radius.lg,
+              padding: spacing.md,
+              color: colors.textPrimary,
+              fontSize: typography.body.fontSize,
+            }}
+          />
+        </View>
+
+        {/* Password */}
+        <View style={{ marginBottom: spacing.md }}>
+          <Text
+            style={{
+              ...typography.caption,
+              color: colors.textSecondary,
+              marginBottom: spacing.xs,
+            }}
+          >
+            Password
+          </Text>
+          <TextInput
+            placeholder="••••••••"
+            placeholderTextColor={colors.textMuted}
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+            style={{
+              backgroundColor: colors.surface,
+              borderWidth: 1,
+              borderColor: colors.cardBorder,
+              borderRadius: radius.lg,
+              padding: spacing.md,
+              color: colors.textPrimary,
+              fontSize: typography.body.fontSize,
+            }}
+          />
+        </View>
+
+        {/* Error */}
+        {error && (
+          <View
+            style={{
+              backgroundColor: colors.errorLight,
+              padding: spacing.sm,
+              borderRadius: radius.md,
+              marginBottom: spacing.md,
+              flexDirection: "row",
+              alignItems: "center",
+            }}
+          >
+            <Ionicons
+              name="alert-circle"
+              size={18}
+              color={colors.error}
+              style={{ marginRight: spacing.xs }}
+            />
+            <Text style={{ color: colors.error, flex: 1, fontSize: 14 }}>
+              {error}
+            </Text>
+          </View>
+        )}
+
+        {/* Login / Signup Button */}
+        <Pressable
+          onPress={handleAuth}
+          disabled={loading}
+          style={{
+            backgroundColor: colors.accent,
+            padding: spacing.md,
+            borderRadius: radius.xl,
+            alignItems: "center",
+            marginBottom: spacing.md,
+            opacity: loading ? 0.6 : 1,
+            ...shadows.md,
+          }}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 18 }}>
+              {isSignup ? "Sign Up" : "Login"}
+            </Text>
+          )}
+        </Pressable>
+
+        {/* Divider */}
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            marginBottom: spacing.md,
+          }}
+        >
+          <View
+            style={{ flex: 1, height: 1, backgroundColor: colors.divider }}
+          />
+          <Text
+            style={{
+              ...typography.caption,
+              color: colors.textMuted,
+              marginHorizontal: spacing.md,
+            }}
+          >
+            or
+          </Text>
+          <View
+            style={{ flex: 1, height: 1, backgroundColor: colors.divider }}
+          />
+        </View>
+
+        {/* Google */}
+        <Pressable
+          onPress={() => promptAsync()}
+          style={{
+            backgroundColor: colors.surface,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            padding: spacing.md,
+            borderRadius: radius.xl,
+            alignItems: "center",
+            marginBottom: spacing.lg,
+            flexDirection: "row",
+            justifyContent: "center",
+          }}
+        >
+          <Ionicons
+            name="logo-google"
+            size={20}
+            color={colors.textPrimary}
+            style={{ marginRight: spacing.sm }}
+          />
+          <Text
+            style={{
+              color: colors.textPrimary,
+              fontWeight: "600",
+              fontSize: 16,
+            }}
+          >
+            Continue with Google
+          </Text>
+        </Pressable>
+
+        {/* Toggle */}
+        <Pressable onPress={() => setIsSignup(!isSignup)}>
+          <Text
+            style={{
+              ...typography.body,
+              color: colors.textSecondary,
+              textAlign: "center",
+            }}
+          >
+            {isSignup ? "Already have an account? " : "New here? "}
+            <Text style={{ color: colors.accent, fontWeight: "600" }}>
+              {isSignup ? "Login" : "Create an account"}
+            </Text>
+          </Text>
+        </Pressable>
+      </Animated.View>
+
+      {/* DEVELOPER CREDITS */}
+      <Animated.View
+        entering={FadeInUp.delay(600).duration(400)}
+        style={{
+          position: "absolute",
+          bottom: spacing.lg,
+          left: 0,
+          right: 0,
+          alignItems: "center",
+        }}
+      >
+        <Text
+          style={{
+            ...typography.caption,
+            color: colors.textMuted,
+            textAlign: "center",
+          }}
+        >
+          Designed & Built by Pushpanath
+        </Text>
+        <Text
+          style={{
+            ...typography.caption,
+            color: colors.textMuted,
+            opacity: 0.6,
+          }}
+        >
+          Version {Constants.expoConfig?.version || "1.0.0"}
+        </Text>
+      </Animated.View>
     </View>
   );
 }

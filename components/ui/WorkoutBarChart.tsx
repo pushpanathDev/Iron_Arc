@@ -1,7 +1,7 @@
 import { Text, View } from "react-native";
 import { ScrollView } from "react-native-gesture-handler";
 import Svg, { Line, Rect, G } from "react-native-svg";
-import { useTheme } from "../../src/theme/theme";
+import { useTheme } from "../../theme/theme";
 
 export type WeeklyWorkoutBar = {
   weekStart: string;

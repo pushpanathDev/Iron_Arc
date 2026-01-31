@@ -12,7 +12,7 @@ import Svg, {
   Path,
   Stop,
 } from "react-native-svg";
-import { useTheme } from "../../src/theme/theme";
+import { useTheme } from "../../theme/theme";
 
 type Props = {
   data: number[];

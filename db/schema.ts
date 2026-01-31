@@ -142,23 +142,30 @@ async function runMigrations() {
                     createdAt?: number;
                   }>(`SELECT * FROM body_weight`);
 
-                  for (let i = 0; i < oldData.length; i++) {
-                    const row = oldData[i];
-                    const weight = row.weight ?? 0;
-                    const createdAt = row.createdAt ?? Date.now();
-                    const date = new Date(createdAt)
-                      .toISOString()
-                      .split("T")[0];
-                    const id = `migrated_${createdAt}_${i}`;
+                  await sqliteDb.runAsync(`BEGIN TRANSACTION`);
+                  try {
+                    for (let i = 0; i < oldData.length; i++) {
+                      const row = oldData[i];
+                      const weight = row.weight ?? 0;
+                      const createdAt = row.createdAt ?? Date.now();
+                      const date = new Date(createdAt)
+                        .toISOString()
+                        .split("T")[0];
+                      const id = `migrated_${createdAt}_${i}`;
 
-                    await sqliteDb.runAsync(
-                      `INSERT OR IGNORE INTO body_weight_new 
-                       (id, userId, date, weight, createdAt, isSynced, isDeleted)
-                       VALUES (?, ?, ?, ?, ?, 0, 0)`,
-                      [id, "migrated_user", date, weight, createdAt],
-                    );
+                      await sqliteDb.runAsync(
+                        `INSERT OR IGNORE INTO body_weight_new 
+                         (id, userId, date, weight, createdAt, isSynced, isDeleted)
+                         VALUES (?, ?, ?, ?, ?, 0, 0)`,
+                        [id, "migrated_user", date, weight, createdAt],
+                      );
+                    }
+                    await sqliteDb.runAsync(`COMMIT`);
+                    console.log(`✅ Migrated ${oldData.length} weight records`);
+                  } catch (txError) {
+                    await sqliteDb.runAsync(`ROLLBACK`);
+                    throw txError;
                   }
-                  console.log(`✅ Migrated ${oldData.length} weight records`);
                 } catch (e) {
                   console.warn("⚠️ Could not migrate old weight data:", e);
                 }

@@ -301,18 +301,34 @@ function generatePDFHTML(
         day: "numeric",
       });
 
+      const escapeHtml = (str: string): string =>
+        str.replace(/[&<>"'`]/g, (char) => {
+          const map: { [key: string]: string } = {
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+            "`": "&#96;",
+          };
+          return map[char] || char;
+        });
+
       return dayWorkouts
-        .map(
-          (w, idx) => `
+        .map((w, idx) => {
+          const exercise = escapeHtml(w.exercise);
+          const category = w.category ? escapeHtml(w.category) : "-";
+
+          return `
       <tr>
         ${idx === 0 ? `<td rowspan="${dayWorkouts.length}" class="date-cell">${formattedDate}</td>` : ""}
-        <td>${w.exercise}</td>
-        <td>${w.category || "-"}</td>
+        <td>${exercise}</td>
+        <td>${category}</td>
         <td>${w.sets.map((s) => `${s.reps}×${s.weight}kg`).join(", ")}</td>
         <td>${w.sets.reduce((sum, s) => sum + s.reps * s.weight, 0).toLocaleString()} kg</td>
       </tr>
-    `,
-        )
+    `;
+        })
         .join("");
     })
     .join("");

@@ -5,11 +5,11 @@
  * Generates clean, readable, structured reports.
  */
 
-import { Paths, File } from "expo-file-system";
-import * as Sharing from "expo-sharing";
+import { File, Paths } from "expo-file-system";
 import * as Print from "expo-print";
-import { Workout, getAllWorkouts } from "../db/workouts";
+import * as Sharing from "expo-sharing";
 import { BodyWeight, getAllWeights } from "../db/weights";
+import { Workout, getAllWorkouts } from "../db/workouts";
 
 /* ==============================
    TYPES
@@ -40,7 +40,16 @@ export type ExportFormat = "csv" | "pdf";
  * Generate CSV content for workouts
  */
 function generateWorkoutsCSV(workouts: Workout[]): string {
-  const headers = ["Date", "Exercise", "Category", "Set #", "Reps", "Weight (kg)", "Volume", "Notes"];
+  const headers = [
+    "Date",
+    "Exercise",
+    "Category",
+    "Set #",
+    "Reps",
+    "Weight (kg)",
+    "Volume",
+    "Notes",
+  ];
   const rows: string[] = [headers.join(",")];
 
   // Sort by date (newest first)
@@ -80,8 +89,9 @@ function generateWeightsCSV(weights: BodyWeight[]): string {
   for (let i = 0; i < sorted.length; i++) {
     const weight = sorted[i];
     const prevWeight = i > 0 ? sorted[i - 1].weight : null;
-    const change = prevWeight !== null ? (weight.weight - prevWeight).toFixed(1) : "-";
-    
+    const change =
+      prevWeight !== null ? (weight.weight - prevWeight).toFixed(1) : "-";
+
     const row = [
       weight.date,
       weight.weight,
@@ -99,12 +109,12 @@ function generateWeightsCSV(weights: BodyWeight[]): string {
 export async function exportToCSV(
   userId: string,
   includeWorkouts: boolean = true,
-  includeWeights: boolean = true
+  includeWeights: boolean = true,
 ): Promise<void> {
   // Fetch data from local database
   const workouts = await getAllWorkouts(userId);
   const weights = await getAllWeights(userId);
-  
+
   const timestamp = new Date().toISOString().split("T")[0];
   const cacheDir = Paths.cache.uri;
 
@@ -112,14 +122,14 @@ export async function exportToCSV(
     // If both types have data, create a combined CSV
     const hasWorkouts = includeWorkouts && workouts.length > 0;
     const hasWeights = includeWeights && weights.length > 0;
-    
+
     if (!hasWorkouts && !hasWeights) {
       throw new Error("No data to export");
     }
-    
+
     const workoutsCSV = hasWorkouts ? generateWorkoutsCSV(workouts) : "";
     const weightsCSV = hasWeights ? generateWeightsCSV(weights) : "";
-    
+
     const combined = [
       "=== IRON ARC DATA EXPORT ===",
       `Export Date: ${new Date().toLocaleDateString()}`,
@@ -129,11 +139,11 @@ export async function exportToCSV(
       ...(hasWorkouts ? ["=== WORKOUT HISTORY ===", workoutsCSV, "", ""] : []),
       ...(hasWeights ? ["=== BODY WEIGHT HISTORY ===", weightsCSV] : []),
     ].join("\n");
-    
+
     const filePath = `${cacheDir}iron-arc-export-${timestamp}.csv`;
     const file = new File(filePath);
     await file.write(combined);
-    
+
     const isAvailable = await Sharing.isAvailableAsync();
     if (isAvailable) {
       await Sharing.shareAsync(filePath, {
@@ -158,30 +168,32 @@ export async function exportToCSV(
  */
 export function calculateExportStats(
   workouts: Workout[],
-  weights: BodyWeight[]
+  weights: BodyWeight[],
 ): ExportStats {
   const totalSets = workouts.reduce((sum, w) => sum + w.sets.length, 0);
   const totalReps = workouts.reduce(
     (sum, w) => sum + w.sets.reduce((s, set) => s + set.reps, 0),
-    0
+    0,
   );
   const totalVolume = workouts.reduce(
     (sum, w) => sum + w.sets.reduce((s, set) => s + set.reps * set.weight, 0),
-    0
+    0,
   );
-  
+
   const uniqueExercises = new Set(workouts.map((w) => w.exercise)).size;
   const workoutDays = new Set(workouts.map((w) => w.date)).size;
-  
+
   // Calculate streak
-  const sortedDates = [...new Set(workouts.map((w) => w.date))].sort().reverse();
+  const sortedDates = [...new Set(workouts.map((w) => w.date))]
+    .sort()
+    .reverse();
   let currentStreak = 0;
   let longestStreak = 0;
   let tempStreak = 0;
-  
+
   const today = new Date().toISOString().split("T")[0];
   const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
-  
+
   if (sortedDates[0] === today || sortedDates[0] === yesterday) {
     currentStreak = 1;
     for (let i = 1; i < sortedDates.length; i++) {
@@ -195,7 +207,7 @@ export function calculateExportStats(
       }
     }
   }
-  
+
   // Longest streak calculation
   for (let i = 0; i < sortedDates.length; i++) {
     if (i === 0) {
@@ -213,20 +225,26 @@ export function calculateExportStats(
     }
   }
   longestStreak = Math.max(longestStreak, tempStreak);
-  
+
   // Average workouts per week
   const firstWorkout = sortedDates[sortedDates.length - 1];
-  const weeks = firstWorkout 
-    ? Math.max(1, (Date.now() - new Date(firstWorkout).getTime()) / (7 * 86400000))
+  const weeks = firstWorkout
+    ? Math.max(
+        1,
+        (Date.now() - new Date(firstWorkout).getTime()) / (7 * 86400000),
+      )
     : 1;
   const averageWorkoutsPerWeek = workoutDays / weeks;
-  
+
   // Weight stats
-  const sortedWeights = [...weights].sort((a, b) => a.date.localeCompare(b.date));
+  const sortedWeights = [...weights].sort((a, b) =>
+    a.date.localeCompare(b.date),
+  );
   const startWeight = sortedWeights[0]?.weight || null;
   const currentWeight = sortedWeights[sortedWeights.length - 1]?.weight || null;
-  const weightChange = startWeight && currentWeight ? currentWeight - startWeight : null;
-  
+  const weightChange =
+    startWeight && currentWeight ? currentWeight - startWeight : null;
+
   return {
     totalWorkouts: workouts.length,
     totalSets,
@@ -237,7 +255,8 @@ export function calculateExportStats(
     currentStreak,
     longestStreak,
     averageWorkoutsPerWeek: Math.round(averageWorkoutsPerWeek * 10) / 10,
-    weightChange: weightChange !== null ? Math.round(weightChange * 10) / 10 : null,
+    weightChange:
+      weightChange !== null ? Math.round(weightChange * 10) / 10 : null,
     startWeight,
     currentWeight,
   };
@@ -250,7 +269,7 @@ function generatePDFHTML(
   workouts: Workout[],
   weights: BodyWeight[],
   stats: ExportStats,
-  userName: string
+  userName: string,
 ): string {
   const exportDate = new Date().toLocaleDateString("en-US", {
     weekday: "long",
@@ -258,26 +277,33 @@ function generatePDFHTML(
     month: "long",
     day: "numeric",
   });
-  
+
   // Group workouts by date
-  const workoutsByDate = workouts.reduce((acc, w) => {
-    if (!acc[w.date]) acc[w.date] = [];
-    acc[w.date].push(w);
-    return acc;
-  }, {} as Record<string, Workout[]>);
-  
+  const workoutsByDate = workouts.reduce(
+    (acc, w) => {
+      if (!acc[w.date]) acc[w.date] = [];
+      acc[w.date].push(w);
+      return acc;
+    },
+    {} as Record<string, Workout[]>,
+  );
+
   const sortedDates = Object.keys(workoutsByDate).sort().reverse();
-  
+
   // Generate workout rows HTML
-  const workoutRows = sortedDates.slice(0, 50).map((date) => {
-    const dayWorkouts = workoutsByDate[date];
-    const formattedDate = new Date(date).toLocaleDateString("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-    });
-    
-    return dayWorkouts.map((w, idx) => `
+  const workoutRows = sortedDates
+    .slice(0, 50)
+    .map((date) => {
+      const dayWorkouts = workoutsByDate[date];
+      const formattedDate = new Date(date).toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+
+      return dayWorkouts
+        .map(
+          (w, idx) => `
       <tr>
         ${idx === 0 ? `<td rowspan="${dayWorkouts.length}" class="date-cell">${formattedDate}</td>` : ""}
         <td>${w.exercise}</td>
@@ -285,26 +311,39 @@ function generatePDFHTML(
         <td>${w.sets.map((s) => `${s.reps}×${s.weight}kg`).join(", ")}</td>
         <td>${w.sets.reduce((sum, s) => sum + s.reps * s.weight, 0).toLocaleString()} kg</td>
       </tr>
-    `).join("");
-  }).join("");
-  
+    `,
+        )
+        .join("");
+    })
+    .join("");
+
   // Generate weight rows HTML
-  const sortedWeights = [...weights].sort((a, b) => b.date.localeCompare(a.date));
-  const weightRows = sortedWeights.slice(0, 30).map((w, idx) => {
-    const prevWeight = sortedWeights[idx + 1]?.weight;
-    const change = prevWeight ? w.weight - prevWeight : 0;
-    const changeClass = change > 0 ? "positive" : change < 0 ? "negative" : "";
-    const changeText = prevWeight ? (change >= 0 ? `+${change.toFixed(1)}` : change.toFixed(1)) : "-";
-    
-    return `
+  const sortedWeights = [...weights].sort((a, b) =>
+    b.date.localeCompare(a.date),
+  );
+  const weightRows = sortedWeights
+    .slice(0, 30)
+    .map((w, idx) => {
+      const prevWeight = sortedWeights[idx + 1]?.weight;
+      const change = prevWeight ? w.weight - prevWeight : 0;
+      const changeClass =
+        change > 0 ? "positive" : change < 0 ? "negative" : "";
+      const changeText = prevWeight
+        ? change >= 0
+          ? `+${change.toFixed(1)}`
+          : change.toFixed(1)
+        : "-";
+
+      return `
       <tr>
         <td>${new Date(w.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
         <td><strong>${w.weight}</strong> kg</td>
         <td class="${changeClass}">${changeText}</td>
       </tr>
     `;
-  }).join("");
-  
+    })
+    .join("");
+
   return `
     <!DOCTYPE html>
     <html>
@@ -516,28 +555,28 @@ function generatePDFHTML(
  */
 export async function exportToPDF(
   userId: string,
-  userName: string = ""
+  userName: string = "",
 ): Promise<void> {
   // Fetch data from local database
   const workouts = await getAllWorkouts(userId);
   const weights = await getAllWeights(userId);
-  
+
   try {
     const stats = calculateExportStats(workouts, weights);
     const html = generatePDFHTML(workouts, weights, stats, userName);
-    
+
     const timestamp = new Date().toISOString().split("T")[0];
     const { uri } = await Print.printToFileAsync({
       html,
       base64: false,
     });
-    
+
     // Rename file to something meaningful
     const cacheDir = Paths.cache.uri;
     const newUri = `${cacheDir}iron-arc-report-${timestamp}.pdf`;
     const sourceFile = new File(uri);
     await sourceFile.move(new File(newUri));
-    
+
     const isAvailable = await Sharing.isAvailableAsync();
     if (isAvailable) {
       await Sharing.shareAsync(newUri, {

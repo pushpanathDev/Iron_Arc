@@ -3,7 +3,7 @@
  * =================================
  * Premium animated intro with gym man illustration.
  * First screen in the onboarding flow.
- * 
+ *
  * Features:
  * - Animated weightlifter illustration
  * - Brand styling with theme colors
@@ -61,43 +61,46 @@ function AnimatedWeightlifter() {
       300,
       withRepeat(
         withSequence(
-          withTiming(1, { duration: 600, easing: Easing.out(Easing.back(1.2)) }), // Push up powerfully
+          withTiming(1, {
+            duration: 600,
+            easing: Easing.out(Easing.back(1.2)),
+          }), // Push up powerfully
           withTiming(1, { duration: 400 }), // Hold at top
-          withTiming(0, { duration: 500, easing: Easing.inOut(Easing.ease) }) // Lower down
+          withTiming(0, { duration: 500, easing: Easing.inOut(Easing.ease) }), // Lower down
         ),
         -1,
-        false
-      )
+        false,
+      ),
     );
 
     // Body breathing - more pronounced during lift
     bodyPulse.value = withRepeat(
       withSequence(
         withTiming(1.04, { duration: 600 }),
-        withTiming(1, { duration: 900 })
+        withTiming(1, { duration: 900 }),
       ),
       -1,
-      true
+      true,
     );
 
     // Muscle flex pulse for emphasis
     muscleFlexPulse.value = withRepeat(
       withSequence(
         withTiming(1.08, { duration: 300 }),
-        withTiming(1, { duration: 300 })
+        withTiming(1, { duration: 300 }),
       ),
       -1,
-      true
+      true,
     );
 
     // Glow pulse - intense during lift
     glowPulse.value = withRepeat(
       withSequence(
         withTiming(0.5, { duration: 600 }),
-        withTiming(0.25, { duration: 900 })
+        withTiming(0.25, { duration: 900 }),
       ),
       -1,
-      true
+      true,
     );
   }, []);
 
@@ -136,63 +139,132 @@ function AnimatedWeightlifter() {
   return (
     <View style={illustrationStyles.container}>
       {/* Background glow */}
-      <Animated.View 
+      <Animated.View
         style={[
-          illustrationStyles.glow, 
+          illustrationStyles.glow,
           glowStyle,
-          { backgroundColor: colors.accent }
-        ]} 
+          { backgroundColor: colors.accent },
+        ]}
       />
-      
+
       {/* Main figure */}
       <Animated.View style={[illustrationStyles.figure, bodyStyle]}>
         {/* Head */}
-        <View style={[illustrationStyles.head, { backgroundColor: figureColor }]} />
-        
+        <View
+          style={[illustrationStyles.head, { backgroundColor: figureColor }]}
+        />
+
         {/* Torso */}
-        <View style={[illustrationStyles.torso, { backgroundColor: figureColor }]}>
+        <View
+          style={[illustrationStyles.torso, { backgroundColor: figureColor }]}
+        >
           {/* Shoulder line */}
-          <View style={[illustrationStyles.shoulders, { backgroundColor: figureColor }]} />
+          <View
+            style={[
+              illustrationStyles.shoulders,
+              { backgroundColor: figureColor },
+            ]}
+          />
         </View>
-        
+
         {/* Arms with barbell */}
         <Animated.View style={[illustrationStyles.armsContainer, armStyle]}>
           {/* Left arm */}
           <View style={illustrationStyles.arm}>
-            <View style={[illustrationStyles.bicep, { backgroundColor: figureColor }]} />
-            <View style={[illustrationStyles.forearm, { backgroundColor: figureColor }]} />
+            <View
+              style={[
+                illustrationStyles.bicep,
+                { backgroundColor: figureColor },
+              ]}
+            />
+            <View
+              style={[
+                illustrationStyles.forearm,
+                { backgroundColor: figureColor },
+              ]}
+            />
           </View>
-          
+
           {/* Barbell */}
           <Animated.View style={[illustrationStyles.barbell, barbellStyle]}>
             {/* Left weight */}
-            <View style={[illustrationStyles.weight, illustrationStyles.weightLeft, { backgroundColor: barbellColor }]}>
-              <View style={[illustrationStyles.weightInner, { backgroundColor: colors.textMuted }]} />
+            <View
+              style={[
+                illustrationStyles.weight,
+                illustrationStyles.weightLeft,
+                { backgroundColor: barbellColor },
+              ]}
+            >
+              <View
+                style={[
+                  illustrationStyles.weightInner,
+                  { backgroundColor: colors.textMuted },
+                ]}
+              />
             </View>
             {/* Bar */}
-            <View style={[illustrationStyles.bar, { backgroundColor: barbellColor }]} />
+            <View
+              style={[
+                illustrationStyles.bar,
+                { backgroundColor: barbellColor },
+              ]}
+            />
             {/* Right weight */}
-            <View style={[illustrationStyles.weight, illustrationStyles.weightRight, { backgroundColor: barbellColor }]}>
-              <View style={[illustrationStyles.weightInner, { backgroundColor: colors.textMuted }]} />
+            <View
+              style={[
+                illustrationStyles.weight,
+                illustrationStyles.weightRight,
+                { backgroundColor: barbellColor },
+              ]}
+            >
+              <View
+                style={[
+                  illustrationStyles.weightInner,
+                  { backgroundColor: colors.textMuted },
+                ]}
+              />
             </View>
           </Animated.View>
-          
+
           {/* Right arm */}
           <View style={[illustrationStyles.arm, illustrationStyles.armRight]}>
-            <View style={[illustrationStyles.bicep, { backgroundColor: figureColor }]} />
-            <View style={[illustrationStyles.forearm, { backgroundColor: figureColor }]} />
+            <View
+              style={[
+                illustrationStyles.bicep,
+                { backgroundColor: figureColor },
+              ]}
+            />
+            <View
+              style={[
+                illustrationStyles.forearm,
+                { backgroundColor: figureColor },
+              ]}
+            />
           </View>
         </Animated.View>
-        
+
         {/* Legs */}
         <View style={illustrationStyles.legsContainer}>
-          <View style={[illustrationStyles.leg, { backgroundColor: figureColor }]} />
-          <View style={[illustrationStyles.leg, illustrationStyles.legRight, { backgroundColor: figureColor }]} />
+          <View
+            style={[illustrationStyles.leg, { backgroundColor: figureColor }]}
+          />
+          <View
+            style={[
+              illustrationStyles.leg,
+              illustrationStyles.legRight,
+              { backgroundColor: figureColor },
+            ]}
+          />
         </View>
       </Animated.View>
-      
+
       {/* Ground reflection */}
-      <View style={[illustrationStyles.groundReflection, { backgroundColor: colors.accent }]} />
+      <View
+        style={[
+          illustrationStyles.groundReflection,
+          { backgroundColor: colors.accent },
+        ]}
+      />
     </View>
   );
 }
@@ -202,14 +274,16 @@ function AnimatedWeightlifter() {
  */
 function FeatureBullet({ text, delay }: { text: string; delay: number }) {
   const { colors } = useTheme();
-  
+
   return (
-    <Animated.View 
+    <Animated.View
       entering={FadeInUp.delay(delay).springify()}
       style={styles.bulletContainer}
     >
       <View style={[styles.bulletDot, { backgroundColor: colors.accent }]} />
-      <Text style={[styles.bulletText, { color: colors.textPrimary }]}>{text}</Text>
+      <Text style={[styles.bulletText, { color: colors.textPrimary }]}>
+        {text}
+      </Text>
     </Animated.View>
   );
 }
@@ -232,7 +306,12 @@ export function OnboardingIntro({ onStart }: OnboardingIntroProps) {
   }));
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
+    <View
+      style={[
+        styles.container,
+        { paddingTop: insets.top, backgroundColor: colors.background },
+      ]}
+    >
       {/* Subtle background gradient */}
       <LinearGradient
         colors={[colors.background, colors.surfaceElevated, colors.background]}
@@ -241,7 +320,7 @@ export function OnboardingIntro({ onStart }: OnboardingIntroProps) {
       />
 
       {/* Animated illustration */}
-      <Animated.View 
+      <Animated.View
         entering={FadeIn.delay(200).duration(800)}
         style={styles.illustrationContainer}
       >
@@ -252,14 +331,16 @@ export function OnboardingIntro({ onStart }: OnboardingIntroProps) {
       <View style={styles.content}>
         {/* Title */}
         <Animated.View entering={FadeInDown.delay(400).springify()}>
-          <Text style={[styles.welcomeText, { color: colors.textSecondary }]}>Welcome to</Text>
+          <Text style={[styles.welcomeText, { color: colors.textSecondary }]}>
+            Welcome to
+          </Text>
           <Text style={[styles.brandName, { color: colors.textPrimary }]}>
             <Text style={{ color: colors.accent }}>IRON</Text> ARC
           </Text>
         </Animated.View>
 
         {/* Tagline */}
-        <Animated.Text 
+        <Animated.Text
           entering={FadeInDown.delay(500).springify()}
           style={[styles.tagline, { color: colors.textSecondary }]}
         >
@@ -275,7 +356,7 @@ export function OnboardingIntro({ onStart }: OnboardingIntroProps) {
       </View>
 
       {/* CTA Button */}
-      <Animated.View 
+      <Animated.View
         entering={FadeInUp.delay(900).springify()}
         style={[styles.buttonContainer, { paddingBottom: insets.bottom + 40 }]}
       >
@@ -284,28 +365,32 @@ export function OnboardingIntro({ onStart }: OnboardingIntroProps) {
           onPressIn={handlePressIn}
           onPressOut={handlePressOut}
         >
-          <Animated.View style={[
-            styles.button, 
-            buttonStyle,
-            {
-              ...Platform.select({
-                ios: {
-                  shadowColor: colors.accent,
-                  shadowOffset: { width: 0, height: 6 },
-                  shadowOpacity: 0.35,
-                  shadowRadius: 12,
-                },
-                android: { elevation: 8 },
-              }),
-            }
-          ]}>
+          <Animated.View
+            style={[
+              styles.button,
+              buttonStyle,
+              {
+                ...Platform.select({
+                  ios: {
+                    shadowColor: colors.accent,
+                    shadowOffset: { width: 0, height: 6 },
+                    shadowOpacity: 0.35,
+                    shadowRadius: 12,
+                  },
+                  android: { elevation: 8 },
+                }),
+              },
+            ]}
+          >
             <LinearGradient
               colors={[colors.accent, colors.gradientEnd]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.buttonGradient}
             >
-              <Text style={[styles.buttonText, { color: colors.textOnAccent }]}>Get Started</Text>
+              <Text style={[styles.buttonText, { color: colors.textOnAccent }]}>
+                Get Started
+              </Text>
             </LinearGradient>
           </Animated.View>
         </Pressable>

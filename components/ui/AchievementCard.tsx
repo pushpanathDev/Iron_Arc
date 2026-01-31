@@ -1,10 +1,10 @@
-import React from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import Animated, { FadeInUp, ZoomIn } from "react-native-reanimated";
-import { LinearGradient } from "expo-linear-gradient";
-import { useTheme } from "@/theme/theme";
 import { Achievement, TIER_COLORS } from "@/insights/achievements";
+import { useTheme } from "@/theme/theme";
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
+import React from "react";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import Animated, { FadeInUp, ZoomIn } from "react-native-reanimated";
 
 interface AchievementBadgeProps {
   achievement: Achievement;
@@ -119,7 +119,10 @@ interface AchievementCardProps {
   onPress?: () => void;
 }
 
-export function AchievementCard({ achievement, onPress }: AchievementCardProps) {
+export function AchievementCard({
+  achievement,
+  onPress,
+}: AchievementCardProps) {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const tierColor = TIER_COLORS[achievement.tier];
   const isUnlocked = !!achievement.unlockedAt;
@@ -149,7 +152,9 @@ export function AchievementCard({ achievement, onPress }: AchievementCardProps) 
               width: 48,
               height: 48,
               borderRadius: 24,
-              backgroundColor: isUnlocked ? tierColor.bg : colors.surfaceElevated,
+              backgroundColor: isUnlocked
+                ? tierColor.bg
+                : colors.surfaceElevated,
             },
           ]}
         >
@@ -163,19 +168,13 @@ export function AchievementCard({ achievement, onPress }: AchievementCardProps) 
         {/* Info */}
         <View style={styles.cardInfo}>
           <Text
-            style={[
-              typography.bodyMedium,
-              { color: colors.textPrimary },
-            ]}
+            style={[typography.bodyMedium, { color: colors.textPrimary }]}
             numberOfLines={1}
           >
             {achievement.title}
           </Text>
           <Text
-            style={[
-              typography.caption,
-              { color: colors.textSecondary },
-            ]}
+            style={[typography.caption, { color: colors.textSecondary }]}
             numberOfLines={1}
           >
             {achievement.description}
@@ -283,7 +282,9 @@ export function AchievementsGrid({
               },
             ]}
           >
-            <Text style={{ fontSize: 11, fontWeight: "700", color: colors.accent }}>
+            <Text
+              style={{ fontSize: 11, fontWeight: "700", color: colors.accent }}
+            >
               {unlockedCount}/{achievements.length}
             </Text>
           </View>
@@ -396,7 +397,11 @@ export function NewAchievementPopup({
           <Text
             style={[
               typography.body,
-              { color: colors.textSecondary, textAlign: "center", marginTop: spacing.xs },
+              {
+                color: colors.textSecondary,
+                textAlign: "center",
+                marginTop: spacing.xs,
+              },
             ]}
           >
             {achievement.description}

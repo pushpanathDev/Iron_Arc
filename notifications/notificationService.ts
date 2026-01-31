@@ -1,6 +1,6 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Achievement } from "../insights/achievements";
 import { Insight } from "../insights/insightEngine";
 
@@ -115,7 +115,7 @@ export async function getNotificationPreferences(): Promise<NotificationPreferen
 }
 
 export async function setNotificationPreferences(
-  prefs: Partial<NotificationPreferences>
+  prefs: Partial<NotificationPreferences>,
 ): Promise<void> {
   try {
     const current = await getNotificationPreferences();
@@ -133,7 +133,9 @@ export async function setNotificationPreferences(
    IMMEDIATE NOTIFICATIONS
    ========================= */
 
-export async function sendAchievementNotification(achievement: Achievement): Promise<void> {
+export async function sendAchievementNotification(
+  achievement: Achievement,
+): Promise<void> {
   const prefs = await getNotificationPreferences();
   if (!prefs.enabled || !prefs.achievements) return;
 
@@ -176,7 +178,7 @@ export async function sendInsightNotification(insight: Insight): Promise<void> {
 }
 
 export async function sendStreakReminderNotification(
-  currentStreak: number
+  currentStreak: number,
 ): Promise<void> {
   const prefs = await getNotificationPreferences();
   if (!prefs.enabled || !prefs.streakReminders) return;
@@ -199,11 +201,26 @@ export async function sendMotivationalNotification(): Promise<void> {
   if (!prefs.enabled || !prefs.motivationalQuotes) return;
 
   const quotes = [
-    { title: "Let's Go! 💪", body: "Your future self will thank you for today's workout." },
-    { title: "Rise & Grind ☀️", body: "Every rep gets you closer to your goals." },
-    { title: "No Excuses 🔥", body: "The only bad workout is the one that didn't happen." },
-    { title: "Push Through 💯", body: "Pain is temporary. Results are permanent." },
-    { title: "You Got This! 🏆", body: "Champions are made when no one is watching." },
+    {
+      title: "Let's Go! 💪",
+      body: "Your future self will thank you for today's workout.",
+    },
+    {
+      title: "Rise & Grind ☀️",
+      body: "Every rep gets you closer to your goals.",
+    },
+    {
+      title: "No Excuses 🔥",
+      body: "The only bad workout is the one that didn't happen.",
+    },
+    {
+      title: "Push Through 💯",
+      body: "Pain is temporary. Results are permanent.",
+    },
+    {
+      title: "You Got This! 🏆",
+      body: "Champions are made when no one is watching.",
+    },
   ];
 
   const quote = quotes[Math.floor(Math.random() * quotes.length)];
@@ -224,7 +241,7 @@ export async function sendMotivationalNotification(): Promise<void> {
    ========================= */
 
 export async function scheduleRecurringNotifications(
-  prefs?: NotificationPreferences
+  prefs?: NotificationPreferences,
 ): Promise<void> {
   const preferences = prefs || (await getNotificationPreferences());
 
@@ -235,8 +252,10 @@ export async function scheduleRecurringNotifications(
 
   // Daily reminder
   if (preferences.dailyReminder) {
-    const [hours, minutes] = preferences.dailyReminderTime.split(":").map(Number);
-    
+    const [hours, minutes] = preferences.dailyReminderTime
+      .split(":")
+      .map(Number);
+
     await Notifications.scheduleNotificationAsync({
       identifier: DAILY_REMINDER_ID,
       content: {
@@ -252,7 +271,9 @@ export async function scheduleRecurringNotifications(
       },
     });
 
-    console.log(`⏰ Daily reminder scheduled at ${preferences.dailyReminderTime}`);
+    console.log(
+      `⏰ Daily reminder scheduled at ${preferences.dailyReminderTime}`,
+    );
   }
 
   // Weekly summary (Sunday 6 PM)
@@ -282,7 +303,7 @@ export async function scheduleRecurringNotifications(
    ========================= */
 
 export async function scheduleStreakReminder(
-  currentStreak: number
+  currentStreak: number,
 ): Promise<void> {
   const prefs = await getNotificationPreferences();
   if (!prefs.enabled || !prefs.streakReminders || currentStreak < 3) return;
@@ -309,12 +330,16 @@ export async function scheduleStreakReminder(
     },
   });
 
-  console.log(`⏰ Streak reminder scheduled for 8 PM (streak: ${currentStreak})`);
+  console.log(
+    `⏰ Streak reminder scheduled for 8 PM (streak: ${currentStreak})`,
+  );
 }
 
 export async function cancelStreakReminder(): Promise<void> {
   const today = new Date().toISOString().split("T")[0];
-  await Notifications.cancelScheduledNotificationAsync(`streak-reminder-${today}`);
+  await Notifications.cancelScheduledNotificationAsync(
+    `streak-reminder-${today}`,
+  );
   console.log("✅ Streak reminder cancelled (workout logged)");
 }
 
@@ -342,13 +367,13 @@ export async function setBadgeCount(count: number): Promise<void> {
    ========================= */
 
 export function addNotificationReceivedListener(
-  callback: (notification: Notifications.Notification) => void
+  callback: (notification: Notifications.Notification) => void,
 ): Notifications.EventSubscription {
   return Notifications.addNotificationReceivedListener(callback);
 }
 
 export function addNotificationResponseReceivedListener(
-  callback: (response: Notifications.NotificationResponse) => void
+  callback: (response: Notifications.NotificationResponse) => void,
 ): Notifications.EventSubscription {
   return Notifications.addNotificationResponseReceivedListener(callback);
 }
@@ -359,11 +384,11 @@ export function addNotificationResponseReceivedListener(
 
 export async function initNotifications(): Promise<boolean> {
   const granted = await requestNotificationPermissions();
-  
+
   if (granted) {
     const prefs = await getNotificationPreferences();
     await scheduleRecurringNotifications(prefs);
   }
-  
+
   return granted;
 }

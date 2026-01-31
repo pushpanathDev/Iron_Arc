@@ -1,9 +1,9 @@
-import React from "react";
-import { View, Text, StyleSheet } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import Animated, { FadeInUp } from "react-native-reanimated";
-import { useTheme } from "@/theme/theme";
 import { Workout } from "@/db/workouts";
+import { useTheme } from "@/theme/theme";
+import { Ionicons } from "@expo/vector-icons";
+import React from "react";
+import { StyleSheet, Text, View } from "react-native";
+import Animated, { FadeInUp } from "react-native-reanimated";
 
 interface WorkoutDaySummaryProps {
   date: string;
@@ -20,12 +20,12 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
   const totalSets = workouts.reduce((acc, w) => acc + (w.sets?.length || 0), 0);
   const totalReps = workouts.reduce(
     (acc, w) => acc + (w.sets?.reduce((s, set) => s + set.reps, 0) || 0),
-    0
+    0,
   );
   const totalVolume = workouts.reduce(
     (acc, w) =>
       acc + (w.sets?.reduce((s, set) => s + set.reps * set.weight, 0) || 0),
-    0
+    0,
   );
 
   // Group by category
@@ -57,12 +57,20 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
               },
             ]}
           >
-            <Ionicons name="calendar-outline" size={28} color={colors.textMuted} />
+            <Ionicons
+              name="calendar-outline"
+              size={28}
+              color={colors.textMuted}
+            />
           </View>
           <Text
             style={[
               typography.body,
-              { color: colors.textSecondary, textAlign: "center", marginTop: spacing.sm },
+              {
+                color: colors.textSecondary,
+                textAlign: "center",
+                marginTop: spacing.sm,
+              },
             ]}
           >
             No workouts on this day
@@ -70,7 +78,11 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
           <Text
             style={[
               typography.caption,
-              { color: colors.textMuted, textAlign: "center", marginTop: spacing.xxs },
+              {
+                color: colors.textMuted,
+                textAlign: "center",
+                marginTop: spacing.xxs,
+              },
             ]}
           >
             Select a day with a green dot
@@ -181,7 +193,11 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
             style={[
               styles.cellSets,
               typography.caption,
-              { color: colors.textMuted, fontWeight: "600", textAlign: "center" },
+              {
+                color: colors.textMuted,
+                fontWeight: "600",
+                textAlign: "center",
+              },
             ]}
           >
             SETS
@@ -190,7 +206,11 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
             style={[
               styles.cellReps,
               typography.caption,
-              { color: colors.textMuted, fontWeight: "600", textAlign: "center" },
+              {
+                color: colors.textMuted,
+                fontWeight: "600",
+                textAlign: "center",
+              },
             ]}
           >
             REPS
@@ -199,7 +219,11 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
             style={[
               styles.cellWeight,
               typography.caption,
-              { color: colors.textMuted, fontWeight: "600", textAlign: "right" },
+              {
+                color: colors.textMuted,
+                fontWeight: "600",
+                textAlign: "right",
+              },
             ]}
           >
             AVG KG
@@ -213,7 +237,7 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
           const avgWeight =
             sets > 0
               ? Math.round(
-                  workout.sets!.reduce((acc, s) => acc + s.weight, 0) / sets
+                  workout.sets!.reduce((acc, s) => acc + s.weight, 0) / sets,
                 )
               : 0;
 
@@ -252,7 +276,9 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
                     </Text>
                   ))}
                   {(workout.sets?.length || 0) > 4 && (
-                    <Text style={[typography.caption, { color: colors.textMuted }]}>
+                    <Text
+                      style={[typography.caption, { color: colors.textMuted }]}
+                    >
                       +{workout.sets!.length - 4}
                     </Text>
                   )}
@@ -280,7 +306,11 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
                 style={[
                   styles.cellWeight,
                   typography.bodyMedium,
-                  { color: colors.accent, fontWeight: "700", textAlign: "right" },
+                  {
+                    color: colors.accent,
+                    fontWeight: "700",
+                    textAlign: "right",
+                  },
                 ]}
               >
                 {avgWeight}
@@ -304,20 +334,47 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
       >
         <View style={styles.footerStats}>
           <View style={styles.footerStatItem}>
-            <Ionicons name="layers-outline" size={16} color={colors.textMuted} />
-            <Text style={[typography.caption, { color: colors.textSecondary, marginLeft: spacing.xxs }]}>
+            <Ionicons
+              name="layers-outline"
+              size={16}
+              color={colors.textMuted}
+            />
+            <Text
+              style={[
+                typography.caption,
+                { color: colors.textSecondary, marginLeft: spacing.xxs },
+              ]}
+            >
               {totalSets} sets
             </Text>
           </View>
           <View style={[styles.footerStatItem, { marginLeft: spacing.md }]}>
-            <Ionicons name="repeat-outline" size={16} color={colors.textMuted} />
-            <Text style={[typography.caption, { color: colors.textSecondary, marginLeft: spacing.xxs }]}>
+            <Ionicons
+              name="repeat-outline"
+              size={16}
+              color={colors.textMuted}
+            />
+            <Text
+              style={[
+                typography.caption,
+                { color: colors.textSecondary, marginLeft: spacing.xxs },
+              ]}
+            >
               {totalReps} reps
             </Text>
           </View>
           <View style={[styles.footerStatItem, { marginLeft: spacing.md }]}>
-            <Ionicons name="fitness-outline" size={16} color={colors.textMuted} />
-            <Text style={[typography.caption, { color: colors.textSecondary, marginLeft: spacing.xxs }]}>
+            <Ionicons
+              name="fitness-outline"
+              size={16}
+              color={colors.textMuted}
+            />
+            <Text
+              style={[
+                typography.caption,
+                { color: colors.textSecondary, marginLeft: spacing.xxs },
+              ]}
+            >
               {workouts.length} exercises
             </Text>
           </View>

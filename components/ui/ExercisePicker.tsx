@@ -1,12 +1,24 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import {
+  Alert,
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
-import { EXERCISES, ExerciseCategory } from "../../data/exercises";
-import { useTheme } from "../../theme/theme";
 import { useAuth } from "../../auth/AuthContext";
+import { EXERCISES, ExerciseCategory } from "../../data/exercises";
+import {
+  addCustomExercise,
+  customExerciseExists,
+  getCustomExercises,
+} from "../../db/customExercises";
 import { getFrequentExercises } from "../../db/workouts";
-import { getCustomExercises, addCustomExercise, customExerciseExists } from "../../db/customExercises";
+import { useTheme } from "../../theme/theme";
 
 type Props = {
   category: ExerciseCategory | null;
@@ -61,30 +73,40 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
 
   const handleAddCustomExercise = async () => {
     if (!category || !user || !newExerciseName.trim()) return;
-    
+
     setIsAdding(true);
     try {
       // Check if it already exists (either in predefined or custom)
       const predefinedExists = exercises.some(
-        (ex) => ex.toLowerCase() === newExerciseName.trim().toLowerCase()
+        (ex) => ex.toLowerCase() === newExerciseName.trim().toLowerCase(),
       );
-      
+
       if (predefinedExists) {
-        Alert.alert("Already Exists", "This exercise already exists in the predefined list.");
+        Alert.alert(
+          "Already Exists",
+          "This exercise already exists in the predefined list.",
+        );
         setIsAdding(false);
         return;
       }
-      
-      const customExists = await customExerciseExists(user.uid, category, newExerciseName);
+
+      const customExists = await customExerciseExists(
+        user.uid,
+        category,
+        newExerciseName,
+      );
       if (customExists) {
-        Alert.alert("Already Exists", "You've already added this custom exercise.");
+        Alert.alert(
+          "Already Exists",
+          "You've already added this custom exercise.",
+        );
         setIsAdding(false);
         return;
       }
-      
+
       await addCustomExercise(user.uid, category, newExerciseName.trim());
       await loadCustomExercises();
-      
+
       // Auto-select the newly added exercise
       onChange(newExerciseName.trim());
       setNewExerciseName("");
@@ -98,7 +120,7 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
   };
 
   const exercises = category ? EXERCISES[category] : [];
-  
+
   // Combine predefined and custom exercises
   const allExercises = useMemo(() => {
     return [...exercises, ...customExercises];
@@ -106,38 +128,47 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
 
   // Sort exercises: frequent ones first, then custom, then alphabetically
   const sortedExercises = useMemo(() => {
-    if (frequentExercises.length === 0 && customExercises.length === 0) return exercises;
-    
+    if (frequentExercises.length === 0 && customExercises.length === 0)
+      return exercises;
+
     const frequentSet = new Set(frequentExercises);
     const customSet = new Set(customExercises);
-    
+
     const frequent = allExercises.filter((ex) => frequentSet.has(ex));
     const custom = customExercises.filter((ex) => !frequentSet.has(ex));
     const others = exercises.filter((ex) => !frequentSet.has(ex));
-    
+
     // Sort frequent by their usage order, others alphabetically
-    frequent.sort((a, b) => frequentExercises.indexOf(a) - frequentExercises.indexOf(b));
+    frequent.sort(
+      (a, b) => frequentExercises.indexOf(a) - frequentExercises.indexOf(b),
+    );
     others.sort((a, b) => a.localeCompare(b));
     custom.sort((a, b) => a.localeCompare(b));
-    
+
     return [...frequent, ...custom, ...others];
   }, [exercises, frequentExercises, customExercises, allExercises]);
 
   const filtered = useMemo(() => {
     return sortedExercises.filter((ex) =>
-      ex.toLowerCase().includes(query.toLowerCase())
+      ex.toLowerCase().includes(query.toLowerCase()),
     );
   }, [query, sortedExercises]);
 
   // Check if an exercise is frequent
   const isFrequent = (exercise: string) => frequentExercises.includes(exercise);
-  
+
   // Check if an exercise is custom
   const isCustom = (exercise: string) => customExercises.includes(exercise);
 
   return (
     <View>
-      <Text style={{ ...typography.caption, color: colors.textSecondary, marginBottom: spacing.xs }}>
+      <Text
+        style={{
+          ...typography.caption,
+          color: colors.textSecondary,
+          marginBottom: spacing.xs,
+        }}
+      >
         Exercise
       </Text>
       <Pressable
@@ -201,7 +232,12 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
               borderBottomColor: colors.divider,
             }}
           >
-            <Ionicons name="search" size={18} color={colors.textMuted} style={{ marginRight: spacing.xs }} />
+            <Ionicons
+              name="search"
+              size={18}
+              color={colors.textMuted}
+              style={{ marginRight: spacing.xs }}
+            />
             <TextInput
               placeholder="Search exercise..."
               placeholderTextColor={colors.textMuted}
@@ -227,13 +263,19 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
               }}
             >
               <Ionicons name="time-outline" size={14} color={colors.accent} />
-              <Text style={{ ...typography.caption, color: colors.accent, marginLeft: spacing.xxs }}>
+              <Text
+                style={{
+                  ...typography.caption,
+                  color: colors.accent,
+                  marginLeft: spacing.xxs,
+                }}
+              >
                 Your frequently used exercises appear first
               </Text>
             </View>
           )}
 
-          <ScrollView 
+          <ScrollView
             style={{ maxHeight: 240 }}
             nestedScrollEnabled={true}
             keyboardShouldPersistTaps="handled"
@@ -241,8 +283,9 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
             {filtered.map((exercise, index) => {
               const frequent = isFrequent(exercise);
               const custom = isCustom(exercise);
-              const isFirstNonFrequent = !frequent && index > 0 && isFrequent(filtered[index - 1]);
-              
+              const isFirstNonFrequent =
+                !frequent && index > 0 && isFrequent(filtered[index - 1]);
+
               return (
                 <View key={exercise}>
                   {/* Divider between frequent and other exercises */}
@@ -258,9 +301,13 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
                   <Pressable
                     style={{
                       padding: spacing.md,
-                      borderBottomWidth: index < filtered.length - 1 && !isFirstNonFrequent ? 1 : 0,
+                      borderBottomWidth:
+                        index < filtered.length - 1 && !isFirstNonFrequent
+                          ? 1
+                          : 0,
                       borderBottomColor: colors.divider,
-                      backgroundColor: value === exercise ? colors.accentLight : "transparent",
+                      backgroundColor:
+                        value === exercise ? colors.accentLight : "transparent",
                       flexDirection: "row",
                       alignItems: "center",
                       justifyContent: "space-between",
@@ -270,12 +317,26 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
                       setOpen(false);
                     }}
                   >
-                    <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        flex: 1,
+                      }}
+                    >
                       <Text
                         style={{
                           ...typography.body,
-                          color: value === exercise ? colors.accent : colors.textPrimary,
-                          fontWeight: value === exercise ? "600" : frequent ? "500" : "400",
+                          color:
+                            value === exercise
+                              ? colors.accent
+                              : colors.textPrimary,
+                          fontWeight:
+                            value === exercise
+                              ? "600"
+                              : frequent
+                                ? "500"
+                                : "400",
                         }}
                       >
                         {exercise}
@@ -290,14 +351,25 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
                             marginLeft: spacing.xs,
                           }}
                         >
-                          <Text style={{ ...typography.caption, color: colors.accent, fontSize: 10 }}>
+                          <Text
+                            style={{
+                              ...typography.caption,
+                              color: colors.accent,
+                              fontSize: 10,
+                            }}
+                          >
                             CUSTOM
                           </Text>
                         </View>
                       )}
                     </View>
                     {frequent && !query && (
-                      <Ionicons name="star" size={14} color={colors.accent} style={{ marginLeft: spacing.xs }} />
+                      <Ionicons
+                        name="star"
+                        size={14}
+                        color={colors.accent}
+                        style={{ marginLeft: spacing.xs }}
+                      />
                     )}
                   </Pressable>
                 </View>
@@ -317,7 +389,7 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
                 No exercises found
               </Text>
             )}
-            
+
             {/* Add Custom Exercise Option */}
             <Pressable
               style={{
@@ -346,14 +418,20 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
               >
                 <Ionicons name="add" size={16} color={colors.background} />
               </View>
-              <Text style={{ ...typography.body, color: colors.accent, fontWeight: "500" }}>
+              <Text
+                style={{
+                  ...typography.body,
+                  color: colors.accent,
+                  fontWeight: "500",
+                }}
+              >
                 Can't find it? Add custom exercise
               </Text>
             </Pressable>
           </ScrollView>
         </Animated.View>
       )}
-      
+
       {/* Add Custom Exercise Modal */}
       <Modal
         visible={showAddModal}
@@ -381,13 +459,25 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
             }}
             onPress={() => {}} // Prevent close when tapping modal content
           >
-            <Text style={{ ...typography.h2, color: colors.textPrimary, marginBottom: spacing.sm }}>
+            <Text
+              style={{
+                ...typography.h2,
+                color: colors.textPrimary,
+                marginBottom: spacing.sm,
+              }}
+            >
               Add Custom Exercise
             </Text>
-            <Text style={{ ...typography.body, color: colors.textSecondary, marginBottom: spacing.md }}>
+            <Text
+              style={{
+                ...typography.body,
+                color: colors.textSecondary,
+                marginBottom: spacing.md,
+              }}
+            >
               Add a custom exercise to {category}
             </Text>
-            
+
             <TextInput
               placeholder="Exercise name"
               placeholderTextColor={colors.textMuted}
@@ -403,7 +493,7 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
                 marginBottom: spacing.md,
               }}
             />
-            
+
             <View style={{ flexDirection: "row", gap: spacing.sm }}>
               <Pressable
                 style={{
@@ -418,7 +508,12 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
                   setNewExerciseName("");
                 }}
               >
-                <Text style={{ ...typography.bodyMedium, color: colors.textSecondary }}>
+                <Text
+                  style={{
+                    ...typography.bodyMedium,
+                    color: colors.textSecondary,
+                  }}
+                >
                   Cancel
                 </Text>
               </Pressable>
@@ -427,14 +522,23 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
                   flex: 1,
                   padding: spacing.md,
                   borderRadius: radius.md,
-                  backgroundColor: newExerciseName.trim() ? colors.accent : colors.surfaceElevated,
+                  backgroundColor: newExerciseName.trim()
+                    ? colors.accent
+                    : colors.surfaceElevated,
                   alignItems: "center",
                   opacity: isAdding ? 0.7 : 1,
                 }}
                 onPress={handleAddCustomExercise}
                 disabled={!newExerciseName.trim() || isAdding}
               >
-                <Text style={{ ...typography.bodyMedium, color: newExerciseName.trim() ? colors.background : colors.textMuted }}>
+                <Text
+                  style={{
+                    ...typography.bodyMedium,
+                    color: newExerciseName.trim()
+                      ? colors.background
+                      : colors.textMuted,
+                  }}
+                >
                   {isAdding ? "Adding..." : "Add"}
                 </Text>
               </Pressable>

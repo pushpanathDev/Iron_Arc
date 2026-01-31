@@ -3,7 +3,7 @@ import { useCallback, useRef } from "react";
 /**
  * Hook for handling long press with continuous callback while pressed
  * Perfect for increment/decrement buttons
- * 
+ *
  * @param callback - Function to call repeatedly while pressed
  * @param initialDelay - Delay before starting repeat (ms) - default 400ms
  * @param repeatInterval - Interval between repeats (ms) - default 80ms
@@ -11,7 +11,7 @@ import { useCallback, useRef } from "react";
 export function useLongPress(
   callback: () => void,
   initialDelay: number = 400,
-  repeatInterval: number = 80
+  repeatInterval: number = 80,
 ) {
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -53,10 +53,14 @@ export function useLongPress(
  */
 export function useLongPressButton(
   callback: () => void,
-  options?: { initialDelay?: number; repeatInterval?: number }
+  options?: { initialDelay?: number; repeatInterval?: number },
 ) {
   const { initialDelay = 400, repeatInterval = 80 } = options || {};
-  const { onPressIn, onPressOut } = useLongPress(callback, initialDelay, repeatInterval);
+  const { onPressIn, onPressOut } = useLongPress(
+    callback,
+    initialDelay,
+    repeatInterval,
+  );
 
   return {
     onPressIn,

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { useAuth } from "../auth/AuthContext";
 import { getUserProfile, UserProfile } from "../db/profiles";

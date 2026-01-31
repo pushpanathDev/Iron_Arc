@@ -27,17 +27,19 @@ export default function Card({ children, style, glow = false }: Props) {
 
           // 🔥 Premium glossy shadow
           ...Platform.select({
-            ios: glow ? {
-              shadowColor: colors.accent,
-              shadowOpacity: 0.2,
-              shadowRadius: 16,
-              shadowOffset: { width: 0, height: 6 },
-            } : {
-              shadowColor: "#000",
-              shadowOpacity: 0.1,
-              shadowRadius: 16,
-              shadowOffset: { width: 0, height: 6 },
-            },
+            ios: glow
+              ? {
+                  shadowColor: colors.accent,
+                  shadowOpacity: 0.2,
+                  shadowRadius: 16,
+                  shadowOffset: { width: 0, height: 6 },
+                }
+              : {
+                  shadowColor: "#000",
+                  shadowOpacity: 0.1,
+                  shadowRadius: 16,
+                  shadowOffset: { width: 0, height: 6 },
+                },
             android: {
               elevation: 6,
             },

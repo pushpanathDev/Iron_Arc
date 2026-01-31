@@ -25,7 +25,13 @@ export default function CategoryPicker({ value, onChange }: Props) {
 
   return (
     <View style={{ marginBottom: spacing.md }}>
-      <Text style={{ ...typography.caption, color: colors.textSecondary, marginBottom: spacing.xs }}>
+      <Text
+        style={{
+          ...typography.caption,
+          color: colors.textSecondary,
+          marginBottom: spacing.xs,
+        }}
+      >
         Body Part
       </Text>
       <Pressable
@@ -83,7 +89,8 @@ export default function CategoryPicker({ value, onChange }: Props) {
                 padding: spacing.md,
                 borderBottomWidth: index < CATEGORIES.length - 1 ? 1 : 0,
                 borderBottomColor: colors.divider,
-                backgroundColor: value === category ? colors.accentLight : "transparent",
+                backgroundColor:
+                  value === category ? colors.accentLight : "transparent",
               }}
               onPress={() => {
                 onChange(category);
@@ -93,7 +100,8 @@ export default function CategoryPicker({ value, onChange }: Props) {
               <Text
                 style={{
                   ...typography.body,
-                  color: value === category ? colors.accent : colors.textPrimary,
+                  color:
+                    value === category ? colors.accent : colors.textPrimary,
                   fontWeight: value === category ? "600" : "400",
                 }}
               >

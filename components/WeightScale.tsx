@@ -3,27 +3,36 @@
  * ================================
  * A realistic analog bathroom scale with animated needle.
  * The needle moves in real-time as the weight value changes.
- * 
+ *
  * Typical bathroom scales range from 0-150kg or 0-200kg.
  * This uses 0-200kg for broader compatibility.
  */
 
 import React, { useEffect } from "react";
-import { View, Text, StyleSheet } from "react-native";
-import Svg, { Circle, Line, Path, G, Text as SvgText, Defs, LinearGradient, Stop } from "react-native-svg";
+import { StyleSheet, Text, View } from "react-native";
 import Animated, {
-  useSharedValue,
-  useAnimatedProps,
-  withSpring,
   interpolate,
+  useAnimatedProps,
+  useSharedValue,
+  withSpring,
 } from "react-native-reanimated";
+import Svg, {
+  Circle,
+  Defs,
+  G,
+  Line,
+  LinearGradient,
+  Path,
+  Stop,
+  Text as SvgText,
+} from "react-native-svg";
 
 const AnimatedLine = Animated.createAnimatedComponent(Line);
 
 interface WeightScaleProps {
-  weight: number;        // Current weight value (0-200)
-  size?: number;         // Component size (width/height)
-  maxWeight?: number;    // Maximum scale value
+  weight: number; // Current weight value (0-200)
+  size?: number; // Component size (width/height)
+  maxWeight?: number; // Maximum scale value
   colors: {
     accent: string;
     textPrimary: string;
@@ -35,14 +44,14 @@ interface WeightScaleProps {
   };
 }
 
-export function WeightScale({ 
-  weight, 
-  size = 240, 
+export function WeightScale({
+  weight,
+  size = 240,
   maxWeight = 200,
-  colors 
+  colors,
 }: WeightScaleProps) {
   const animatedWeight = useSharedValue(0);
-  
+
   // Animate needle when weight changes
   useEffect(() => {
     animatedWeight.value = withSpring(Math.min(weight, maxWeight), {
@@ -55,7 +64,7 @@ export function WeightScale({
   const center = size / 2;
   const radius = size * 0.38;
   const needleLength = radius * 0.75;
-  
+
   // Scale goes from -120° to +120° (240° arc) - leaves room at bottom
   const startAngle = -120;
   const endAngle = 120;
@@ -63,32 +72,42 @@ export function WeightScale({
 
   // Generate tick marks - every 20kg for cleaner look
   const majorTicks: Array<{
-    x1: number; y1: number; x2: number; y2: number;
-    label: string; labelX: number; labelY: number; angle: number;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    label: string;
+    labelX: number;
+    labelY: number;
+    angle: number;
   }> = [];
-  const minorTicks: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
-  
+  const minorTicks: Array<{ x1: number; y1: number; x2: number; y2: number }> =
+    [];
+
   for (let i = 0; i <= maxWeight; i += 10) {
     const angle = startAngle + (i / maxWeight) * angleRange;
     const rad = (angle * Math.PI) / 180;
-    
+
     const isMajor = i % 40 === 0; // Major ticks at 0, 40, 80, 120, 160, 200
     const tickLength = isMajor ? 10 : 5;
     const outerRadius = radius + 6;
     const innerRadius = outerRadius - tickLength;
-    
+
     const x1 = center + Math.cos(rad) * outerRadius;
     const y1 = center + Math.sin(rad) * outerRadius;
     const x2 = center + Math.cos(rad) * innerRadius;
     const y2 = center + Math.sin(rad) * innerRadius;
-    
+
     if (isMajor) {
       const labelRadius = radius - 14;
       const lx = center + Math.cos(rad) * labelRadius;
       const ly = center + Math.sin(rad) * labelRadius;
-      
+
       majorTicks.push({
-        x1, y1, x2, y2,
+        x1,
+        y1,
+        x2,
+        y2,
         label: i.toString(),
         labelX: lx,
         labelY: ly,
@@ -104,10 +123,10 @@ export function WeightScale({
     const angle = interpolate(
       animatedWeight.value,
       [0, maxWeight],
-      [startAngle, endAngle]
+      [startAngle, endAngle],
     );
     const rad = (angle * Math.PI) / 180;
-    
+
     return {
       x2: center + Math.cos(rad) * needleLength,
       y2: center + Math.sin(rad) * needleLength,
@@ -137,7 +156,7 @@ export function WeightScale({
           stroke={colors.cardBorder}
           strokeWidth={2}
         />
-        
+
         {/* Inner Circle */}
         <Circle
           cx={center}
@@ -161,11 +180,12 @@ export function WeightScale({
         {weight > 0 && (
           <Path
             d={describeArc(
-              center, 
-              center, 
-              radius, 
-              startAngle, 
-              startAngle + (Math.min(weight, maxWeight) / maxWeight) * angleRange
+              center,
+              center,
+              radius,
+              startAngle,
+              startAngle +
+                (Math.min(weight, maxWeight) / maxWeight) * angleRange,
             )}
             fill="none"
             stroke={colors.accent}
@@ -232,42 +252,68 @@ export function WeightScale({
           stroke="#DC2626"
           strokeWidth={2}
         />
-        <Circle
-          cx={center}
-          cy={center}
-          r={4}
-          fill="#FFF"
-        />
+        <Circle cx={center} cy={center} r={4} fill="#FFF" />
       </Svg>
 
       {/* Digital Display - Below the scale */}
-      <View style={[styles.digitalDisplay, { backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.cardBorder }]}>
+      <View
+        style={[
+          styles.digitalDisplay,
+          {
+            backgroundColor: colors.surfaceElevated,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+          },
+        ]}
+      >
         <Text style={[styles.digitalText, { color: colors.textPrimary }]}>
           {weight > 0 ? weight.toFixed(1) : "0.0"}
         </Text>
-        <Text style={[styles.digitalUnit, { color: colors.textMuted }]}>kg</Text>
+        <Text style={[styles.digitalUnit, { color: colors.textMuted }]}>
+          kg
+        </Text>
       </View>
     </View>
   );
 }
 
 // Helper function to describe an SVG arc
-function describeArc(x: number, y: number, radius: number, startAngle: number, endAngle: number): string {
+function describeArc(
+  x: number,
+  y: number,
+  radius: number,
+  startAngle: number,
+  endAngle: number,
+): string {
   const start = polarToCartesian(x, y, radius, endAngle);
   const end = polarToCartesian(x, y, radius, startAngle);
   const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
 
   return [
-    "M", start.x, start.y,
-    "A", radius, radius, 0, largeArcFlag, 0, end.x, end.y
+    "M",
+    start.x,
+    start.y,
+    "A",
+    radius,
+    radius,
+    0,
+    largeArcFlag,
+    0,
+    end.x,
+    end.y,
   ].join(" ");
 }
 
-function polarToCartesian(centerX: number, centerY: number, radius: number, angleInDegrees: number) {
+function polarToCartesian(
+  centerX: number,
+  centerY: number,
+  radius: number,
+  angleInDegrees: number,
+) {
   const angleInRadians = (angleInDegrees * Math.PI) / 180.0;
   return {
     x: centerX + radius * Math.cos(angleInRadians),
-    y: centerY + radius * Math.sin(angleInRadians)
+    y: centerY + radius * Math.sin(angleInRadians),
   };
 }
 

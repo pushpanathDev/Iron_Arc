@@ -1,9 +1,9 @@
-import React, { useMemo } from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import Animated, { FadeIn } from "react-native-reanimated";
 import { useTheme } from "@/theme/theme";
 import { formatDate } from "@/utils/weekUtils";
+import { Ionicons } from "@expo/vector-icons";
+import React, { useMemo } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import Animated, { FadeIn } from "react-native-reanimated";
 
 interface WorkoutCalendarProps {
   workoutDates: string[]; // Array of "YYYY-MM-DD" dates with workouts
@@ -33,19 +33,19 @@ export function WorkoutCalendar({
   const calendarDays = useMemo(() => {
     const year = currentMonth.getFullYear();
     const month = currentMonth.getMonth();
-    
+
     // First day of the month
     const firstDay = new Date(year, month, 1);
     // Last day of the month
     const lastDay = new Date(year, month + 1, 0);
-    
+
     // Start from the Sunday of the week containing the first day
     const startDate = new Date(firstDay);
     startDate.setDate(startDate.getDate() - firstDay.getDay());
-    
+
     const days: { date: Date; isCurrentMonth: boolean; dateStr: string }[] = [];
     const current = new Date(startDate);
-    
+
     // Generate 6 weeks (42 days) to ensure we cover all possibilities
     for (let i = 0; i < 42; i++) {
       // Use local date formatting to avoid timezone issues
@@ -57,7 +57,7 @@ export function WorkoutCalendar({
       });
       current.setDate(current.getDate() + 1);
     }
-    
+
     return days;
   }, [currentMonth]);
 
@@ -85,7 +85,12 @@ export function WorkoutCalendar({
       ]}
     >
       {/* Month Header */}
-      <View style={[styles.header, { paddingHorizontal: spacing.md, paddingTop: spacing.md }]}>
+      <View
+        style={[
+          styles.header,
+          { paddingHorizontal: spacing.md, paddingTop: spacing.md },
+        ]}
+      >
         <Pressable
           onPress={onPrevMonth}
           style={[
@@ -113,12 +118,21 @@ export function WorkoutCalendar({
             },
           ]}
         >
-          <Ionicons name="chevron-forward" size={20} color={colors.textPrimary} />
+          <Ionicons
+            name="chevron-forward"
+            size={20}
+            color={colors.textPrimary}
+          />
         </Pressable>
       </View>
 
       {/* Day Headers */}
-      <View style={[styles.dayHeaders, { paddingHorizontal: spacing.sm, marginTop: spacing.md }]}>
+      <View
+        style={[
+          styles.dayHeaders,
+          { paddingHorizontal: spacing.sm, marginTop: spacing.md },
+        ]}
+      >
         {DAYS.map((day) => (
           <View key={day} style={styles.dayHeaderCell}>
             <Text
@@ -150,8 +164,8 @@ export function WorkoutCalendar({
                   backgroundColor: isSelected
                     ? colors.accent
                     : isToday
-                    ? colors.accentDim
-                    : "transparent",
+                      ? colors.accentDim
+                      : "transparent",
                   borderRadius: radius.md,
                 },
               ]}
@@ -163,15 +177,15 @@ export function WorkoutCalendar({
                     color: isSelected
                       ? colors.textOnAccent
                       : day.isCurrentMonth
-                      ? colors.textPrimary
-                      : colors.textMuted,
+                        ? colors.textPrimary
+                        : colors.textMuted,
                     fontWeight: isToday || isSelected ? "700" : "500",
                   },
                 ]}
               >
                 {day.date.getDate()}
               </Text>
-              
+
               {/* Workout Indicator Dot */}
               {hasWorkout && !isSelected && (
                 <View
@@ -212,10 +226,7 @@ export function WorkoutCalendar({
       >
         <View style={styles.legendItem}>
           <View
-            style={[
-              styles.legendDot,
-              { backgroundColor: colors.accent },
-            ]}
+            style={[styles.legendDot, { backgroundColor: colors.accent }]}
           />
           <Text style={[typography.caption, { color: colors.textSecondary }]}>
             Workout logged

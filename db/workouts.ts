@@ -11,16 +11,16 @@ export type WorkoutSet = {
 
 export type Workout = {
   id: string;
-  userId: string;          // 🔐 NEW (mandatory)
+  userId: string; // 🔐 NEW (mandatory)
   date: string;
   exercise: string;
   category?: string;
   notes?: string;
   createdAt: number;
   sets: WorkoutSet[];
-  isSynced?: number;       // 0 or 1
+  isSynced?: number; // 0 or 1
   syncError?: string | null;
-  isDeleted?: number;      // 0 or 1 (soft delete)
+  isDeleted?: number; // 0 or 1 (soft delete)
 };
 
 /* =========================
@@ -33,29 +33,28 @@ export async function insertWorkout(workout: Workout) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       workout.id,
-      workout.userId,              // 🔐 store owner
+      workout.userId, // 🔐 store owner
       workout.date,
       workout.exercise,
       workout.category ?? "",
       workout.notes ?? "",
       workout.createdAt,
-      workout.isSynced ?? 0,       // Not synced by default
-      0,                           // Not deleted
-    ]
+      workout.isSynced ?? 0, // Not synced by default
+      0, // Not deleted
+    ],
   );
 
   // Clear old sets (important for edits)
-  await sqliteDb.runAsync(
-    `DELETE FROM workout_sets WHERE workoutId = ?`,
-    [workout.id]
-  );
+  await sqliteDb.runAsync(`DELETE FROM workout_sets WHERE workoutId = ?`, [
+    workout.id,
+  ]);
 
   // Insert sets
   for (const set of workout.sets) {
     await sqliteDb.runAsync(
       `INSERT INTO workout_sets (workoutId, reps, weight)
        VALUES (?, ?, ?)`,
-      [workout.id, set.reps, set.weight]
+      [workout.id, set.reps, set.weight],
     );
   }
 }
@@ -72,10 +71,10 @@ export async function markWorkoutSynced(id: string) {
 }
 
 export async function markWorkoutSyncError(id: string, error: string) {
-  await sqliteDb.runAsync(
-    `UPDATE workouts SET syncError = ? WHERE id = ?`,
-    [error, id],
-  );
+  await sqliteDb.runAsync(`UPDATE workouts SET syncError = ? WHERE id = ?`, [
+    error,
+    id,
+  ]);
 }
 
 /**
@@ -116,22 +115,14 @@ export async function softDeleteWorkout(id: string) {
    ========================= */
 
 export async function hardDeleteWorkout(id: string) {
-  await sqliteDb.runAsync(
-    `DELETE FROM workout_sets WHERE workoutId = ?`,
-    [id]
-  );
-  await sqliteDb.runAsync(
-    `DELETE FROM workouts WHERE id = ?`,
-    [id]
-  );
+  await sqliteDb.runAsync(`DELETE FROM workout_sets WHERE workoutId = ?`, [id]);
+  await sqliteDb.runAsync(`DELETE FROM workouts WHERE id = ?`, [id]);
 }
 
 /* =========================
    READ ALL WORKOUTS (PER USER)
    ========================= */
-export async function getAllWorkouts(
-  userId: string
-): Promise<Workout[]> {
+export async function getAllWorkouts(userId: string): Promise<Workout[]> {
   const workoutRows = await sqliteDb.getAllAsync<{
     id: string;
     userId: string;
@@ -147,7 +138,7 @@ export async function getAllWorkouts(
     `SELECT * FROM workouts 
      WHERE userId = ? AND isDeleted = 0
      ORDER BY createdAt DESC`,
-    [userId]
+    [userId],
   );
 
   const workouts: Workout[] = [];
@@ -155,7 +146,7 @@ export async function getAllWorkouts(
   for (const row of workoutRows) {
     const sets = await sqliteDb.getAllAsync<WorkoutSet>(
       `SELECT reps, weight FROM workout_sets WHERE workoutId = ?`,
-      [row.id]
+      [row.id],
     );
 
     workouts.push({
@@ -180,9 +171,7 @@ export async function getAllWorkouts(
    GET UNSYNCED WORKOUTS (for batch sync)
    ========================= */
 
-export async function getUnsyncedWorkouts(
-  userId: string,
-): Promise<Workout[]> {
+export async function getUnsyncedWorkouts(userId: string): Promise<Workout[]> {
   const workoutRows = await sqliteDb.getAllAsync<{
     id: string;
     userId: string;
@@ -198,7 +187,7 @@ export async function getUnsyncedWorkouts(
     `SELECT * FROM workouts 
      WHERE userId = ? AND (isSynced = 0 OR isDeleted = 1)
      ORDER BY createdAt ASC`,
-    [userId]
+    [userId],
   );
 
   const workouts: Workout[] = [];
@@ -206,7 +195,7 @@ export async function getUnsyncedWorkouts(
   for (const row of workoutRows) {
     const sets = await sqliteDb.getAllAsync<WorkoutSet>(
       `SELECT reps, weight FROM workout_sets WHERE workoutId = ?`,
-      [row.id]
+      [row.id],
     );
 
     workouts.push({
@@ -230,15 +219,12 @@ export async function getUnsyncedWorkouts(
 /* =========================
    DELETE WORKOUT (now SOFT DELETE)
    ========================= */
-export async function deleteWorkoutById(
-  id: string,
-  userId: string
-) {
+export async function deleteWorkoutById(id: string, userId: string) {
   // Soft delete - mark as deleted, will be synced and hard deleted after Firebase confirms
   await sqliteDb.runAsync(
     `UPDATE workouts SET isDeleted = 1, isSynced = 0 
      WHERE id = ? AND userId = ?`,
-    [id, userId]
+    [id, userId],
   );
 }
 
@@ -248,7 +234,7 @@ export async function deleteWorkoutById(
 export async function getFrequentExercises(
   userId: string,
   category: string,
-  limit: number = 5
+  limit: number = 5,
 ): Promise<string[]> {
   const rows = await sqliteDb.getAllAsync<{ exercise: string; count: number }>(
     `SELECT exercise, COUNT(*) as count 
@@ -257,7 +243,7 @@ export async function getFrequentExercises(
      GROUP BY exercise 
      ORDER BY count DESC 
      LIMIT ?`,
-    [userId, category, limit]
+    [userId, category, limit],
   );
 
   return rows.map((row) => row.exercise);

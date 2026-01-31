@@ -1,10 +1,10 @@
-import React from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import Animated, { FadeInUp } from "react-native-reanimated";
-import { LinearGradient } from "expo-linear-gradient";
-import { useTheme } from "@/theme/theme";
 import { Insight, InsightPriority } from "@/insights/insightEngine";
+import { useTheme } from "@/theme/theme";
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
+import React from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import Animated, { FadeInUp } from "react-native-reanimated";
 
 interface InsightCardProps {
   insight: Insight;
@@ -26,7 +26,9 @@ export function InsightCard({ insight, index, onPress }: InsightCardProps) {
     }
   };
 
-  const getBackgroundGradient = (priority: InsightPriority): [string, string] => {
+  const getBackgroundGradient = (
+    priority: InsightPriority,
+  ): [string, string] => {
     switch (priority) {
       case "high":
         return [colors.accentDim, colors.surface];
@@ -38,9 +40,7 @@ export function InsightCard({ insight, index, onPress }: InsightCardProps) {
   };
 
   return (
-    <Animated.View
-      entering={FadeInUp.delay(100 + index * 50).duration(300)}
-    >
+    <Animated.View entering={FadeInUp.delay(100 + index * 50).duration(300)}>
       <Pressable
         onPress={onPress}
         style={({ pressed }) => [
@@ -68,9 +68,10 @@ export function InsightCard({ insight, index, onPress }: InsightCardProps) {
               style={[
                 styles.iconContainer,
                 {
-                  backgroundColor: insight.priority === "high" 
-                    ? colors.accentLight 
-                    : colors.surfaceElevated,
+                  backgroundColor:
+                    insight.priority === "high"
+                      ? colors.accentLight
+                      : colors.surfaceElevated,
                   borderRadius: radius.lg,
                   padding: spacing.sm,
                 },
@@ -139,7 +140,11 @@ interface InsightsListProps {
   onViewAll?: () => void;
 }
 
-export function InsightsList({ insights, maxVisible = 3, onViewAll }: InsightsListProps) {
+export function InsightsList({
+  insights,
+  maxVisible = 3,
+  onViewAll,
+}: InsightsListProps) {
   const { colors, spacing, typography } = useTheme();
   const visibleInsights = insights.slice(0, maxVisible);
 

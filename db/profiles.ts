@@ -1,6 +1,5 @@
 import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
-import { firestoreDb } from "../firebase/config";
-import { auth } from "../firebase/config";
+import { auth, firestoreDb } from "../firebase/config";
 import { sqliteDb } from "./sqlite";
 
 /* ==============================
@@ -27,18 +26,22 @@ export type UserProfile = {
  * Create or update profile in Firebase
  * Fails silently if user is not authenticated or lacks permissions
  */
-export async function syncProfileToFirebase(profile: Partial<UserProfile> & { userId: string }): Promise<boolean> {
+export async function syncProfileToFirebase(
+  profile: Partial<UserProfile> & { userId: string },
+): Promise<boolean> {
   try {
     // Check if user is authenticated
     const currentUser = auth.currentUser;
     if (!currentUser || currentUser.uid !== profile.userId) {
-      console.log("Skipping Firebase sync: user not authenticated or mismatched");
+      console.log(
+        "Skipping Firebase sync: user not authenticated or mismatched",
+      );
       return false;
     }
 
     const docRef = doc(firestoreDb, "users", profile.userId, "profile", "data");
     const docSnap = await getDoc(docRef);
-    
+
     if (docSnap.exists()) {
       // Update existing profile
       await updateDoc(docRef, {
@@ -53,14 +56,21 @@ export async function syncProfileToFirebase(profile: Partial<UserProfile> & { us
         updatedAt: Date.now(),
       });
     }
-    
+
     console.log("✅ Profile synced to Firebase");
     return true;
   } catch (error: any) {
     // Check if it's a permissions error
-    if (error?.code === "permission-denied" || error?.message?.includes("permission")) {
-      console.warn("⚠️ Firebase profile sync: permission denied. Check Firestore rules.");
-      console.warn("Required rule: allow read, write: if request.auth != null && request.auth.uid == userId;");
+    if (
+      error?.code === "permission-denied" ||
+      error?.message?.includes("permission")
+    ) {
+      console.warn(
+        "⚠️ Firebase profile sync: permission denied. Check Firestore rules.",
+      );
+      console.warn(
+        "Required rule: allow read, write: if request.auth != null && request.auth.uid == userId;",
+      );
     } else {
       console.warn("Failed to sync profile to Firebase:", error);
     }
@@ -71,11 +81,13 @@ export async function syncProfileToFirebase(profile: Partial<UserProfile> & { us
 /**
  * Get profile from Firebase
  */
-export async function getFirebaseProfile(userId: string): Promise<UserProfile | null> {
+export async function getFirebaseProfile(
+  userId: string,
+): Promise<UserProfile | null> {
   try {
     const docRef = doc(firestoreDb, "users", userId, "profile", "data");
     const docSnap = await getDoc(docRef);
-    
+
     if (docSnap.exists()) {
       return docSnap.data() as UserProfile;
     }
@@ -102,7 +114,7 @@ export async function createUserProfile(
     displayName?: string | null;
     avatarUrl?: string | null;
     authProvider?: "email" | "google";
-  }
+  },
 ): Promise<void> {
   const now = Date.now();
   const authProvider = options?.authProvider || "email";
@@ -122,7 +134,7 @@ export async function createUserProfile(
 
   // Check if profile exists in Firebase (returning user on new device)
   const firebaseProfile = await getFirebaseProfile(userId);
-  
+
   if (firebaseProfile) {
     console.log("☁️ Found profile in Firebase, syncing to local");
     // Use Firebase data as source of truth for returning users
@@ -293,10 +305,9 @@ export async function getAllProfiles(): Promise<UserProfile[]> {
 export async function clearUserProfile(userId: string): Promise<void> {
   // Delete local cache - Firebase remains the source of truth
   // On next login, profile will be fetched from Firebase
-  await sqliteDb.runAsync(
-    `DELETE FROM user_profiles WHERE userId = ?`,
-    [userId],
-  );
+  await sqliteDb.runAsync(`DELETE FROM user_profiles WHERE userId = ?`, [
+    userId,
+  ]);
   console.log("🧹 Local profile cache cleared for:", userId);
 }
 

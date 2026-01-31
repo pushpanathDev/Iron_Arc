@@ -1,8 +1,14 @@
-import React, { createContext, useContext, useState, useCallback, useRef } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useRef,
+  useState,
+} from "react";
 import { SyncLoader } from "../components/SyncLoader";
+import { syncAllData } from "../db/syncQueue";
 import { syncWorkoutsFromFirebase } from "../firebase/sync";
 import { pullWeightsFromFirebase } from "../firebase/weights";
-import { syncAllData } from "../db/syncQueue";
 
 interface SyncContextType {
   isSyncing: boolean;
@@ -63,48 +69,51 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
    * Global sync - FIRST pushes local changes, THEN pulls from Firebase
    * This ensures no local data is lost during sync
    */
-  const globalSync = useCallback(async (userId: string) => {
-    if (isSyncing) return; // Prevent concurrent syncs
-    
-    try {
-      setIsSyncing(true);
-      
-      // STEP 1: Push all local changes to Firebase first
-      setSyncMessage("Pushing local changes...");
-      console.log("⬆️ Global sync: pushing local changes...");
-      const pushResult = await syncAllData(userId);
-      console.log("⬆️ Push complete:", pushResult);
-      
-      // STEP 2: Pull workouts from Firebase
-      setSyncMessage("Pulling workouts...");
-      console.log("⬇️ Global sync: pulling workouts...");
-      await syncWorkoutsFromFirebase(userId);
-      
-      // STEP 3: Pull weights from Firebase
-      setSyncMessage("Pulling body weights...");
-      console.log("⬇️ Global sync: pulling weights...");
-      await pullWeightsFromFirebase(userId);
-      
-      // Notify all screens to refresh their data
-      notifyRefresh();
-      
-      console.log("✅ Global sync complete");
-    } catch (error) {
-      console.error("❌ Global sync error:", error);
-      throw error;
-    } finally {
-      setIsSyncing(false);
-      setSyncMessage(null);
-    }
-  }, [isSyncing, notifyRefresh]);
+  const globalSync = useCallback(
+    async (userId: string) => {
+      if (isSyncing) return; // Prevent concurrent syncs
+
+      try {
+        setIsSyncing(true);
+
+        // STEP 1: Push all local changes to Firebase first
+        setSyncMessage("Pushing local changes...");
+        console.log("⬆️ Global sync: pushing local changes...");
+        const pushResult = await syncAllData(userId);
+        console.log("⬆️ Push complete:", pushResult);
+
+        // STEP 2: Pull workouts from Firebase
+        setSyncMessage("Pulling workouts...");
+        console.log("⬇️ Global sync: pulling workouts...");
+        await syncWorkoutsFromFirebase(userId);
+
+        // STEP 3: Pull weights from Firebase
+        setSyncMessage("Pulling body weights...");
+        console.log("⬇️ Global sync: pulling weights...");
+        await pullWeightsFromFirebase(userId);
+
+        // Notify all screens to refresh their data
+        notifyRefresh();
+
+        console.log("✅ Global sync complete");
+      } catch (error) {
+        console.error("❌ Global sync error:", error);
+        throw error;
+      } finally {
+        setIsSyncing(false);
+        setSyncMessage(null);
+      }
+    },
+    [isSyncing, notifyRefresh],
+  );
 
   return (
-    <SyncContext.Provider 
-      value={{ 
-        isSyncing, 
-        syncMessage, 
-        startSync, 
-        endSync, 
+    <SyncContext.Provider
+      value={{
+        isSyncing,
+        syncMessage,
+        startSync,
+        endSync,
         globalSync,
         subscribeToRefresh,
         refreshVersion,

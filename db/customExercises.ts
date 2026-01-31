@@ -1,5 +1,5 @@
-import { sqliteDb } from "./sqlite";
 import { ExerciseCategory } from "../data/exercises";
+import { sqliteDb } from "./sqlite";
 
 /* ==============================
    TYPES
@@ -23,24 +23,24 @@ export interface CustomExercise {
 export async function addCustomExercise(
   userId: string,
   category: ExerciseCategory,
-  name: string
+  name: string,
 ): Promise<CustomExercise> {
   const id = `custom_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   const createdAt = Date.now();
-  
+
   // Trim and normalize the name
   const normalizedName = name.trim();
-  
+
   if (!normalizedName) {
     throw new Error("Exercise name cannot be empty");
   }
-  
+
   await sqliteDb.runAsync(
     `INSERT INTO custom_exercises (id, userId, category, name, createdAt) 
      VALUES (?, ?, ?, ?, ?)`,
-    [id, userId, category, normalizedName, createdAt]
+    [id, userId, category, normalizedName, createdAt],
   );
-  
+
   return {
     id,
     userId,
@@ -55,15 +55,15 @@ export async function addCustomExercise(
  */
 export async function getCustomExercises(
   userId: string,
-  category: ExerciseCategory
+  category: ExerciseCategory,
 ): Promise<string[]> {
   const results = await sqliteDb.getAllAsync<{ name: string }>(
     `SELECT name FROM custom_exercises 
      WHERE userId = ? AND category = ? 
      ORDER BY createdAt DESC`,
-    [userId, category]
+    [userId, category],
   );
-  
+
   return results.map((r) => r.name);
 }
 
@@ -71,13 +71,13 @@ export async function getCustomExercises(
  * Get all custom exercises for a user (all categories)
  */
 export async function getAllCustomExercises(
-  userId: string
+  userId: string,
 ): Promise<CustomExercise[]> {
   return await sqliteDb.getAllAsync<CustomExercise>(
     `SELECT * FROM custom_exercises 
      WHERE userId = ? 
      ORDER BY category, name`,
-    [userId]
+    [userId],
   );
 }
 
@@ -87,12 +87,12 @@ export async function getAllCustomExercises(
 export async function deleteCustomExercise(
   userId: string,
   category: ExerciseCategory,
-  name: string
+  name: string,
 ): Promise<void> {
   await sqliteDb.runAsync(
     `DELETE FROM custom_exercises 
      WHERE userId = ? AND category = ? AND name = ?`,
-    [userId, category, name]
+    [userId, category, name],
   );
 }
 
@@ -102,13 +102,13 @@ export async function deleteCustomExercise(
 export async function customExerciseExists(
   userId: string,
   category: ExerciseCategory,
-  name: string
+  name: string,
 ): Promise<boolean> {
   const result = await sqliteDb.getFirstAsync<{ count: number }>(
     `SELECT COUNT(*) as count FROM custom_exercises 
      WHERE userId = ? AND category = ? AND LOWER(name) = LOWER(?)`,
-    [userId, category, name.trim()]
+    [userId, category, name.trim()],
   );
-  
+
   return (result?.count ?? 0) > 0;
 }

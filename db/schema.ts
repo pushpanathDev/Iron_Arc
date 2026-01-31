@@ -110,7 +110,9 @@ async function runMigrations() {
 
           // If missing critical columns, rebuild the entire table
           if (!hasId || !hasDate || !hasUserId) {
-            console.log("🔄 Rebuilding body_weight table with correct schema...");
+            console.log(
+              "🔄 Rebuilding body_weight table with correct schema...",
+            );
 
             // Create new table with correct schema
             await sqliteDb.runAsync(`
@@ -144,7 +146,9 @@ async function runMigrations() {
                     const row = oldData[i];
                     const weight = row.weight ?? 0;
                     const createdAt = row.createdAt ?? Date.now();
-                    const date = new Date(createdAt).toISOString().split("T")[0];
+                    const date = new Date(createdAt)
+                      .toISOString()
+                      .split("T")[0];
                     const id = `migrated_${createdAt}_${i}`;
 
                     await sqliteDb.runAsync(
@@ -167,7 +171,9 @@ async function runMigrations() {
               `ALTER TABLE body_weight_new RENAME TO body_weight`,
             );
 
-            console.log("✅ Migration: Rebuilt body_weight table with correct schema");
+            console.log(
+              "✅ Migration: Rebuilt body_weight table with correct schema",
+            );
           }
         } catch (error) {
           console.error("❌ Failed to rebuild body_weight table:", error);
@@ -276,13 +282,17 @@ async function runMigrations() {
             `PRAGMA table_info(user_profiles)`,
           );
 
-          const hasAuthProvider = columns.some((c) => c.name === "authProvider");
+          const hasAuthProvider = columns.some(
+            (c) => c.name === "authProvider",
+          );
 
           if (!hasAuthProvider) {
             await sqliteDb.runAsync(
               `ALTER TABLE user_profiles ADD COLUMN authProvider TEXT DEFAULT NULL`,
             );
-            console.log("✅ Migration: Added authProvider column to user_profiles");
+            console.log(
+              "✅ Migration: Added authProvider column to user_profiles",
+            );
           }
         } catch (error) {
           console.warn(
@@ -306,7 +316,9 @@ async function runMigrations() {
             await sqliteDb.runAsync(
               `ALTER TABLE user_profiles ADD COLUMN weeklyGoal INTEGER DEFAULT 4`,
             );
-            console.log("✅ Migration: Added weeklyGoal column to user_profiles");
+            console.log(
+              "✅ Migration: Added weeklyGoal column to user_profiles",
+            );
           }
         } catch (error) {
           console.warn(

@@ -1,5 +1,5 @@
 import { Pressable, Text, ViewStyle } from "react-native";
-import { useTheme } from "../../src/theme/theme";
+import { useTheme } from "../../theme/theme";
 
 type Props = {
   title: string;

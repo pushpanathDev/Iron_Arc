@@ -12,7 +12,7 @@ import Svg, {
   Path,
   Stop,
 } from "react-native-svg";
-import { useTheme } from "../../src/theme/theme";
+import { useTheme } from "../../theme/theme";
 
 type Props = {
   data: number[];
@@ -25,6 +25,12 @@ export default function MiniLineChart({
   height = 120,
   strokeWidth = 3,
 }: Props) {
+  /* ------------------ SAFE EARLY EXIT (BEFORE HOOKS) ------------------ */
+
+  if (!data || data.length < 2) {
+    return null;
+  }
+
   /* ------------------ HOOKS (ALWAYS RUN) ------------------ */
 
   const { width } = useWindowDimensions();
@@ -45,12 +51,6 @@ export default function MiniLineChart({
       pulse.value = withTiming(1);
     });
   }, [data]);
-
-  /* ------------------ SAFE EARLY EXIT (AFTER HOOKS) ------------------ */
-
-  if (!data || data.length < 2) {
-    return null;
-  }
 
   /* ------------------ CHART CALCULATIONS ------------------ */
 

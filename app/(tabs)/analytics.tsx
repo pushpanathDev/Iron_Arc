@@ -1,54 +1,77 @@
-import { useFocusEffect } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
-import Animated, { FadeInUp } from "react-native-reanimated";
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Dimensions,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
+import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
+import Svg, { Circle, Path } from "react-native-svg";
 
-import Card from "../../components/ui/Card";
-import InsightCard from "../../components/ui/InsightCard";
-import MiniLineChart from "../../components/ui/MiniLineChart";
-import WorkoutBarChart, {
-  WeeklyWorkoutBar,
-} from "../../components/ui/WorkoutBarChart";
+import { useAuth } from "../../auth/AuthContext";
+import { useGlobalSync } from "../../context/SyncContext";
+import { useTheme } from "../../theme/theme";
 
-import { useAuth } from "../../src/auth/AuthContext";
-import { typography, useTheme } from "../../src/theme/theme";
-import { getWorkoutInsight } from "../../src/utils/insightEngine";
+import { getUserProfile } from "../../db/profiles";
+import { BodyWeight, getAllWeights } from "../../db/weights";
+import { getAllWorkouts, Workout } from "../../db/workouts";
+import {
+  generateInsights,
+  Insight,
+  InsightPriority,
+} from "../../insights/insightEngine";
+import { formatDate } from "../../utils/weekUtils";
 
-import { BodyWeight, getAllWeights } from "../../src/db/weights";
-import { getAllWorkouts, Workout } from "../../src/db/workouts";
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 export default function Analytics() {
-  const { colors, spacing } = useTheme();
+  const { colors, spacing, radius, typography, shadows } = useTheme();
   const { user } = useAuth();
+  const { globalSync, refreshVersion } = useGlobalSync();
 
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [weights, setWeights] = useState<BodyWeight[]>([]);
-  const [selectedWeek, setSelectedWeek] = useState<WeeklyWorkoutBar | null>(
-    null,
-  );
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedPeriod, setSelectedPeriod] = useState<
+    "week" | "month" | "all"
+  >("week");
+  const [insights, setInsights] = useState<Insight[]>([]);
+  const [weeklyGoal, setWeeklyGoal] = useState(1); // Daily goal - default to 1 workout per day
 
   /* =========================
-     RELOAD SQLITE (SAFE)
+     LOAD DATA
      ========================= */
-
   const reloadData = useCallback(async () => {
     if (!user) {
-      // 🔑 IMPORTANT: reset state deterministically
       setWorkouts([]);
       setWeights([]);
-      setSelectedWeek(null);
+      setInsights([]);
       return;
     }
 
-    const [w, bw] = await Promise.all([
+    const [w, bw, profile] = await Promise.all([
       getAllWorkouts(user.uid),
       getAllWeights(user.uid),
+      getUserProfile(user.uid),
     ]);
 
     bw.sort((a, b) => a.date.localeCompare(b.date));
-
     setWorkouts(w);
     setWeights(bw);
+
+    // Load weekly goal from profile
+    if (profile?.weeklyGoal) {
+      setWeeklyGoal(profile.weeklyGoal);
+    }
+
+    // Generate insights from workout and weight data
+    const generatedInsights = generateInsights(w, bw);
+    setInsights(generatedInsights);
   }, [user]);
 
   useFocusEffect(
@@ -57,267 +80,1084 @@ export default function Analytics() {
     }, [reloadData]),
   );
 
-  /* =========================
-     WORKOUT ANALYTICS
-     ========================= */
+  const handleRefresh = useCallback(async () => {
+    if (!user) return;
+    setRefreshing(true);
+    try {
+      // Trigger global sync to pull from Firebase
+      await globalSync(user.uid);
+      await reloadData();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [reloadData, user, globalSync]);
 
-  const workoutTrend: WeeklyWorkoutBar[] = useMemo(() => {
-    const map = new Map<string, number>();
-
-    workouts.forEach((w) => {
-      const weekStart = getWeekStart(w.date);
-      map.set(weekStart, (map.get(weekStart) ?? 0) + 1);
-    });
-
-    return Array.from(map.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([weekStart, count]) => ({
-        weekStart,
-        weekLabel: getWeekLabel(weekStart),
-        monthLabel: getMonthLabel(weekStart),
-        workouts: count,
-        isCurrentWeek: isCurrentWeek(weekStart),
-      }));
-  }, [workouts]);
-
-  const volumeTrend = useMemo(() => {
-    const map = new Map<string, number>();
-
-    workouts.forEach((w) => {
-      const weekStart = getWeekStart(w.date);
-      const volume = w.sets.reduce((sum, s) => sum + s.reps * s.weight, 0);
-      map.set(weekStart, (map.get(weekStart) ?? 0) + volume);
-    });
-
-    return Array.from(map.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([, volume]) => volume);
-  }, [workouts]);
+  // Refresh when global sync happens on another screen
+  useEffect(() => {
+    if (!user || refreshVersion === 0) return;
+    reloadData();
+  }, [refreshVersion]);
 
   /* =========================
-     BODY WEIGHT ANALYTICS
+     COMPUTED STATS
      ========================= */
+  const stats = useMemo(() => {
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-  const weightStats = useMemo(() => {
-    if (weights.length === 0) return null;
-
-    const values = weights.map((w) => w.weight);
-    const first = values[0];
-    const latest = values[values.length - 1];
-
-    const delta = +(latest - first).toFixed(1);
-    const avg = +(values.reduce((s, v) => s + v, 0) / values.length).toFixed(1);
-
-    return {
-      latest,
-      delta,
-      avg,
-      min: Math.min(...values),
-      max: Math.max(...values),
-      trend: delta > 0.3 ? "up" : delta < -0.3 ? "down" : "stable",
-      chart: values,
+    const filterByPeriod = (dateStr: string) => {
+      const d = new Date(dateStr);
+      if (selectedPeriod === "week") return d >= weekAgo;
+      if (selectedPeriod === "month") return d >= monthAgo;
+      return true;
     };
-  }, [weights]);
 
-  /* =========================
-     INSIGHTS
-     ========================= */
+    const filteredWorkouts = workouts.filter((w) => filterByPeriod(w.date));
+    const filteredWeights = weights.filter((w) => filterByPeriod(w.date));
 
-  const workoutAvg =
-    workoutTrend.length > 0
-      ? workoutTrend.reduce((s, w) => s + w.workouts, 0) / workoutTrend.length
+    // Workout stats
+    const totalWorkouts = filteredWorkouts.length;
+    const totalSets = filteredWorkouts.reduce(
+      (sum, w) => sum + w.sets.length,
+      0,
+    );
+    const totalReps = filteredWorkouts.reduce(
+      (sum, w) => sum + w.sets.reduce((s, set) => s + set.reps, 0),
+      0,
+    );
+    const totalVolume = filteredWorkouts.reduce(
+      (sum, w) => sum + w.sets.reduce((s, set) => s + set.reps * set.weight, 0),
+      0,
+    );
+
+    // Weight stats
+    const weightValues = filteredWeights.map((w) => w.weight);
+    const latestWeight = weightValues[weightValues.length - 1] || 0;
+    const firstWeight = weightValues[0] || 0;
+    const weightDelta = latestWeight - firstWeight;
+    const avgWeight = weightValues.length
+      ? weightValues.reduce((s, v) => s + v, 0) / weightValues.length
       : 0;
 
-  const latestWeek = workoutTrend[workoutTrend.length - 1]?.workouts ?? 0;
+    // Weekly distribution (last 7 days)
+    const weeklyData: number[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+      const dateStr = formatDate(d);
+      const count = workouts.filter((w) => w.date === dateStr).length;
+      weeklyData.push(count);
+    }
 
-  const globalInsight = getWorkoutInsight(latestWeek, workoutAvg);
+    // Category breakdown
+    const categoryMap = new Map<string, number>();
+    filteredWorkouts.forEach((w) => {
+      const cat = w.category || "Other";
+      categoryMap.set(cat, (categoryMap.get(cat) || 0) + 1);
+    });
+    const categories = Array.from(categoryMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
 
-  const selectedInsight =
-    selectedWeek && workoutAvg > 0
-      ? getWorkoutInsight(selectedWeek.workouts, workoutAvg)
-      : null;
+    // Streak calculation
+    let streak = 0;
+    const sortedDates = [...new Set(workouts.map((w) => w.date))]
+      .sort()
+      .reverse();
+    const today = formatDate(now);
+    const yesterday = formatDate(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+
+    // Today's workouts count (for daily goal)
+    const todayWorkouts = workouts.filter((w) => w.date === today).length;
+
+    if (sortedDates[0] === today || sortedDates[0] === yesterday) {
+      streak = 1;
+      for (let i = 1; i < sortedDates.length; i++) {
+        const curr = new Date(sortedDates[i - 1]);
+        const prev = new Date(sortedDates[i]);
+        const diffDays = Math.floor(
+          (curr.getTime() - prev.getTime()) / (24 * 60 * 60 * 1000),
+        );
+        if (diffDays === 1) {
+          streak++;
+        } else {
+          break;
+        }
+      }
+    }
+
+    return {
+      totalWorkouts,
+      todayWorkouts,
+      totalSets,
+      totalReps,
+      totalVolume,
+      latestWeight,
+      weightDelta,
+      avgWeight,
+      weightValues,
+      weeklyData,
+      categories,
+      streak,
+      goalProgress: Math.min((todayWorkouts / weeklyGoal) * 100, 100),
+    };
+  }, [workouts, weights, selectedPeriod, weeklyGoal]);
 
   /* =========================
-     UI
+     PERIOD SELECTOR
      ========================= */
+  const PeriodSelector = () => (
+    <View
+      style={{
+        flexDirection: "row",
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        padding: spacing.xxs,
+        marginBottom: spacing.lg,
+      }}
+    >
+      {(["week", "month", "all"] as const).map((period) => (
+        <Pressable
+          key={period}
+          onPress={() => setSelectedPeriod(period)}
+          style={{
+            flex: 1,
+            paddingVertical: spacing.sm,
+            paddingHorizontal: spacing.md,
+            borderRadius: radius.md,
+            backgroundColor:
+              selectedPeriod === period ? colors.accent : "transparent",
+          }}
+        >
+          <Text
+            style={{
+              textAlign: "center",
+              fontSize: typography.caption.fontSize,
+              fontWeight: selectedPeriod === period ? "600" : "400",
+              color: selectedPeriod === period ? "#fff" : colors.textSecondary,
+            }}
+          >
+            {period === "week"
+              ? "Week"
+              : period === "month"
+                ? "Month"
+                : "All Time"}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
 
   return (
     <ScrollView
-      style={{
-        flex: 1,
-        backgroundColor: colors.background,
+      style={{ flex: 1, backgroundColor: colors.background }}
+      contentContainerStyle={{
         padding: spacing.md,
+        paddingBottom: spacing.xxl,
       }}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor={colors.accent}
+        />
+      }
     >
       {/* HEADER */}
-      <Text
+      <Animated.View entering={FadeInDown.duration(400)}>
+        <Text
+          style={{
+            ...typography.h1,
+            color: colors.textPrimary,
+            marginBottom: spacing.xs,
+          }}
+        >
+          Analytics
+        </Text>
+        <Text
+          style={{
+            ...typography.body,
+            color: colors.textSecondary,
+            marginBottom: spacing.lg,
+          }}
+        >
+          Your fitness journey at a glance • Pull to refresh
+        </Text>
+      </Animated.View>
+
+      {/* PERIOD SELECTOR */}
+      <PeriodSelector />
+
+      {/* HERO STATS ROW */}
+      <Animated.View
+        entering={FadeInUp.delay(100).duration(400)}
         style={{
-          fontSize: 28,
-          fontFamily: typography.heading.fontFamily,
-          color: colors.textPrimary,
-          marginBottom: spacing.xs,
+          flexDirection: "row",
+          gap: spacing.sm,
+          marginBottom: spacing.md,
         }}
       >
-        Analytics
-      </Text>
-
-      <Text
-        style={{
-          fontSize: 14,
-          fontFamily: typography.body.fontFamily,
-          color: colors.textSecondary,
-          marginBottom: spacing.lg,
-        }}
-      >
-        Performance overview & training trends
-      </Text>
-
-      <InsightCard message={globalInsight} />
-
-      {/* WORKOUT TRENDS */}
-      <Animated.View entering={FadeInUp.duration(300)}>
-        <Card>
-          <Text
+        {/* WORKOUTS CARD */}
+        <LinearGradient
+          colors={[colors.gradientStart, colors.gradientEnd]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{
+            flex: 1,
+            borderRadius: radius.xl,
+            padding: spacing.lg,
+            ...shadows.md,
+          }}
+        >
+          <View
             style={{
-              fontSize: 18,
-              fontFamily: typography.subheading.fontFamily,
-              color: colors.textPrimary,
+              flexDirection: "row",
+              alignItems: "center",
               marginBottom: spacing.sm,
             }}
           >
-            Workout Trends
+            <View
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: radius.full,
+                backgroundColor: "rgba(255,255,255,0.2)",
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <Ionicons name="barbell-outline" size={18} color="#fff" />
+            </View>
+          </View>
+          <Text style={{ ...typography.display, color: "#fff" }}>
+            {stats.totalWorkouts}
           </Text>
+          <Text
+            style={{ ...typography.caption, color: "rgba(255,255,255,0.8)" }}
+          >
+            Workouts
+          </Text>
+        </LinearGradient>
 
-          {workoutTrend.length > 0 ? (
-            <>
-              <WorkoutBarChart
-                data={workoutTrend}
-                onBarPress={setSelectedWeek}
+        {/* STREAK CARD */}
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: colors.surface,
+            borderRadius: radius.xl,
+            padding: spacing.lg,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            ...shadows.sm,
+          }}
+        >
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              marginBottom: spacing.sm,
+            }}
+          >
+            <View
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: radius.full,
+                backgroundColor:
+                  stats.streak > 0
+                    ? colors.warningLight
+                    : colors.surfaceElevated,
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <Ionicons
+                name="flame"
+                size={18}
+                color={stats.streak > 0 ? colors.warning : colors.textMuted}
               />
+            </View>
+          </View>
+          <Text style={{ ...typography.display, color: colors.textPrimary }}>
+            {stats.streak}
+          </Text>
+          <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+            Day Streak
+          </Text>
+        </View>
+      </Animated.View>
 
-              {selectedWeek && (
-                <View
+      {/* WEEKLY GOAL PROGRESS */}
+      <Animated.View
+        entering={FadeInUp.delay(200).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          padding: spacing.lg,
+          marginBottom: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+        }}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <View style={{ flex: 1 }}>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                marginBottom: spacing.xs,
+              }}
+            >
+              <Text style={{ ...typography.label, color: colors.textMuted }}>
+                TODAY'S GOAL
+              </Text>
+              <Pressable
+                onPress={() => router.push("/(tabs)/profile")}
+                style={{ marginLeft: spacing.xs, padding: spacing.xxs }}
+              >
+                <Ionicons name="pencil" size={12} color={colors.textMuted} />
+              </Pressable>
+            </View>
+            <Text style={{ ...typography.h2, color: colors.textPrimary }}>
+              {stats.todayWorkouts}/{weeklyGoal} workouts
+            </Text>
+            <Text
+              style={{
+                ...typography.caption,
+                color: colors.textSecondary,
+                marginTop: spacing.xxs,
+              }}
+            >
+              {stats.goalProgress >= 100
+                ? "Daily goal achieved! 🎉"
+                : `${Math.round(100 - stats.goalProgress)}% to go`}
+            </Text>
+          </View>
+          <ProgressRing
+            progress={stats.goalProgress}
+            size={80}
+            strokeWidth={8}
+            color={colors.accent}
+            bgColor={colors.surfaceElevated}
+          />
+        </View>
+      </Animated.View>
+
+      {/* STATS GRID */}
+      <Animated.View
+        entering={FadeInUp.delay(300).duration(400)}
+        style={{
+          flexDirection: "row",
+          flexWrap: "wrap",
+          gap: spacing.sm,
+          marginBottom: spacing.md,
+        }}
+      >
+        <StatCard
+          icon="layers-outline"
+          label="Total Sets"
+          value={stats.totalSets.toString()}
+          colors={colors}
+          spacing={spacing}
+          radius={radius}
+          shadows={shadows}
+        />
+        <StatCard
+          icon="repeat-outline"
+          label="Total Reps"
+          value={stats.totalReps.toLocaleString()}
+          colors={colors}
+          spacing={spacing}
+          radius={radius}
+          shadows={shadows}
+        />
+        <StatCard
+          icon="trending-up-outline"
+          label="Volume"
+          value={`${(stats.totalVolume / 1000).toFixed(1)}k`}
+          suffix="kg"
+          colors={colors}
+          spacing={spacing}
+          radius={radius}
+          shadows={shadows}
+        />
+        <StatCard
+          icon="scale-outline"
+          label="Avg Weight"
+          value={stats.avgWeight.toFixed(1)}
+          suffix="kg"
+          colors={colors}
+          spacing={spacing}
+          radius={radius}
+          shadows={shadows}
+        />
+      </Animated.View>
+
+      {/* WEEKLY ACTIVITY CHART */}
+      <Animated.View
+        entering={FadeInUp.delay(400).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          padding: spacing.lg,
+          marginBottom: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+        }}
+      >
+        <Text
+          style={{
+            ...typography.h3,
+            color: colors.textPrimary,
+            marginBottom: spacing.md,
+          }}
+        >
+          Weekly Activity
+        </Text>
+        <WeeklyBarChart
+          data={stats.weeklyData}
+          colors={colors}
+          spacing={spacing}
+          radius={radius}
+        />
+      </Animated.View>
+
+      {/* BODY WEIGHT CARD */}
+      {stats.weightValues.length > 0 && (
+        <Animated.View
+          entering={FadeInUp.delay(500).duration(400)}
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: radius.xl,
+            padding: spacing.lg,
+            marginBottom: spacing.md,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            ...shadows.sm,
+          }}
+        >
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+            }}
+          >
+            <View>
+              <Text
+                style={{
+                  ...typography.label,
+                  color: colors.textMuted,
+                  marginBottom: spacing.xs,
+                }}
+              >
+                BODY WEIGHT
+              </Text>
+              <Text style={{ ...typography.stat, color: colors.textPrimary }}>
+                {stats.latestWeight.toFixed(1)}
+                <Text
+                  style={{ ...typography.body, color: colors.textSecondary }}
+                >
+                  {" "}
+                  kg
+                </Text>
+              </Text>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginTop: spacing.xxs,
+                }}
+              >
+                <Ionicons
+                  name={stats.weightDelta >= 0 ? "arrow-up" : "arrow-down"}
+                  size={14}
+                  color={stats.weightDelta > 0 ? colors.error : colors.success}
+                />
+                <Text
                   style={{
-                    marginTop: spacing.sm,
-                    padding: spacing.md,
-                    borderRadius: 14,
-                    backgroundColor: `${colors.accent}15`,
+                    ...typography.caption,
+                    color:
+                      stats.weightDelta > 0 ? colors.error : colors.success,
+                    marginLeft: spacing.xxs,
                   }}
                 >
-                  <Text style={{ color: colors.textSecondary }}>
-                    {selectedWeek.monthLabel} · {selectedWeek.weekLabel}
-                  </Text>
+                  {Math.abs(stats.weightDelta).toFixed(1)} kg
+                </Text>
+              </View>
+            </View>
+            <View style={{ width: 100, height: 40 }}>
+              <MiniSparkline
+                data={stats.weightValues}
+                color={colors.secondary}
+              />
+            </View>
+          </View>
+        </Animated.View>
+      )}
 
+      {/* CATEGORY BREAKDOWN */}
+      {stats.categories.length > 0 && (
+        <Animated.View
+          entering={FadeInUp.delay(600).duration(400)}
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: radius.xl,
+            padding: spacing.lg,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            marginBottom: spacing.md,
+            ...shadows.sm,
+          }}
+        >
+          <Text
+            style={{
+              ...typography.h3,
+              color: colors.textPrimary,
+              marginBottom: spacing.md,
+            }}
+          >
+            Top Categories
+          </Text>
+          {stats.categories.map(([cat, count], i) => {
+            const maxCount = stats.categories[0][1];
+            const percentage = (count / maxCount) * 100;
+            return (
+              <View
+                key={cat}
+                style={{
+                  marginBottom:
+                    i < stats.categories.length - 1 ? spacing.sm : 0,
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    marginBottom: spacing.xxs,
+                  }}
+                >
                   <Text
                     style={{
-                      fontSize: 16,
-                      fontWeight: "600",
+                      ...typography.bodyMedium,
                       color: colors.textPrimary,
                     }}
                   >
-                    {selectedWeek.workouts} workouts
+                    {cat}
                   </Text>
-
-                  {selectedInsight && (
-                    <Text style={{ color: colors.accent }}>
-                      {selectedInsight}
-                    </Text>
-                  )}
+                  <Text
+                    style={{
+                      ...typography.caption,
+                      color: colors.textSecondary,
+                    }}
+                  >
+                    {count}
+                  </Text>
                 </View>
-              )}
+                <View
+                  style={{
+                    height: 6,
+                    backgroundColor: colors.surfaceElevated,
+                    borderRadius: radius.full,
+                    overflow: "hidden",
+                  }}
+                >
+                  <View
+                    style={{
+                      width: `${percentage}%`,
+                      height: "100%",
+                      backgroundColor: colors.accent,
+                      borderRadius: radius.full,
+                    }}
+                  />
+                </View>
+              </View>
+            );
+          })}
+        </Animated.View>
+      )}
 
-              <View style={{ height: spacing.lg }} />
-              <MiniLineChart data={volumeTrend} />
-            </>
-          ) : (
-            <Text style={{ color: colors.textSecondary }}>
-              Not enough workout data yet.
-            </Text>
-          )}
-        </Card>
-      </Animated.View>
-
-      {/* BODY WEIGHT */}
-      <Animated.View entering={FadeInUp.duration(300)}>
-        <Card>
+      {/* AI INSIGHTS SECTION */}
+      <Animated.View
+        entering={FadeInUp.delay(700).duration(400)}
+        style={{ marginBottom: spacing.xl }}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            marginBottom: spacing.md,
+          }}
+        >
+          <Ionicons name="bulb" size={20} color={colors.accent} />
           <Text
             style={{
-              fontSize: 18,
-              fontWeight: "600",
+              ...typography.h3,
               color: colors.textPrimary,
-              marginBottom: spacing.sm,
+              marginLeft: spacing.xs,
             }}
           >
-            Body Weight
+            Smart Insights
           </Text>
-
-          {weightStats ? (
-            <>
+          {insights.length > 0 && (
+            <View
+              style={{
+                backgroundColor: colors.accentDim,
+                borderRadius: radius.full,
+                paddingHorizontal: spacing.sm,
+                paddingVertical: 2,
+                marginLeft: spacing.sm,
+              }}
+            >
               <Text
                 style={{
-                  fontSize: 32,
-                  fontWeight: "700",
-                  color: colors.textPrimary,
+                  ...typography.caption,
+                  color: colors.accent,
+                  fontWeight: "600",
                 }}
               >
-                {weightStats.latest} kg
+                {insights.length}
               </Text>
-
-              <Text
-                style={{
-                  color:
-                    weightStats.trend === "down"
-                      ? "#22C55E"
-                      : weightStats.trend === "up"
-                        ? "#EF4444"
-                        : colors.textSecondary,
-                  marginBottom: spacing.sm,
-                }}
-              >
-                {weightStats.delta >= 0 ? "↑" : "↓"}{" "}
-                {Math.abs(weightStats.delta)} kg overall
-              </Text>
-
-              <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
-                Avg {weightStats.avg} · Min {weightStats.min} · Max{" "}
-                {weightStats.max}
-              </Text>
-
-              <View style={{ height: spacing.md }} />
-              <MiniLineChart data={weightStats.chart} />
-            </>
-          ) : (
-            <Text style={{ color: colors.textSecondary }}>
-              Add body weight entries to see progress.
-            </Text>
+            </View>
           )}
-        </Card>
+        </View>
+
+        {insights.length === 0 ? (
+          <View
+            style={{
+              backgroundColor: colors.surface,
+              borderRadius: radius.xl,
+              padding: spacing.xl,
+              borderWidth: 1,
+              borderColor: colors.cardBorder,
+              alignItems: "center",
+              ...shadows.sm,
+            }}
+          >
+            <View
+              style={{
+                width: 60,
+                height: 60,
+                borderRadius: radius.full,
+                backgroundColor: colors.surfaceElevated,
+                justifyContent: "center",
+                alignItems: "center",
+                marginBottom: spacing.md,
+              }}
+            >
+              <Ionicons name="sparkles" size={28} color={colors.textMuted} />
+            </View>
+            <Text
+              style={{
+                ...typography.bodyMedium,
+                color: colors.textPrimary,
+                marginBottom: spacing.xs,
+              }}
+            >
+              No Insights Yet
+            </Text>
+            <Text
+              style={{
+                ...typography.caption,
+                color: colors.textSecondary,
+                textAlign: "center",
+              }}
+            >
+              Log more workouts and body weights to unlock personalized insights
+            </Text>
+          </View>
+        ) : (
+          <View style={{ gap: spacing.sm }}>
+            {insights.map((insight, index) => (
+              <InsightCardComponent
+                key={insight.id}
+                insight={insight}
+                index={index}
+                colors={colors}
+                spacing={spacing}
+                radius={radius}
+                typography={typography}
+                shadows={shadows}
+              />
+            ))}
+          </View>
+        )}
       </Animated.View>
     </ScrollView>
   );
 }
 
 /* =========================
-   DATE HELPERS
+   HELPER COMPONENTS
    ========================= */
 
-function getWeekStart(dateStr: string) {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() - d.getDay());
-  return d.toISOString().split("T")[0];
+function ProgressRing({
+  progress,
+  size,
+  strokeWidth,
+  color,
+  bgColor,
+}: {
+  progress: number;
+  size: number;
+  strokeWidth: number;
+  color: string;
+  bgColor: string;
+}) {
+  const center = size / 2;
+  const r = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * r;
+  const strokeDashoffset = circumference - (progress / 100) * circumference;
+
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+    >
+      <Svg width={size} height={size} style={{ position: "absolute" }}>
+        <Circle
+          cx={center}
+          cy={center}
+          r={r}
+          stroke={bgColor}
+          strokeWidth={strokeWidth}
+          fill="transparent"
+        />
+        <Circle
+          cx={center}
+          cy={center}
+          r={r}
+          stroke={color}
+          strokeWidth={strokeWidth}
+          fill="transparent"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          transform={`rotate(-90 ${center} ${center})`}
+        />
+      </Svg>
+      <Text style={{ fontSize: 16, fontWeight: "700", color }}>
+        {Math.round(progress)}%
+      </Text>
+    </View>
+  );
 }
 
-function getWeekLabel(weekStart: string) {
-  const d = new Date(weekStart);
-  return `W${Math.ceil(d.getDate() / 7)}`;
+function StatCard({
+  icon,
+  label,
+  value,
+  suffix,
+  colors,
+  spacing,
+  radius,
+  shadows,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+  suffix?: string;
+  colors: any;
+  spacing: any;
+  radius: any;
+  shadows: any;
+}) {
+  return (
+    <View
+      style={{
+        flex: 1,
+        minWidth: "45%",
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        padding: spacing.md,
+        borderWidth: 1,
+        borderColor: colors.cardBorder,
+        ...shadows.sm,
+      }}
+    >
+      <Ionicons name={icon} size={20} color={colors.accent} />
+      <Text
+        style={{
+          fontSize: 24,
+          fontWeight: "700",
+          color: colors.textPrimary,
+          marginTop: spacing.xs,
+        }}
+      >
+        {value}
+        {suffix && (
+          <Text style={{ fontSize: 14, color: colors.textSecondary }}>
+            {" "}
+            {suffix}
+          </Text>
+        )}
+      </Text>
+      <Text
+        style={{
+          fontSize: 12,
+          color: colors.textSecondary,
+          textTransform: "uppercase",
+          letterSpacing: 0.5,
+        }}
+      >
+        {label}
+      </Text>
+    </View>
+  );
 }
 
-function getMonthLabel(weekStart: string) {
-  return new Date(weekStart).toLocaleString("default", { month: "short" });
+function WeeklyBarChart({
+  data,
+  colors,
+  spacing,
+  radius,
+}: {
+  data: number[];
+  colors: any;
+  spacing: any;
+  radius: any;
+}) {
+  const days = ["M", "T", "W", "T", "F", "S", "S"];
+  const maxVal = Math.max(...data, 1);
+
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "flex-end",
+        height: 100,
+      }}
+    >
+      {data.map((val, i) => {
+        const height = (val / maxVal) * 70 + 10;
+        const isToday = i === 6;
+        return (
+          <View key={i} style={{ alignItems: "center", flex: 1 }}>
+            <View
+              style={{
+                width: 24,
+                height,
+                backgroundColor: isToday
+                  ? colors.accent
+                  : colors.surfaceElevated,
+                borderRadius: radius.sm,
+                marginBottom: spacing.xs,
+              }}
+            />
+            <Text
+              style={{
+                fontSize: 11,
+                fontWeight: isToday ? "600" : "400",
+                color: isToday ? colors.accent : colors.textMuted,
+              }}
+            >
+              {days[i]}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
 }
 
-function isCurrentWeek(weekStart: string) {
-  const now = new Date();
-  const start = new Date(weekStart);
-  return Math.abs(now.getTime() - start.getTime()) < 7 * 24 * 60 * 60 * 1000;
+function MiniSparkline({ data, color }: { data: number[]; color: string }) {
+  if (data.length < 2) return null;
+
+  const width = 100;
+  const height = 40;
+  const padding = 4;
+
+  const minVal = Math.min(...data);
+  const maxVal = Math.max(...data);
+  const range = maxVal - minVal || 1;
+
+  const points = data.map((val, i) => {
+    const x = padding + (i / (data.length - 1)) * (width - padding * 2);
+    const y =
+      height - padding - ((val - minVal) / range) * (height - padding * 2);
+    return `${x},${y}`;
+  });
+
+  const pathD = `M ${points.join(" L ")}`;
+
+  return (
+    <Svg width={width} height={height}>
+      <Path
+        d={pathD}
+        stroke={color}
+        strokeWidth={2}
+        fill="transparent"
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
+function InsightCardComponent({
+  insight,
+  index,
+  colors,
+  spacing,
+  radius,
+  typography,
+  shadows,
+}: {
+  insight: Insight;
+  index: number;
+  colors: any;
+  spacing: any;
+  radius: any;
+  typography: any;
+  shadows: any;
+}) {
+  const getIconColor = (priority: InsightPriority) => {
+    switch (priority) {
+      case "high":
+        return colors.accent;
+      case "medium":
+        return colors.secondary;
+      default:
+        return colors.textSecondary;
+    }
+  };
+
+  const getIconBgColor = (priority: InsightPriority) => {
+    switch (priority) {
+      case "high":
+        return colors.accentLight || colors.accentDim;
+      case "medium":
+        return colors.secondaryLight || colors.surfaceElevated;
+      default:
+        return colors.surfaceElevated;
+    }
+  };
+
+  const getPriorityLabel = (priority: InsightPriority) => {
+    switch (priority) {
+      case "high":
+        return { text: "Important", color: colors.accent };
+      case "medium":
+        return { text: "Notable", color: colors.secondary };
+      default:
+        return { text: "Tip", color: colors.textMuted };
+    }
+  };
+
+  const priorityInfo = getPriorityLabel(insight.priority);
+
+  return (
+    <Animated.View entering={FadeInUp.delay(100 + index * 50).duration(300)}>
+      <View
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          borderWidth: 1,
+          borderColor:
+            insight.priority === "high" ? colors.accentDim : colors.cardBorder,
+          overflow: "hidden",
+          ...shadows.sm,
+        }}
+      >
+        <LinearGradient
+          colors={
+            insight.priority === "high"
+              ? [colors.accentDim || colors.surface, colors.surface]
+              : [colors.surface, colors.surface]
+          }
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{ padding: spacing.md }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
+            {/* Icon */}
+            <View
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: radius.lg,
+                backgroundColor: getIconBgColor(insight.priority),
+                justifyContent: "center",
+                alignItems: "center",
+                marginRight: spacing.md,
+              }}
+            >
+              <Ionicons
+                name={insight.icon as any}
+                size={22}
+                color={getIconColor(insight.priority)}
+              />
+            </View>
+
+            {/* Content */}
+            <View style={{ flex: 1 }}>
+              {/* Priority Badge */}
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginBottom: spacing.xxs,
+                }}
+              >
+                <View
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: 3,
+                    backgroundColor: priorityInfo.color,
+                    marginRight: spacing.xs,
+                  }}
+                />
+                <Text
+                  style={{
+                    fontSize: 10,
+                    fontWeight: "600",
+                    color: priorityInfo.color,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.5,
+                  }}
+                >
+                  {priorityInfo.text}
+                </Text>
+              </View>
+
+              {/* Title */}
+              <Text
+                style={{
+                  ...typography.bodyMedium,
+                  color: colors.textPrimary,
+                  marginBottom: spacing.xxs,
+                }}
+              >
+                {insight.title}
+              </Text>
+
+              {/* Message */}
+              <Text
+                style={{
+                  ...typography.body,
+                  color: colors.textSecondary,
+                  lineHeight: 20,
+                }}
+              >
+                {insight.message}
+              </Text>
+            </View>
+          </View>
+        </LinearGradient>
+      </View>
+    </Animated.View>
+  );
 }

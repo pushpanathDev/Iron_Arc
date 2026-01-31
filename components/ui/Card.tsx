@@ -1,15 +1,17 @@
 import { ReactNode } from "react";
 import { Platform, ViewStyle } from "react-native";
 import Animated, { FadeInUp } from "react-native-reanimated";
-import { useTheme } from "../../src/theme/theme";
+import { useTheme } from "../../theme/theme";
 
 type Props = {
   children: ReactNode;
   style?: ViewStyle;
+  /** Enable accent glow effect */
+  glow?: boolean;
 };
 
-export default function Card({ children, style }: Props) {
-  const { colors, spacing, radius } = useTheme();
+export default function Card({ children, style, glow = false }: Props) {
+  const { colors, spacing, radius, shadows } = useTheme();
 
   return (
     <Animated.View
@@ -17,18 +19,27 @@ export default function Card({ children, style }: Props) {
       style={[
         {
           backgroundColor: colors.card,
-          borderRadius: radius.lg + 6, // more curvy
+          borderRadius: radius.xl, // 20px - more premium
           padding: spacing.md,
           marginBottom: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
 
-          // 🔥 Premium shadow
+          // 🔥 Premium glossy shadow
           ...Platform.select({
-            ios: {
-              shadowColor: "#000",
-              shadowOpacity: 0.12,
-              shadowRadius: 12,
-              shadowOffset: { width: 0, height: 6 },
-            },
+            ios: glow
+              ? {
+                  shadowColor: colors.accent,
+                  shadowOpacity: 0.2,
+                  shadowRadius: 16,
+                  shadowOffset: { width: 0, height: 6 },
+                }
+              : {
+                  shadowColor: "#000",
+                  shadowOpacity: 0.1,
+                  shadowRadius: 16,
+                  shadowOffset: { width: 0, height: 6 },
+                },
             android: {
               elevation: 6,
             },

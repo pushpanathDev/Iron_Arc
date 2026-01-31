@@ -2,6 +2,26 @@ import { doc, setDoc, deleteDoc } from "firebase/firestore";
 import { auth, firestoreDb } from "./config";
 import { syncWorkoutAdd } from "./sync";
 
+/**
+ * Sanitize workout data for Firebase
+ * Firebase doesn't accept undefined values, convert to null
+ * @param userId - The user ID (passed separately to ensure it's always present)
+ * @param workout - The workout data
+ */
+function sanitizeForFirebase(userId: string, workout: any) {
+  return {
+    id: workout.id,
+    userId: userId, // Use parameter, not workout.userId (may be undefined)
+    date: workout.date,
+    exercise: workout.exercise,
+    category: workout.category ?? null,
+    notes: workout.notes ?? null,
+    createdAt: workout.createdAt,
+    sets: workout.sets ?? [],
+    isSynced: 1,
+  };
+}
+
 export async function pushWorkoutToFirebase(
   userId: string,
   workout: any
@@ -22,8 +42,9 @@ export async function pushWorkoutToFirebase(
   );
   console.log("🔐 Auth UID:", auth.currentUser?.uid);
 
-
-  await setDoc(ref, workout, { merge: true });
+  // Sanitize data to avoid undefined values
+  const sanitizedWorkout = sanitizeForFirebase(userId, workout);
+  await setDoc(ref, sanitizedWorkout, { merge: true });
 }
 
 export async function deleteWorkoutFromFirebase(

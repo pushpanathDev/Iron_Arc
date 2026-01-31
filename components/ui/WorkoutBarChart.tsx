@@ -1,7 +1,7 @@
 import { Text, View } from "react-native";
 import { ScrollView } from "react-native-gesture-handler";
-import Svg, { Line, Rect, G } from "react-native-svg";
-import { useTheme } from "../../src/theme/theme";
+import Svg, { G, Line, Rect } from "react-native-svg";
+import { useTheme } from "../../theme/theme";
 
 export type WeeklyWorkoutBar = {
   weekStart: string;
@@ -38,13 +38,9 @@ export default function WorkoutBarChart({ data, onBarPress }: Props) {
       }}
     >
       <View>
-        <Svg
-          height={CHART_HEIGHT}
-          width={data.length * (BAR_WIDTH + BAR_GAP)}
-        >
+        <Svg height={CHART_HEIGHT} width={data.length * (BAR_WIDTH + BAR_GAP)}>
           {data.map((week, index) => {
-            const barHeight =
-              (week.workouts / maxValue) * BAR_AREA_HEIGHT;
+            const barHeight = (week.workouts / maxValue) * BAR_AREA_HEIGHT;
 
             const x = index * (BAR_WIDTH + BAR_GAP);
             const y = CHART_HEIGHT - barHeight;

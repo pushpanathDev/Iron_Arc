@@ -43,24 +43,40 @@ export async function syncWorkoutDelete(
    ====================================================== */
 
 export async function syncWorkoutsFromFirebase(userId: string) {
-  console.log("⬇️ Pulling workouts from Firebase...");
+  console.log("⬇️ Pulling workouts from Firebase for user:", userId);
 
   const snap = await getDocs(
     collection(firestoreDb, "users", userId, "workouts")
   );
 
-  // 🔥 IMPORTANT:
-  // Firebase is authoritative on pull → replace local cache
-  await sqliteDb.runAsync(`DELETE FROM workout_sets`);
-  await sqliteDb.runAsync(`DELETE FROM workouts`);
+  // 🔐 USER-ISOLATED: Only delete/replace data for this user
+  // First, get all workouts for this user to delete their sets
+  const userWorkouts = await sqliteDb.getAllAsync<{ id: string }>(
+    `SELECT id FROM workouts WHERE userId = ?`,
+    [userId]
+  );
+  
+  // Delete sets for this user's workouts only
+  for (const workout of userWorkouts) {
+    await sqliteDb.runAsync(
+      `DELETE FROM workout_sets WHERE workoutId = ?`,
+      [workout.id]
+    );
+  }
+  
+  // Delete this user's workouts only
+  await sqliteDb.runAsync(
+    `DELETE FROM workouts WHERE userId = ?`,
+    [userId]
+  );
 
   for (const docSnap of snap.docs) {
     const w = docSnap.data();
 
     await sqliteDb.runAsync(
       `INSERT INTO workouts 
-       (id, userId, date, exercise, category, notes, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (id, userId, date, exercise, category, notes, createdAt, isSynced)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
       [
         docSnap.id,
         userId,
@@ -83,5 +99,5 @@ export async function syncWorkoutsFromFirebase(userId: string) {
 
   await setLastSync("workouts", Date.now());
 
-  console.log("✅ Firebase → SQLite sync complete");
+  console.log("✅ Firebase → SQLite sync complete for user:", userId);
 }

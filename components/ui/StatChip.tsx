@@ -1,6 +1,6 @@
 import { ReactElement } from "react";
 import { Text, View } from "react-native";
-import { useTheme } from "../../src/theme/theme";
+import { useTheme } from "../../theme/theme";
 
 export type StatChipProps = {
   label: string;

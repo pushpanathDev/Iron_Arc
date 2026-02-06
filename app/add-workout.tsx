@@ -2,7 +2,15 @@ import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -79,6 +87,8 @@ function LongPressButton({
   );
 }
 
+const REP_PRESETS = [12, 13, 14, 15];
+
 export default function AddWorkout() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const { id } = useLocalSearchParams();
@@ -95,6 +105,9 @@ export default function AddWorkout() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [originalCreatedAt, setOriginalCreatedAt] = useState<number | null>(
+    null,
+  );
 
   /* =========================
      LOAD WORKOUT (EDIT MODE)
@@ -111,6 +124,7 @@ export default function AddWorkout() {
       setExercise(workout.exercise);
       setNotes(workout.notes ?? "");
       setWorkoutDate(new Date(workout.date));
+      setOriginalCreatedAt(workout.createdAt);
       setSets(
         workout.sets.map((s) => ({
           reps: String(s.reps),
@@ -142,12 +156,16 @@ export default function AddWorkout() {
     field: "reps" | "weight",
     step: number = 1,
   ) => {
-    const updated = [...sets];
-    const currentValue = parseFloat(updated[index][field]) || 0;
-    const newValue = Math.max(0, currentValue + step);
-    updated[index][field] =
-      field === "weight" ? newValue.toFixed(1) : String(Math.floor(newValue));
-    setSets(updated);
+    setSets((prev) => {
+      const updated = [...prev];
+      const currentValue = parseFloat(updated[index][field]) || 0;
+      const newValue = Math.max(0, currentValue + step);
+      updated[index][field] =
+        field === "weight"
+          ? newValue.toFixed(1)
+          : String(Math.floor(newValue));
+      return updated;
+    });
   };
 
   const removeSet = (index: number) =>
@@ -172,7 +190,7 @@ export default function AddWorkout() {
         exercise,
         category,
         notes,
-        createdAt: Date.now(),
+        createdAt: isEdit ? originalCreatedAt ?? Date.now() : Date.now(),
         sets: sets.map((s) => ({
           reps: Number(s.reps),
           weight: Number(s.weight),
@@ -197,14 +215,21 @@ export default function AddWorkout() {
      UI
      ========================= */
   return (
-    <ScrollView
+    <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={{
-        padding: spacing.md,
-        paddingTop: insets.top + spacing.md,
-        paddingBottom: spacing.xxl,
-      }}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={insets.top + 12}
     >
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.background }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        contentContainerStyle={{
+          padding: spacing.md,
+          paddingTop: insets.top + spacing.md,
+          paddingBottom: spacing.xxl,
+        }}
+      >
       {/* HEADER */}
       <Animated.View entering={FadeInDown.duration(400)}>
         <View
@@ -492,6 +517,51 @@ export default function AddWorkout() {
                     <Ionicons name="add" size={20} color={colors.accent} />
                   </LongPressButton>
                 </View>
+                {/* Quick reps presets */}
+                <View
+                  style={{
+                    flexDirection: "row",
+                    flexWrap: "wrap",
+                    gap: spacing.xs,
+                    marginTop: spacing.xs,
+                  }}
+                >
+                  {REP_PRESETS.map((value) => {
+                    const isSelected = set.reps === String(value);
+                    return (
+                      <Pressable
+                        key={value}
+                        onPress={() =>
+                          updateSet(index, "reps", String(value))
+                        }
+                        style={{
+                          paddingVertical: 4,
+                          paddingHorizontal: spacing.sm,
+                          borderRadius: radius.md,
+                          backgroundColor: isSelected
+                            ? colors.accent
+                            : colors.surfaceElevated,
+                          borderWidth: 1,
+                          borderColor: isSelected
+                            ? colors.accent
+                            : colors.cardBorder,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: "600",
+                            color: isSelected
+                              ? colors.textOnAccent
+                              : colors.textSecondary,
+                          }}
+                        >
+                          {value}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
               </View>
 
               {/* Weight with +/- buttons */}
@@ -643,6 +713,7 @@ export default function AddWorkout() {
           </Text>
         </Pressable>
       </Animated.View>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }

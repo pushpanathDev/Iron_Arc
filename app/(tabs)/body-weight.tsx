@@ -4,6 +4,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Dimensions,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -22,6 +24,7 @@ import Animated, {
 import Svg, {
   Circle,
   Defs,
+  G,
   Line,
   Polyline,
   Stop,
@@ -45,6 +48,7 @@ import { useGlobalSync } from "../../context/SyncContext";
 import { createPageLogger } from "../../utils/logger";
 
 import * as Crypto from "expo-crypto";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 const log = createPageLogger("BodyWeight");
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const SWIPE_THRESHOLD = -60;
@@ -100,6 +104,7 @@ export default function BodyWeightScreen() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const { user } = useAuth();
   const { globalSync, refreshVersion, startSync, endSync } = useGlobalSync();
+  const insets = useSafeAreaInsets();
 
   const [weight, setWeight] = useState("");
   const [history, setHistory] = useState<BodyWeight[]>([]);
@@ -299,20 +304,27 @@ export default function BodyWeightScreen() {
      UI
      ========================= */
   return (
-    <ScrollView
+    <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={{
-        padding: spacing.md,
-        paddingBottom: spacing.xxl,
-      }}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-          tintColor={colors.accent}
-        />
-      }
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={insets.top + 12}
     >
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.background }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        contentContainerStyle={{
+          padding: spacing.md,
+          paddingBottom: spacing.xxl,
+        }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.accent}
+          />
+        }
+      >
       {/* HEADER */}
       <Animated.View entering={FadeInDown.duration(400)}>
         <Text
@@ -530,8 +542,11 @@ export default function BodyWeightScreen() {
           >
             <LongPressButton
               onIncrement={() => {
-                const current = parseFloat(weight) || 0;
-                if (current > 0.5) setWeight((current - 0.5).toFixed(1));
+                setWeight((prev) => {
+                  const current = parseFloat(prev) || 0;
+                  const next = Math.max(0, current - 0.5);
+                  return next.toFixed(1);
+                });
               }}
               style={{
                 width: 48,
@@ -563,8 +578,10 @@ export default function BodyWeightScreen() {
             />
             <LongPressButton
               onIncrement={() => {
-                const current = parseFloat(weight) || 0;
-                setWeight((current + 0.5).toFixed(1));
+                setWeight((prev) => {
+                  const current = parseFloat(prev) || 0;
+                  return (current + 0.5).toFixed(1);
+                });
               }}
               style={{
                 width: 48,
@@ -772,7 +789,8 @@ export default function BodyWeightScreen() {
           </Pressable>
         </Animated.View>
       )}
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -951,6 +969,12 @@ function WeightChart({
 }) {
   if (data.length < 2) return null;
 
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    setSelectedIndex(data.length - 1);
+  }, [data.length]);
+
   const weights = data.map((d) => d.weight);
   const minWeight = Math.min(...weights) - 1;
   const maxWeight = Math.max(...weights) + 1;
@@ -964,49 +988,117 @@ function WeightChart({
 
   const polylinePoints = points.map((p) => `${p.x},${p.y}`).join(" ");
 
+  const selected =
+    selectedIndex !== null ? data[selectedIndex] : null;
+  const selectedPoint =
+    selectedIndex !== null ? points[selectedIndex] : null;
+
+  const tooltipWidth = 100;
+  const tooltipX = selectedPoint
+    ? Math.max(
+        4,
+        Math.min(selectedPoint.x - tooltipWidth / 2, width - tooltipWidth - 4),
+      )
+    : 0;
+  const tooltipY = selectedPoint
+    ? Math.max(4, selectedPoint.y - 36)
+    : 0;
+
   return (
-    <Svg width={width} height={height + 20}>
-      <Defs>
-        <SvgGradient id="lineGradient" x1="0" y1="0" x2="1" y2="0">
-          <Stop offset="0" stopColor={colors.accent} stopOpacity="0.3" />
-          <Stop offset="1" stopColor={colors.accent} stopOpacity="1" />
-        </SvgGradient>
-      </Defs>
+    <View style={{ width, height: height + 24 }}>
+      <Svg width={width} height={height + 20}>
+        <Defs>
+          <SvgGradient id="lineGradient" x1="0" y1="0" x2="1" y2="0">
+            <Stop offset="0" stopColor={colors.accent} stopOpacity="0.3" />
+            <Stop offset="1" stopColor={colors.accent} stopOpacity="1" />
+          </SvgGradient>
+        </Defs>
 
-      {/* Grid lines */}
-      {[0, 0.5, 1].map((ratio, i) => (
-        <Line
-          key={i}
-          x1={0}
-          y1={height * ratio}
-          x2={width}
-          y2={height * ratio}
-          stroke={colors.divider}
-          strokeWidth={1}
-          strokeDasharray="4,4"
+        {/* Grid lines */}
+        {[0, 0.5, 1].map((ratio, i) => (
+          <Line
+            key={i}
+            x1={0}
+            y1={height * ratio}
+            x2={width}
+            y2={height * ratio}
+            stroke={colors.divider}
+            strokeWidth={1}
+            strokeDasharray="4,4"
+          />
+        ))}
+
+        {/* Line */}
+        <Polyline
+          points={polylinePoints}
+          fill="none"
+          stroke="url(#lineGradient)"
+          strokeWidth={3}
+          strokeLinecap="round"
+          strokeLinejoin="round"
         />
-      ))}
 
-      {/* Line */}
-      <Polyline
-        points={polylinePoints}
-        fill="none"
-        stroke="url(#lineGradient)"
-        strokeWidth={3}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+        {/* Points */}
+        {points.map((p, i) => {
+          const isSelected = i === selectedIndex;
+          return (
+            <G key={i}>
+              <Circle
+                cx={p.x}
+                cy={p.y}
+                r={isSelected ? 6 : 4}
+                fill={colors.accent}
+                stroke={isSelected ? "#fff" : "transparent"}
+                strokeWidth={isSelected ? 2 : 0}
+              />
+              {/* Touch target */}
+              <Circle
+                cx={p.x}
+                cy={p.y}
+                r={12}
+                fill="transparent"
+                onPress={() => setSelectedIndex(i)}
+              />
+            </G>
+          );
+        })}
+      </Svg>
 
-      {/* Points */}
-      {points.map((p, i) => (
-        <Circle
-          key={i}
-          cx={p.x}
-          cy={p.y}
-          r={i === points.length - 1 ? 6 : 4}
-          fill={colors.accent}
-        />
-      ))}
-    </Svg>
+      {selected && selectedPoint && (
+        <View
+          style={{
+            position: "absolute",
+            left: tooltipX,
+            top: tooltipY,
+            backgroundColor: colors.surface,
+            borderRadius: 8,
+            paddingVertical: 4,
+            paddingHorizontal: 8,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 12,
+              fontWeight: "600",
+              color: colors.textPrimary,
+              textAlign: "center",
+            }}
+          >
+            {selected.weight.toFixed(1)} kg
+          </Text>
+          <Text
+            style={{
+              fontSize: 10,
+              color: colors.textMuted,
+              textAlign: "center",
+            }}
+          >
+            {selected.date}
+          </Text>
+        </View>
+      )}
+    </View>
   );
 }

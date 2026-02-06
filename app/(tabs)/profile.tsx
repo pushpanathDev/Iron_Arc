@@ -7,6 +7,8 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -16,6 +18,7 @@ import {
 } from "react-native";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { useAuth } from "../../auth/AuthContext";
+import { isAdminUser } from "../../firebase/admin";
 import { SyncBadge, SyncState } from "../../components/SyncBadge";
 import { useGlobalSync } from "../../context/SyncContext";
 import {
@@ -32,6 +35,7 @@ import { useTheme } from "../../theme/theme";
 import { formatAccountDate, getAvatarUrl } from "../../utils/avatar";
 import { exportToCSV, exportToPDF } from "../../utils/exportData";
 import { createPageLogger } from "../../utils/logger";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const log = createPageLogger("Profile");
 
@@ -39,6 +43,7 @@ export default function ProfileScreen() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const { user, logout, isSyncing: isAuthSyncing } = useAuth();
   const { startSync, endSync } = useGlobalSync();
+  const insets = useSafeAreaInsets();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -53,6 +58,8 @@ export default function ProfileScreen() {
   const [pendingSync, setPendingSync] = useState(0);
   const [syncState, setSyncState] = useState<SyncState>("synced");
   const [isExporting, setIsExporting] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminChecked, setAdminChecked] = useState(false);
 
   // Guard flag to prevent operations when component is unmounting
   const isMounted = useRef(true);
@@ -105,6 +112,28 @@ export default function ProfileScreen() {
 
     loadProfile();
   }, [user]);
+
+  useEffect(() => {
+    let active = true;
+    const checkAdmin = async () => {
+      if (!user?.email) {
+        if (active) {
+          setIsAdmin(false);
+          setAdminChecked(true);
+        }
+        return;
+      }
+      const allowed = await isAdminUser(user.email);
+      if (active) {
+        setIsAdmin(allowed);
+        setAdminChecked(true);
+      }
+    };
+    checkAdmin();
+    return () => {
+      active = false;
+    };
+  }, [user?.email]);
 
   /* =========================
      PULL-TO-REFRESH
@@ -415,20 +444,27 @@ export default function ProfileScreen() {
   }
 
   return (
-    <ScrollView
+    <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={{
-        padding: spacing.md,
-        paddingBottom: spacing.xxl,
-      }}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-          tintColor={colors.accent}
-        />
-      }
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={insets.top + 12}
     >
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.background }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        contentContainerStyle={{
+          padding: spacing.md,
+          paddingBottom: spacing.xxl,
+        }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.accent}
+          />
+        }
+      >
       {/* HEADER */}
       <Animated.View entering={FadeInDown.duration(400)}>
         <View
@@ -1049,6 +1085,59 @@ export default function ProfileScreen() {
         </View>
       </Animated.View>
 
+      {/* ADMIN TOOLS */}
+      {adminChecked && isAdmin && (
+        <Animated.View
+          entering={FadeInUp.delay(520).duration(400)}
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: radius.xl,
+            overflow: "hidden",
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            ...shadows.sm,
+            marginBottom: spacing.md,
+          }}
+        >
+          <Pressable
+            onPress={() => router.push("/admin-catalog")}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              padding: spacing.lg,
+            }}
+          >
+            <View
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: radius.md,
+                backgroundColor: colors.accentLight,
+                justifyContent: "center",
+                alignItems: "center",
+                marginRight: spacing.sm,
+              }}
+            >
+              <Ionicons name="settings-outline" size={20} color={colors.accent} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text
+                style={{
+                  ...typography.bodyMedium,
+                  color: colors.textPrimary,
+                }}
+              >
+                Admin: Exercise Catalog
+              </Text>
+              <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+                Manage remote additions and removals
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          </Pressable>
+        </Animated.View>
+      )}
+
       {/* LOGOUT SECTION */}
       <Animated.View
         entering={FadeInUp.delay(550).duration(400)}
@@ -1151,7 +1240,8 @@ export default function ProfileScreen() {
           Designed & Built by Pushpanath
         </Text>
       </Animated.View>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 

@@ -581,7 +581,9 @@ export async function exportToPDF(
     const stats = calculateExportStats(workouts, weights);
     const html = generatePDFHTML(workouts, weights, stats, userName);
 
-    const timestamp = new Date().toISOString().split("T")[0];
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-");
     const { uri } = await Print.printToFileAsync({
       html,
       base64: false,

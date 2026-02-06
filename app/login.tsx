@@ -11,8 +11,11 @@ import {
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Image,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   View,
@@ -118,14 +121,20 @@ export default function LoginScreen() {
   }
 
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: colors.background,
-        padding: spacing.lg,
-        justifyContent: "center",
-      }}
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: colors.background }}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
+      <ScrollView
+        contentContainerStyle={{
+          flexGrow: 1,
+          backgroundColor: colors.background,
+          padding: spacing.lg,
+          justifyContent: "center",
+        }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
       {/* LOGO / BRAND */}
       <Animated.View
         entering={FadeInDown.delay(100).duration(500)}
@@ -395,6 +404,7 @@ export default function LoginScreen() {
           Version {Constants.expoConfig?.version || "1.0.0"}
         </Text>
       </Animated.View>
-    </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }

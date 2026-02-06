@@ -10,8 +10,14 @@ import {
   Text,
   View,
 } from "react-native";
-import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
-import Svg, { Circle, Path } from "react-native-svg";
+import Animated, {
+  FadeInDown,
+  FadeInUp,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
+import Svg, { Circle, G, Path } from "react-native-svg";
 
 import { useAuth } from "../../auth/AuthContext";
 import { useGlobalSync } from "../../context/SyncContext";
@@ -42,6 +48,9 @@ export default function Analytics() {
   >("week");
   const [insights, setInsights] = useState<Insight[]>([]);
   const [weeklyGoal, setWeeklyGoal] = useState(1); // Daily goal - default to 1 workout per day
+  const [selectedWeightIndex, setSelectedWeightIndex] = useState<number | null>(
+    null,
+  );
 
   /* =========================
      LOAD DATA
@@ -196,12 +205,21 @@ export default function Analytics() {
       weightDelta,
       avgWeight,
       weightValues,
+      weightSeries: filteredWeights,
       weeklyData,
       categories,
       streak,
       goalProgress: Math.min((todayWorkouts / weeklyGoal) * 100, 100),
     };
   }, [workouts, weights, selectedPeriod, weeklyGoal]);
+
+  useEffect(() => {
+    if (stats.weightValues.length > 0) {
+      setSelectedWeightIndex(stats.weightValues.length - 1);
+    } else {
+      setSelectedWeightIndex(null);
+    }
+  }, [stats.weightValues.length]);
 
   /* =========================
      PERIOD SELECTOR
@@ -593,11 +611,27 @@ export default function Analytics() {
                   {Math.abs(stats.weightDelta).toFixed(1)} kg
                 </Text>
               </View>
+              {stats.weightSeries?.length > 0 && selectedWeightIndex !== null && (
+                <Text
+                  style={{
+                    ...typography.caption,
+                    color: colors.textSecondary,
+                    marginTop: spacing.xxs,
+                  }}
+                >
+                  Selected:{" "}
+                  {stats.weightSeries[selectedWeightIndex]?.weight.toFixed(1)} kg
+                  {" • "}
+                  {stats.weightSeries[selectedWeightIndex]?.date}
+                </Text>
+              )}
             </View>
             <View style={{ width: 100, height: 40 }}>
               <MiniSparkline
-                data={stats.weightValues}
+                data={stats.weightSeries}
                 color={colors.secondary}
+                selectedIndex={selectedWeightIndex}
+                onPointPress={setSelectedWeightIndex}
               />
             </View>
           </View>
@@ -931,60 +965,156 @@ function WeeklyBarChart({
 }) {
   const days = ["M", "T", "W", "T", "F", "S", "S"];
   const maxVal = Math.max(...data, 1);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
   return (
-    <View
-      style={{
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "flex-end",
-        height: 100,
-      }}
-    >
-      {data.map((val, i) => {
-        const height = (val / maxVal) * 70 + 10;
-        const isToday = i === 6;
-        return (
-          <View key={i} style={{ alignItems: "center", flex: 1 }}>
-            <View
-              style={{
-                width: 24,
-                height,
-                backgroundColor: isToday
-                  ? colors.accent
-                  : colors.surfaceElevated,
-                borderRadius: radius.sm,
-                marginBottom: spacing.xs,
-              }}
+    <View>
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "flex-end",
+          height: 110,
+        }}
+      >
+        {data.map((val, i) => {
+          const height = (val / maxVal) * 70 + 10;
+          const isToday = i === 6;
+          const hasWorkouts = val > 0;
+          const fillColor = isToday
+            ? colors.accent
+            : hasWorkouts
+              ? colors.accentLight
+              : colors.surfaceElevated;
+
+          return (
+            <WeeklyBarItem
+              key={i}
+              label={days[i]}
+              height={height}
+              color={fillColor}
+              radius={radius}
+              spacing={spacing}
+              isToday={isToday}
+              isSelected={selectedIndex === i}
+              onPress={() => setSelectedIndex(i)}
+              textColor={isToday ? colors.accent : colors.textMuted}
+              highlightColor={colors.accent}
             />
-            <Text
-              style={{
-                fontSize: 11,
-                fontWeight: isToday ? "600" : "400",
-                color: isToday ? colors.accent : colors.textMuted,
-              }}
-            >
-              {days[i]}
-            </Text>
-          </View>
-        );
-      })}
+          );
+        })}
+      </View>
+
+      {selectedIndex !== null && (
+        <Text
+          style={{
+            marginTop: spacing.xs,
+            fontSize: 12,
+            color: colors.textSecondary,
+            textAlign: "center",
+          }}
+        >
+          {days[selectedIndex]} • {data[selectedIndex]} workout
+          {data[selectedIndex] === 1 ? "" : "s"}
+        </Text>
+      )}
     </View>
   );
 }
 
-function MiniSparkline({ data, color }: { data: number[]; color: string }) {
+function WeeklyBarItem({
+  label,
+  height,
+  color,
+  radius,
+  spacing,
+  isToday,
+  isSelected,
+  onPress,
+  textColor,
+  highlightColor,
+}: {
+  label: string;
+  height: number;
+  color: string;
+  radius: any;
+  spacing: any;
+  isToday: boolean;
+  isSelected: boolean;
+  onPress: () => void;
+  textColor: string;
+  highlightColor: string;
+}) {
+  const animatedHeight = useSharedValue(height);
+
+  useEffect(() => {
+    animatedHeight.value = withTiming(isSelected ? height + 8 : height, {
+      duration: 180,
+    });
+  }, [height, isSelected]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    height: animatedHeight.value,
+  }));
+
+  return (
+    <Pressable onPress={onPress} style={{ alignItems: "center", flex: 1 }}>
+      <View style={{ height: 90, justifyContent: "flex-end" }}>
+        <Animated.View
+          style={[
+            {
+              width: 24,
+              backgroundColor: color,
+              borderRadius: radius.sm,
+              marginBottom: spacing.xs,
+            },
+            animatedStyle,
+            isSelected && {
+              shadowColor: highlightColor,
+              shadowOpacity: 0.25,
+              shadowRadius: 6,
+              shadowOffset: { width: 0, height: 2 },
+              elevation: 3,
+            },
+          ]}
+        />
+      </View>
+      <Text
+        style={{
+          fontSize: 11,
+          fontWeight: isToday || isSelected ? "600" : "400",
+          color: isToday || isSelected ? highlightColor : textColor,
+        }}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function MiniSparkline({
+  data,
+  color,
+  selectedIndex,
+  onPointPress,
+}: {
+  data: BodyWeight[];
+  color: string;
+  selectedIndex: number | null;
+  onPointPress?: (index: number) => void;
+}) {
   if (data.length < 2) return null;
 
   const width = 100;
   const height = 40;
   const padding = 4;
 
-  const minVal = Math.min(...data);
-  const maxVal = Math.max(...data);
+  const values = data.map((d) => d.weight);
+  const minVal = Math.min(...values);
+  const maxVal = Math.max(...values);
   const range = maxVal - minVal || 1;
 
-  const points = data.map((val, i) => {
+  const points = values.map((val, i) => {
     const x = padding + (i / (data.length - 1)) * (width - padding * 2);
     const y =
       height - padding - ((val - minVal) / range) * (height - padding * 2);
@@ -1002,6 +1132,30 @@ function MiniSparkline({ data, color }: { data: number[]; color: string }) {
         fill="transparent"
         strokeLinecap="round"
       />
+      {points.map((p, i) => {
+        const [cx, cy] = p.split(",").map((v) => Number(v));
+        const isSelected = i === selectedIndex;
+        return (
+          <G key={i}>
+            <Circle
+              cx={cx}
+              cy={cy}
+              r={isSelected ? 3.5 : 2.5}
+              fill={color}
+              stroke={isSelected ? "#fff" : "transparent"}
+              strokeWidth={isSelected ? 1.5 : 0}
+              onPress={() => onPointPress?.(i)}
+            />
+            <Circle
+              cx={cx}
+              cy={cy}
+              r={10}
+              fill="transparent"
+              onPress={() => onPointPress?.(i)}
+            />
+          </G>
+        );
+      })}
     </Svg>
   );
 }

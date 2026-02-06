@@ -15,6 +15,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../auth/AuthContext";
 import { AnimatedSplashScreen } from "../components/AnimatedSplashScreen";
 import { SyncProvider } from "../context/SyncContext";
+import { refreshExerciseCatalogOnLaunch } from "../data/exerciseCatalog";
 import { getUserProfile } from "../db/profiles";
 import { initDB } from "../db/schema";
 import { initSyncMeta } from "../db/syncMeta";
@@ -85,7 +86,8 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
     const isProtectedRoute =
       currentSegment === "(tabs)" ||
       currentSegment === "add-workout" ||
-      currentSegment === "modal";
+      currentSegment === "modal" ||
+      currentSegment === "admin-catalog";
     const isLoginRoute = currentSegment === "login";
     const isOnboardingRoute = currentSegment === "onboarding";
 
@@ -144,6 +146,7 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="add-workout" options={{ presentation: "modal" }} />
         <Stack.Screen name="modal" options={{ presentation: "modal" }} />
+        <Stack.Screen name="admin-catalog" />
       </Stack>
 
       {/* Auth sync overlay - shown during login/logout sync */}
@@ -200,6 +203,11 @@ export default function RootLayout() {
           setDbReady(true);
           console.log("[RootLayout] DB ready, hiding native splash...");
         }
+
+        // Refresh exercise catalog in the background on app launch
+        refreshExerciseCatalogOnLaunch().catch((e) => {
+          console.warn("[RootLayout] Exercise catalog refresh failed:", e);
+        });
 
         // Hide native splash (animated splash will be visible)
         try {

@@ -65,7 +65,7 @@ export function WeightScale({
   const radius = size * 0.38;
   const needleLength = radius * 0.75;
 
-  // Scale goes from -120Â° to +120Â° (240Â° arc) - leaves room at bottom
+  // Scale goes from -120° to +120° (240° arc) - leaves room at bottom
   const startAngle = -120;
   const endAngle = 120;
   const angleRange = endAngle - startAngle;

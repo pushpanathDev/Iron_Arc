@@ -11,6 +11,10 @@ import {
 } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useAuth } from "../../auth/AuthContext";
+import {
+  getExercisesForCategory,
+  refreshExercisesForCategory,
+} from "../../data/exerciseCatalog";
 import { EXERCISES, ExerciseCategory } from "../../data/exercises";
 import {
   addCustomExercise,
@@ -33,6 +37,7 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
   const [query, setQuery] = useState("");
   const [frequentExercises, setFrequentExercises] = useState<string[]>([]);
   const [customExercises, setCustomExercises] = useState<string[]>([]);
+  const [catalogExercises, setCatalogExercises] = useState<string[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newExerciseName, setNewExerciseName] = useState("");
   const [isAdding, setIsAdding] = useState(false);
@@ -44,12 +49,42 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
     setOpen(false);
     setFrequentExercises([]);
     setCustomExercises([]);
+    setCatalogExercises([]);
 
     if (category && user) {
       loadFrequentExercises();
       loadCustomExercises();
     }
   }, [category, user]);
+
+  // Load exercise catalog (base + remote cache)
+  useEffect(() => {
+    let active = true;
+
+    if (!category) {
+      setCatalogExercises([]);
+      return () => {
+        active = false;
+      };
+    }
+
+    // Start with local base list for instant render
+    setCatalogExercises(EXERCISES[category] ?? []);
+
+    const load = async () => {
+      const cachedList = await getExercisesForCategory(category);
+      if (active) setCatalogExercises(cachedList);
+
+      const refreshed = await refreshExercisesForCategory(category);
+      if (active && refreshed) setCatalogExercises(refreshed);
+    };
+
+    load();
+
+    return () => {
+      active = false;
+    };
+  }, [category]);
 
   const loadFrequentExercises = async () => {
     if (!category || !user) return;
@@ -119,7 +154,7 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
     setIsAdding(false);
   };
 
-  const exercises = category ? EXERCISES[category] : [];
+  const exercises = category ? catalogExercises : [];
 
   // Combine predefined and custom exercises
   const allExercises = useMemo(() => {

@@ -28,7 +28,10 @@ export type NotificationType =
   | "insight"
   | "daily_reminder"
   | "weekly_summary"
-  | "motivation";
+  | "motivation"
+  | "morning_motivation"
+  | "evening_checkin"
+  | "weekly_motivation";
 
 export interface NotificationPreferences {
   enabled: boolean;
@@ -53,6 +56,9 @@ const DEFAULT_PREFERENCES: NotificationPreferences = {
 const PREFS_KEY = "@notification_preferences";
 const DAILY_REMINDER_ID = "daily-workout-reminder";
 const WEEKLY_SUMMARY_ID = "weekly-summary";
+const MORNING_MOTIVATION_ID = "morning-motivation";
+const EVENING_CHECKIN_ID = "evening-checkin";
+const WEEKLY_MOTIVATION_ID = "weekly-motivation";
 
 /* =========================
    PERMISSIONS
@@ -295,6 +301,76 @@ export async function scheduleRecurringNotifications(
     });
 
     console.log("📊 Weekly summary scheduled for Sundays at 6 PM");
+  }
+
+  // Frequent motivation (if enabled)
+  if (preferences.motivationalQuotes) {
+    // Morning motivation (daily 7:30 AM)
+    await Notifications.scheduleNotificationAsync({
+      identifier: MORNING_MOTIVATION_ID,
+      content: {
+        title: "Rise & Grind ☀️",
+        body: "Start strong today. Your goals are waiting.",
+        data: { type: "morning_motivation" },
+        sound: false,
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
+        hour: 7,
+        minute: 30,
+      },
+    });
+
+    // Evening check-in (daily 7:00 PM)
+    await Notifications.scheduleNotificationAsync({
+      identifier: EVENING_CHECKIN_ID,
+      content: {
+        title: "Evening Check-In 💪",
+        body: "Haven't trained yet? A short session still counts.",
+        data: { type: "evening_checkin" },
+        sound: false,
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
+        hour: 19,
+        minute: 0,
+      },
+    });
+
+    // Weekly motivation (Tue & Thu at 1 PM)
+    await Notifications.scheduleNotificationAsync({
+      identifier: WEEKLY_MOTIVATION_ID,
+      content: {
+        title: "Midweek Push 🔥",
+        body: "Momentum beats motivation. Keep the streak alive.",
+        data: { type: "weekly_motivation" },
+        sound: false,
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+        weekday: 3, // Tuesday
+        hour: 13,
+        minute: 0,
+      },
+    });
+
+    await Notifications.scheduleNotificationAsync({
+      identifier: `${WEEKLY_MOTIVATION_ID}-thu`,
+      content: {
+        title: "Finish Strong 💥",
+        body: "Two days left in the week. Make them count.",
+        data: { type: "weekly_motivation" },
+        sound: false,
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+        weekday: 5, // Thursday
+        hour: 13,
+        minute: 0,
+      },
+    });
+
+    console.log("⏰ Morning + evening + midweek motivations scheduled");
   }
 }
 

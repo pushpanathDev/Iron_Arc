@@ -17,6 +17,8 @@ const CATEGORIES: ExerciseCategory[] = [
   "Legs",
   "Arms",
   "Abs",
+  "Cardio",
+  "Full Body",
 ];
 
 export default function CategoryPicker({ value, onChange }: Props) {

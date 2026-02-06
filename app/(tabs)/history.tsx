@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable,
@@ -35,6 +36,8 @@ const log = createPageLogger("History");
 
 const SWIPE_THRESHOLD = -60;
 const DELETE_WIDTH = 80;
+const SWIPE_ACTIVE_OFFSET = 12;
+const SWIPE_FAIL_OFFSET_Y = 8;
 
 type ViewMode = "calendar" | "list";
 
@@ -516,6 +519,12 @@ export default function History() {
                     key={workout.id}
                     workout={workout}
                     onDelete={() => deleteWorkout(workout)}
+                    onEdit={() =>
+                      router.push({
+                        pathname: "/add-workout",
+                        params: { id: workout.id },
+                      })
+                    }
                     index={index}
                     disabled={refreshing || isDeleting}
                   />
@@ -572,6 +581,12 @@ export default function History() {
                   key={workout.id}
                   workout={workout}
                   onDelete={() => deleteWorkout(workout)}
+                  onEdit={() =>
+                    router.push({
+                      pathname: "/add-workout",
+                      params: { id: workout.id },
+                    })
+                  }
                   index={index}
                   disabled={refreshing || isDeleting}
                 />
@@ -674,11 +689,13 @@ function formatDateLabel(dateStr: string): string {
 function SwipeRow({
   workout,
   onDelete,
+  onEdit,
   index,
   disabled = false,
 }: {
   workout: Workout;
   onDelete: () => void;
+  onEdit: () => void;
   index: number;
   disabled?: boolean;
 }) {
@@ -687,6 +704,10 @@ function SwipeRow({
 
   const pan = Gesture.Pan()
     .enabled(!disabled)
+    // Require a more deliberate horizontal swipe.
+    // If the user is mostly scrolling vertically, fail this gesture so ScrollView wins.
+    .activeOffsetX([-SWIPE_ACTIVE_OFFSET, SWIPE_ACTIVE_OFFSET])
+    .failOffsetY([-SWIPE_FAIL_OFFSET_Y, SWIPE_FAIL_OFFSET_Y])
     .onUpdate((e) => {
       translateX.value = Math.min(0, e.translationX);
     })
@@ -745,6 +766,7 @@ function SwipeRow({
             },
           ]}
         >
+          <Pressable onPress={onEdit} disabled={disabled}>
           {/* Exercise Name & Category */}
           <View
             style={{
@@ -788,6 +810,33 @@ function SwipeRow({
 
             {/* Quick Stats */}
             <View style={{ alignItems: "flex-end" }}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  paddingVertical: 2,
+                  paddingHorizontal: spacing.xs,
+                  borderRadius: radius.md,
+                  backgroundColor: colors.surfaceElevated,
+                  marginBottom: spacing.xs,
+                }}
+              >
+                <Ionicons
+                  name="create-outline"
+                  size={14}
+                  color={colors.textSecondary}
+                />
+                <Text
+                  style={{
+                    fontSize: 11,
+                    fontWeight: "600",
+                    color: colors.textSecondary,
+                    marginLeft: 4,
+                  }}
+                >
+                  EDIT
+                </Text>
+              </View>
               <Text style={{ ...typography.h3, color: colors.accent }}>
                 {totalVolume.toLocaleString()}
               </Text>
@@ -825,6 +874,7 @@ function SwipeRow({
               </View>
             ))}
           </View>
+          </Pressable>
         </Animated.View>
       </GestureDetector>
     </View>

@@ -1,15 +1,17 @@
 /**
  * AnimatedSplashScreen - Iron Arc Edition
  * ========================================
- * Clean, professional splash screen with logo animation.
- * Uses the actual app logo with smooth scale and fade animations.
+ * Premium splash screen with cinematic minimalism:
+ * - Dark metallic gradient background
+ * - Glowing arc energy ring
+ * - Bold IRON ARC typography
+ * - Subtle particle dust
  */
 
 import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
-import LottieView from "lottie-react-native";
 import { useEffect, useRef, useState } from "react";
-import { Dimensions, Image, StyleSheet, Text, View } from "react-native";
+import { Dimensions, StyleSheet, Text, View } from "react-native";
 import Animated, {
   Easing,
   runOnJS,
@@ -28,21 +30,32 @@ interface AnimatedSplashScreenProps {
   isAppReady: boolean;
 }
 
-const SPLASH_ANIMATION_MS = 4500;
+const SPLASH_ANIMATION_MS = 4800;
+
+const PARTICLES = [
+  { x: 0.18, y: 0.22, size: 3, delay: 400, drift: -10 },
+  { x: 0.72, y: 0.28, size: 2, delay: 700, drift: -14 },
+  { x: 0.35, y: 0.62, size: 2, delay: 900, drift: -8 },
+  { x: 0.62, y: 0.66, size: 3, delay: 1100, drift: -12 },
+  { x: 0.48, y: 0.4, size: 1.5, delay: 600, drift: -6 },
+  { x: 0.27, y: 0.78, size: 2, delay: 1300, drift: -10 },
+];
 
 export function AnimatedSplashScreen({
   onAnimationComplete,
   isAppReady,
 }: AnimatedSplashScreenProps) {
   // Animation values
-  const logoScale = useSharedValue(0.3);
+  const logoScale = useSharedValue(0.96);
   const logoOpacity = useSharedValue(0);
-  const logoRotate = useSharedValue(-10);
   const textOpacity = useSharedValue(0);
   const textTranslateY = useSharedValue(20);
   const containerOpacity = useSharedValue(1);
   const pulseScale = useSharedValue(1);
   const creditsOpacity = useSharedValue(0);
+  const particlesOpacity = useSharedValue(0);
+  const particlesDrift = useSharedValue(0);
+  const backgroundOpacity = useSharedValue(0);
   const hasExited = useRef(false);
 
   // Track animation completion
@@ -62,54 +75,66 @@ export function AnimatedSplashScreen({
     );
   }, [isAppReady, animationDone]);
 
-  // Failsafe in case Lottie doesn't fire completion
+  // Splash duration gate (ensures full cinematic run)
   useEffect(() => {
     const timer = setTimeout(() => {
       if (!animationDone) {
-        console.log("[Splash] Animation timeout fallback");
+        console.log("[Splash] Animation duration complete");
         setAnimationDone(true);
       }
-    }, SPLASH_ANIMATION_MS + 800);
+    }, SPLASH_ANIMATION_MS);
 
     return () => clearTimeout(timer);
   }, [animationDone]);
 
   // Entry animation
   useEffect(() => {
-    // Logo scales in with spring
-    logoOpacity.value = withTiming(1, { duration: 400 });
-    logoScale.value = withSpring(1, {
-      damping: 12,
-      stiffness: 100,
+    // Background fade in
+    backgroundOpacity.value = withTiming(1, {
+      duration: 900,
+      easing: Easing.out(Easing.cubic),
     });
-    logoRotate.value = withSpring(0, {
-      damping: 15,
-      stiffness: 80,
-    });
+
+    // Logo/text fade + subtle scale in
+    logoOpacity.value = withDelay(600, withTiming(1, { duration: 700 }));
+    logoScale.value = withDelay(
+      600,
+      withSpring(1, {
+        damping: 14,
+        stiffness: 90,
+      }),
+    );
 
     // Text fades in after logo
     textOpacity.value = withDelay(
-      400,
-      withTiming(1, { duration: 500, easing: Easing.out(Easing.cubic) }),
+      800,
+      withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) }),
     );
     textTranslateY.value = withDelay(
-      400,
-      withSpring(0, { damping: 15, stiffness: 100 }),
+      800,
+      withSpring(0, { damping: 16, stiffness: 90 }),
     );
 
     // Subtle pulse on logo
     pulseScale.value = withDelay(
-      800,
+      1400,
       withSequence(
-        withTiming(1.05, { duration: 300 }),
-        withTiming(1, { duration: 300 }),
+        withTiming(1.03, { duration: 500 }),
+        withTiming(1, { duration: 500 }),
       ),
+    );
+
+    // Particles
+    particlesOpacity.value = withDelay(700, withTiming(1, { duration: 900 }));
+    particlesDrift.value = withDelay(
+      700,
+      withTiming(-16, { duration: 2000, easing: Easing.out(Easing.quad) }),
     );
 
     // Credits fade in last
     creditsOpacity.value = withDelay(
-      1000,
-      withTiming(1, { duration: 500, easing: Easing.out(Easing.cubic) }),
+      2200,
+      withTiming(1, { duration: 600, easing: Easing.out(Easing.cubic) }),
     );
   }, []);
 
@@ -154,11 +179,14 @@ export function AnimatedSplashScreen({
     opacity: containerOpacity.value,
   }));
 
+  const backgroundStyle = useAnimatedStyle(() => ({
+    opacity: backgroundOpacity.value,
+  }));
+
   const logoStyle = useAnimatedStyle(() => ({
     opacity: logoOpacity.value,
     transform: [
       { scale: logoScale.value * pulseScale.value },
-      { rotate: `${logoRotate.value}deg` },
     ],
   }));
 
@@ -171,56 +199,53 @@ export function AnimatedSplashScreen({
     opacity: creditsOpacity.value,
   }));
 
-  const haloStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: pulseScale.value }],
+  const particlesStyle = useAnimatedStyle(() => ({
+    opacity: particlesOpacity.value,
+    transform: [{ translateY: particlesDrift.value }],
   }));
 
   return (
     <Animated.View style={[styles.container, containerStyle]}>
-      <LinearGradient
-        colors={["#0B1220", "#0F172A", "#101B2F"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.gradient}
-      />
-      <View style={styles.glowTopLeft} />
-      <View style={styles.glowBottomRight} />
-
-      <View style={styles.topAccent} />
-
-      {/* Cinematic Lottie Animation */}
-      <View style={styles.lottieContainer}>
-        <LottieView
-          source={require("../assets/animations/hero-lift.json")}
-          autoPlay
-          loop={false}
-          onAnimationFinish={() => {
-            console.log("[Splash] Lottie finished");
-            setAnimationDone(true);
-          }}
-          style={styles.lottie}
+      <Animated.View style={[styles.backgroundLayer, backgroundStyle]}>
+        <LinearGradient
+          colors={["#05070D", "#0B1220", "#0F1A2E", "#0B1220"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.gradient}
         />
-      </View>
+        <View style={styles.glowTopLeft} />
+        <View style={styles.glowBottomRight} />
+        <View style={styles.glowCenter} />
+      </Animated.View>
 
-      {/* Logo + Halo (subtle brand) */}
-      <Animated.View style={[styles.logoContainer, logoStyle]}>
-        <Animated.View style={[styles.logoHalo, haloStyle]} />
-        <Image
-          source={require("../assets/images/icon.png")}
-          style={styles.logo}
-          resizeMode="contain"
-        />
+      {/* Subtle particles */}
+      <Animated.View style={[styles.particlesLayer, particlesStyle]}>
+        {PARTICLES.map((particle, index) => (
+          <View
+            key={index}
+            style={[
+              styles.particle,
+              {
+                width: particle.size,
+                height: particle.size,
+                left: SCREEN_WIDTH * particle.x,
+                top: SCREEN_HEIGHT * particle.y,
+                opacity: 0.35,
+                transform: [{ translateY: particle.drift }],
+              },
+            ]}
+          />
+        ))}
       </Animated.View>
 
       {/* Brand Text */}
-      <Animated.View style={[styles.textContainer, textStyle]}>
+      <Animated.View style={[styles.textContainer, logoStyle]}>
         <Text style={styles.ironText}>IRON</Text>
         <Text style={styles.arcText}>ARC</Text>
       </Animated.View>
 
-      {/* Tagline */}
       <Animated.Text style={[styles.tagline, textStyle]}>
-        Forge Your Strength
+        Train with discipline.
       </Animated.Text>
 
       {/* Developer Credits */}
@@ -243,6 +268,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     zIndex: 9999,
   },
+  backgroundLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
   gradient: {
     ...StyleSheet.absoluteFillObject,
   },
@@ -251,7 +279,7 @@ const styles = StyleSheet.create({
     width: SCREEN_WIDTH * 1.1,
     height: SCREEN_WIDTH * 1.1,
     borderRadius: SCREEN_WIDTH * 0.55,
-    backgroundColor: "rgba(16, 185, 129, 0.18)",
+    backgroundColor: "rgba(16, 185, 129, 0.12)",
     top: -SCREEN_WIDTH * 0.45,
     left: -SCREEN_WIDTH * 0.35,
   },
@@ -260,71 +288,52 @@ const styles = StyleSheet.create({
     width: SCREEN_WIDTH * 1.3,
     height: SCREEN_WIDTH * 1.3,
     borderRadius: SCREEN_WIDTH * 0.65,
-    backgroundColor: "rgba(59, 130, 246, 0.12)",
+    backgroundColor: "rgba(59, 130, 246, 0.08)",
     bottom: -SCREEN_WIDTH * 0.5,
     right: -SCREEN_WIDTH * 0.4,
   },
-  topAccent: {
+  glowCenter: {
     position: "absolute",
-    top: 0,
-    width: "100%",
-    height: 3,
-    backgroundColor: "rgba(16, 185, 129, 0.8)",
-  },
-  logoContainer: {
-    marginBottom: 16,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  lottieContainer: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT * 0.55,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  lottie: {
     width: SCREEN_WIDTH * 0.9,
-    height: SCREEN_HEIGHT * 0.5,
+    height: SCREEN_WIDTH * 0.9,
+    borderRadius: SCREEN_WIDTH * 0.45,
+    backgroundColor: "rgba(16, 185, 129, 0.05)",
+    top: SCREEN_HEIGHT * 0.22,
+    left: SCREEN_WIDTH * 0.05,
   },
-  logoHalo: {
+  particlesLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  particle: {
     position: "absolute",
-    width: 160,
-    height: 160,
-    borderRadius: 80,
-    backgroundColor: "rgba(16, 185, 129, 0.15)",
-    shadowColor: "#10B981",
-    shadowOpacity: 0.3,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 8 },
-  },
-  logo: {
-    width: 120,
-    height: 120,
-    borderRadius: 24,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 255, 255, 0.8)",
   },
   textContainer: {
     alignItems: "center",
     marginBottom: 8,
   },
   ironText: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "500",
-    color: "rgba(255, 255, 255, 0.7)",
-    letterSpacing: 12,
-    marginBottom: 2,
+    color: "rgba(255, 255, 255, 0.68)",
+    letterSpacing: 14,
+    marginBottom: 6,
   },
   arcText: {
-    fontSize: 46,
+    fontSize: 52,
     fontWeight: "800",
     color: "#FFFFFF",
-    letterSpacing: 16,
+    letterSpacing: 18,
+    textShadowColor: "rgba(16, 185, 129, 0.2)",
+    textShadowRadius: 18,
   },
   tagline: {
     fontSize: 12,
     fontWeight: "500",
     color: "rgba(255, 255, 255, 0.6)",
-    letterSpacing: 3,
-    marginTop: 16,
+    letterSpacing: 2.5,
+    marginTop: 18,
   },
   creditsContainer: {
     position: "absolute",

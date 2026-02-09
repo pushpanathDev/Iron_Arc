@@ -23,6 +23,11 @@ import { useAppReady } from "../hooks/useAppReady";
 import { useDailySync } from "../hooks/useDailySync";
 import { logDBStartup } from "../utils/diagnostics";
 
+const SPLASH_TEST_MS = 0; // Set to 4000 in dev to force full splash playback
+
+const sleep = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 // Prevent native splash from hiding until we're ready
 SplashScreen.preventAutoHideAsync();
 
@@ -48,12 +53,47 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
 
   // Track splash visibility (starts true, set false after animation completes)
   const [splashVisible, setSplashVisible] = useState(true);
+  const [forceSplashHoldUntil, setForceSplashHoldUntil] = useState<
+    number | null
+  >(null);
 
   // Calculate app readiness from multiple conditions
   const { isReady } = useAppReady({
     authLoading,
     dbInitialized: dbReady,
   });
+  const isReadyForSplash = isReady && forceSplashHoldUntil === null;
+
+  const runSplashTest = useCallback((ms = 4500) => {
+    const duration = Math.max(0, ms);
+    if (duration === 0) {
+      setForceSplashHoldUntil(null);
+      return;
+    }
+    setForceSplashHoldUntil(Date.now() + duration);
+    setSplashVisible(true);
+    console.log(`[SplashTest] Forcing splash for ${duration}ms`);
+  }, []);
+
+  useEffect(() => {
+    if (!__DEV__) return;
+    (globalThis as any).runSplashTest = runSplashTest;
+    console.log(
+      "[SplashTest] Dev helper ready. Run `runSplashTest(5000)` in console.",
+    );
+    return () => {
+      delete (globalThis as any).runSplashTest;
+    };
+  }, [runSplashTest]);
+
+  useEffect(() => {
+    if (forceSplashHoldUntil === null) return;
+    const remaining = Math.max(0, forceSplashHoldUntil - Date.now());
+    const timer = setTimeout(() => {
+      setForceSplashHoldUntil(null);
+    }, remaining);
+    return () => clearTimeout(timer);
+  }, [forceSplashHoldUntil]);
 
   // 🌅 Run daily sync on app focus (MUST be called before conditional return)
   useDailySync(user?.uid);
@@ -129,7 +169,7 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
   if (splashVisible) {
     return (
       <AnimatedSplashScreen
-        isAppReady={isReady}
+        isAppReady={isReadyForSplash}
         onAnimationComplete={handleSplashComplete}
       />
     );
@@ -198,6 +238,10 @@ export default function RootLayout() {
 
         await initSyncMeta();
         console.log("[RootLayout] initSyncMeta complete");
+
+        if (SPLASH_TEST_MS > 0 && __DEV__) {
+          await sleep(SPLASH_TEST_MS);
+        }
 
         if (mounted) {
           setDbReady(true);

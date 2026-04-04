@@ -3,6 +3,7 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -18,12 +19,15 @@ import * as Crypto from "expo-crypto";
 
 import CategoryPicker from "../components/ui/CategoryPicker";
 import ExercisePicker from "../components/ui/ExercisePicker";
+import { ProfileCompletionPrompt } from "../components/ProfileCompletionPrompt";
 
 import { useAuth } from "../auth/AuthContext";
 import { ExerciseCategory } from "../data/exercises";
 import { getAllWorkouts, insertWorkout } from "../db/workouts";
+import { getUserProfile, updateUserProfile, syncProfileToFirebase } from "../db/profiles";
 import { useTheme } from "../theme/theme";
 import { formatDate } from "../utils/weekUtils";
+
 
 /* =========================
    SAFE UUID GENERATOR
@@ -56,32 +60,90 @@ function LongPressButton({
   onIncrement,
   children,
   style,
-  initialDelay = 400,
+  initialDelay = 300, // Slower start for better control
   repeatInterval = 80,
 }: LongPressButtonProps) {
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPressingRef = useRef(false);
+  const pressCountRef = useRef(0);
+
+  const scheduleNext = useCallback(
+    (delay: number) => {
+      // Guard: ensure only one timer runs at a time
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+
+      timerRef.current = setTimeout(() => {
+        // Guard: check if still pressing before executing
+        if (!isPressingRef.current) {
+          timerRef.current = null;
+          return;
+        }
+
+        onIncrement();
+        pressCountRef.current++;
+
+        // Progressive acceleration: gradually reduce delay
+        // Start at initialDelay, reduce by 3ms per increment, floor at repeatInterval
+        const accelerationFactor = Math.max(
+          0,
+          initialDelay - pressCountRef.current * 3,
+        );
+        const nextDelay = Math.max(repeatInterval, accelerationFactor);
+
+        scheduleNext(nextDelay);
+      }, delay);
+    },
+    [onIncrement, initialDelay, repeatInterval],
+  );
 
   const start = useCallback(() => {
+    // Guard: prevent stacking multiple presses
+    if (isPressingRef.current) {
+      return;
+    }
+
+    isPressingRef.current = true;
+    pressCountRef.current = 0;
+
+    // Call immediately on first press
     onIncrement();
-    timeoutRef.current = setTimeout(() => {
-      intervalRef.current = setInterval(onIncrement, repeatInterval);
-    }, initialDelay);
-  }, [onIncrement, initialDelay, repeatInterval]);
+    pressCountRef.current++;
+
+    // Schedule first repeat after initialDelay
+    scheduleNext(initialDelay);
+  }, [onIncrement, scheduleNext, initialDelay]);
 
   const stop = useCallback(() => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
+    isPressingRef.current = false;
+
+    // Immediately clear any pending timer
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
     }
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
+
+    pressCountRef.current = 0;
+  }, []);
+
+  // Cleanup timer on component unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, []);
 
   return (
-    <Pressable onPressIn={start} onPressOut={stop} style={style}>
+    <Pressable
+      onPressIn={start}
+      onPressOut={stop}
+      onLongPress={() => {}} // Required for proper button feedback on some Android devices
+      style={style}
+    >
       {children}
     </Pressable>
   );
@@ -96,6 +158,10 @@ export default function AddWorkout() {
   const insets = useSafeAreaInsets();
 
   const { user } = useAuth();
+
+  const [showProfileCompletion, setShowProfileCompletion] = useState(false);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const profileCheckDoneRef = useRef(false);
 
   const [notes, setNotes] = useState("");
   const [sets, setSets] = useState([{ reps: "", weight: "" }]);
@@ -113,31 +179,52 @@ export default function AddWorkout() {
      LOAD WORKOUT (EDIT MODE)
      ========================= */
   useEffect(() => {
-    if (!isEdit || !user) return;
+    if (!user || isEdit === undefined) return;
 
     const loadWorkout = async () => {
-      const workouts = await getAllWorkouts(user.uid);
-      const workout = workouts.find((w) => w.id === id);
-      if (!workout) return;
+      // If editing existing workout, load it
+      if (isEdit) {
+        const workouts = await getAllWorkouts(user.uid);
+        const workout = workouts.find((w) => w.id === id);
+        if (!workout) return;
 
-      setCategory((workout.category as ExerciseCategory) ?? null);
-      setExercise(workout.exercise);
-      setNotes(workout.notes ?? "");
-      setWorkoutDate(new Date(workout.date));
-      setOriginalCreatedAt(workout.createdAt);
-      setSets(
-        workout.sets.map((s) => ({
-          reps: String(s.reps),
-          weight: String(s.weight),
-        })),
-      );
+        setCategory((workout.category as ExerciseCategory) ?? null);
+        setExercise(workout.exercise);
+        setNotes(workout.notes ?? "");
+        setWorkoutDate(new Date(workout.date));
+        setOriginalCreatedAt(workout.createdAt);
+        setSets(
+          workout.sets.map((s) => ({
+            reps: String(s.reps),
+            weight: String(s.weight),
+          })),
+        );
+      } else if (!profileCheckDoneRef.current) {
+        // For new workouts, check profile once (not edit mode)
+        profileCheckDoneRef.current = true;
+        
+        try {
+          const profile = await getUserProfile(user.uid);
+          setUserProfile(profile);
+          
+          // Only show completion if BOTH weight AND age are missing
+          if (profile && !profile.weight && !profile.age) {
+            setShowProfileCompletion(true);
+          }
+        } catch (error) {
+          console.error("Failed to check profile:", error);
+          // Continue without profile completion if check fails
+        }
+      }
     };
 
-    loadWorkout();
-  }, [id, user]);
+    if (user?.uid) {
+      loadWorkout();
+    }
+  }, [user?.uid, isEdit, id]);
 
   /* =========================
-     SET HELPERS
+     SAVE & HELPER FUNCTIONS
      ========================= */
   const addSet = () => setSets([...sets, { reps: "", weight: "" }]);
 
@@ -159,11 +246,19 @@ export default function AddWorkout() {
     setSets((prev) => {
       const updated = [...prev];
       const currentValue = parseFloat(updated[index][field]) || 0;
-      const newValue = Math.max(0, currentValue + step);
-      updated[index][field] =
-        field === "weight"
-          ? newValue.toFixed(1)
-          : String(Math.floor(newValue));
+      let newValue = Math.max(0, currentValue + step);
+
+      // Safety bounds: prevent excessive values
+      if (field === "weight") {
+        // Cap weight at 999.9kg to prevent runaway values
+        newValue = Math.min(999.9, newValue);
+        updated[index][field] = newValue.toFixed(1);
+      } else {
+        // Cap reps at 999 to prevent runaway values
+        newValue = Math.min(999, newValue);
+        updated[index][field] = String(Math.floor(newValue));
+      }
+
       return updated;
     });
   };
@@ -171,9 +266,6 @@ export default function AddWorkout() {
   const removeSet = (index: number) =>
     setSets(sets.filter((_, i) => i !== index));
 
-  /* =========================
-     SAVE WORKOUT
-     ========================= */
   const saveWorkout = async () => {
     if (!category || !exercise || !user) {
       setMessage("Please select a category and exercise");
@@ -204,16 +296,70 @@ export default function AddWorkout() {
       setMessage(isEdit ? "Workout updated ✓" : "Workout saved ✓");
       setTimeout(() => router.back(), 600);
     } catch (e) {
-      console.error(e);
-      setMessage("Failed to save workout");
+      console.error("Error saving workout:", e);
+      const errorMsg = typeof e === "object" && e !== null && "message" in e ? (e as any).message : "Failed to save workout";
+      setMessage(`Error: ${errorMsg}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleProfileCompletion = async (
+    weight: number | null,
+    age: number | null
+  ) => {
+    if (!user?.uid) return;
+
+    try {
+      const updates: any = {};
+      let hasUpdates = false;
+
+      if (weight !== null && weight > 0) {
+        updates.weight = weight;
+        hasUpdates = true;
+      }
+
+      if (age !== null && age > 0) {
+        updates.age = age;
+        hasUpdates = true;
+      }
+
+      if (hasUpdates) {
+        // Save to local SQLite
+        await updateUserProfile(user.uid, updates);
+        console.log("✅ Profile updated locally:", updates);
+
+        // IMMEDIATELY SYNC TO FIREBASE
+        // Don't wait for manual sync - save to Firebase right away
+        console.log("📤 Syncing profile to Firebase immediately...");
+        await syncProfileToFirebase({
+          userId: user.uid,
+          ...updates,
+        });
+        console.log("✅ Profile synced to Firebase");
+      }
+
+      // CRITICAL: Mark that we've shown completion once
+      setShowProfileCompletion(false);
+      setUserProfile((prev: any) => ({
+        ...prev,
+        weight: weight ?? prev?.weight,
+        age: age ?? prev?.age,
+      }));
+      
+      setMessage("Profile updated ✓");
+      setTimeout(() => router.back(), 600);
+    } catch (error) {
+      console.error("Error saving profile:", error);
+      const errorMsg = error instanceof Error ? error.message : "Unknown error";
+      setMessage(`Failed to save profile: ${errorMsg}`);
     }
   };
 
   /* =========================
      UI
      ========================= */
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.background }}
@@ -227,7 +373,7 @@ export default function AddWorkout() {
         contentContainerStyle={{
           padding: spacing.md,
           paddingTop: insets.top + spacing.md,
-          paddingBottom: spacing.xxl,
+          paddingBottom: insets.bottom + spacing.xxl,
         }}
       >
       {/* HEADER */}
@@ -714,6 +860,21 @@ export default function AddWorkout() {
         </Pressable>
       </Animated.View>
       </ScrollView>
+
+      {/* Profile Completion Prompt */}
+      <ProfileCompletionPrompt
+        visible={showProfileCompletion}
+        onDismiss={() => {
+          setShowProfileCompletion(false);
+          setMessage("Workout saved ✓");
+          setTimeout(() => router.back(), 600);
+        }}
+        onSave={handleProfileCompletion}
+        currentWeight={userProfile?.weight}
+        currentAge={userProfile?.age}
+        isLoading={saving}
+      />
+
     </KeyboardAvoidingView>
   );
 }

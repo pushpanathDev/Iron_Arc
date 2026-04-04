@@ -41,6 +41,7 @@ import {
   insertWeight,
   softDeleteWeight,
 } from "../../db/weights";
+import { updateUserProfile } from "../../db/profiles";
 
 import { SyncState } from "../../components/SyncBadge";
 import { WeightScale } from "../../components/WeightScale";
@@ -69,32 +70,90 @@ function LongPressButton({
   onIncrement,
   children,
   style,
-  initialDelay = 400,
+  initialDelay = 300, // Slower start for better control
   repeatInterval = 80,
 }: LongPressButtonProps) {
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPressingRef = useRef(false);
+  const pressCountRef = useRef(0);
+
+  const scheduleNext = useCallback(
+    (delay: number) => {
+      // Guard: ensure only one timer runs at a time
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+
+      timerRef.current = setTimeout(() => {
+        // Guard: check if still pressing before executing
+        if (!isPressingRef.current) {
+          timerRef.current = null;
+          return;
+        }
+
+        onIncrement();
+        pressCountRef.current++;
+
+        // Progressive acceleration: gradually reduce delay
+        // Start at initialDelay, reduce by 3ms per increment, floor at repeatInterval
+        const accelerationFactor = Math.max(
+          0,
+          initialDelay - pressCountRef.current * 3,
+        );
+        const nextDelay = Math.max(repeatInterval, accelerationFactor);
+
+        scheduleNext(nextDelay);
+      }, delay);
+    },
+    [onIncrement, initialDelay, repeatInterval],
+  );
 
   const start = useCallback(() => {
+    // Guard: prevent stacking multiple presses
+    if (isPressingRef.current) {
+      return;
+    }
+
+    isPressingRef.current = true;
+    pressCountRef.current = 0;
+
+    // Call immediately on first press
     onIncrement();
-    timeoutRef.current = setTimeout(() => {
-      intervalRef.current = setInterval(onIncrement, repeatInterval);
-    }, initialDelay);
-  }, [onIncrement, initialDelay, repeatInterval]);
+    pressCountRef.current++;
+
+    // Schedule first repeat after initialDelay
+    scheduleNext(initialDelay);
+  }, [onIncrement, scheduleNext, initialDelay]);
 
   const stop = useCallback(() => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
+    isPressingRef.current = false;
+
+    // Immediately clear any pending timer
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
     }
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
+
+    pressCountRef.current = 0;
+  }, []);
+
+  // Cleanup timer on component unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, []);
 
   return (
-    <Pressable onPressIn={start} onPressOut={stop} style={style}>
+    <Pressable
+      onPressIn={start}
+      onPressOut={stop}
+      onLongPress={() => {}} // Required for proper button feedback on some Android devices
+      style={style}
+    >
       {children}
     </Pressable>
   );
@@ -125,19 +184,27 @@ export default function BodyWeightScreen() {
      LOAD SQLITE
      ========================= */
   const loadWeights = useCallback(async () => {
-    if (!user) return;
+    if (!user?.uid) {
+      setHistory([]);
+      setWeight("");
+      return;
+    }
 
-    const data = await getAllWeights(user.uid);
+    try {
+      const data = await getAllWeights(user.uid);
+      // Latest first
+      const sorted = [...data].sort((a, b) => b.date.localeCompare(a.date));
+      setHistory(sorted);
 
-    // Latest first
-    const sorted = [...data].sort((a, b) => b.date.localeCompare(a.date));
-
-    setHistory(sorted);
-
-    // Find entry for selected date (allow daily updates)
-    const existingEntry = sorted.find((w) => w.date === logDate);
-    setWeight(existingEntry ? String(existingEntry.weight) : "");
-  }, [user, logDate]);
+      // Find entry for selected date (allow daily updates)
+      const existingEntry = sorted.find((w) => w.date === logDate);
+      setWeight(existingEntry ? String(existingEntry.weight) : "");
+    } catch (error) {
+      console.error("Failed to load weights:", error);
+      setMessage("Failed to load weights");
+      setHistory([]);
+    }
+  }, [user?.uid, logDate]);
 
   useEffect(() => {
     loadWeights();
@@ -181,7 +248,7 @@ export default function BodyWeightScreen() {
      SAVE / UPDATE
      ========================= */
   async function saveWeight() {
-    if (!user || !weight) {
+    if (!user?.uid || !weight) {
       setMessage("Please enter weight");
       return;
     }
@@ -196,6 +263,13 @@ export default function BodyWeightScreen() {
     setSyncState("syncing");
 
     try {
+      const weightValue = parseFloat(weight);
+      if (isNaN(weightValue) || weightValue <= 0) {
+        setMessage("Please enter a valid weight");
+        setSyncState("failed");
+        return;
+      }
+
       // Allow multiple entries per week (daily flexibility)
       // Just add/update entry for this date
       const newWeight: BodyWeight = {
@@ -203,12 +277,19 @@ export default function BodyWeightScreen() {
         userId: user.uid,
         date: logDate, // Actual date user picked
         weekStart: formatDate(weekStart), // For grouping in analytics
-        weight: Number(weight),
+        weight: weightValue,
         createdAt: Date.now(),
         isSynced: 0, // Mark as unsynced - will sync on app focus
       };
 
       await insertWeight(newWeight);
+
+      // Keep profile weight in sync with the latest entry
+      try {
+        await updateUserProfile(user.uid, { weight: weightValue });
+      } catch (profileError) {
+        console.warn("Failed to update profile weight:", profileError);
+      }
 
       setMessage("Weight saved ✓ (syncing...)");
       loadWeights();
@@ -217,11 +298,9 @@ export default function BodyWeightScreen() {
 
       setTimeout(() => setMessage(null), 1500);
     } catch (error) {
-      log.error(
-        "Save failed",
-        error instanceof Error ? error.message : String(error),
-      );
-      setMessage("Failed to save weight");
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      log.error("Save failed", errorMsg);
+      setMessage(`Failed to save weight: ${errorMsg}`);
       setSyncState("failed");
     } finally {
       setIsSaving(false);
@@ -232,7 +311,10 @@ export default function BodyWeightScreen() {
      DELETE WITH UNDO
      ========================= */
   async function deleteWeight(item: BodyWeight) {
-    if (!user) return;
+    if (!user?.uid) {
+      setMessage("User not authenticated");
+      return;
+    }
 
     // Guard against delete while syncing/refreshing
     if (refreshing || isSaving) {
@@ -315,7 +397,7 @@ export default function BodyWeightScreen() {
         keyboardDismissMode="on-drag"
         contentContainerStyle={{
           padding: spacing.md,
-          paddingBottom: spacing.xxl,
+          paddingBottom: insets.bottom + spacing.xxl,
         }}
         refreshControl={
           <RefreshControl
@@ -580,7 +662,9 @@ export default function BodyWeightScreen() {
               onIncrement={() => {
                 setWeight((prev) => {
                   const current = parseFloat(prev) || 0;
-                  return (current + 0.5).toFixed(1);
+                  // Safety bound: cap weight increments at 999.9kg
+                  const next = Math.min(999.9, current + 0.5);
+                  return next.toFixed(1);
                 });
               }}
               style={{

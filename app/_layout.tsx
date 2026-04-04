@@ -14,6 +14,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuth } from "../auth/AuthContext";
 import { AnimatedSplashScreen } from "../components/AnimatedSplashScreen";
+import { BatteryOptimizationPrompt } from "../components/BatteryOptimizationPrompt";
 import { SyncProvider } from "../context/SyncContext";
 import { refreshExerciseCatalogOnLaunch } from "../data/exerciseCatalog";
 import { getUserProfile } from "../db/profiles";
@@ -22,6 +23,7 @@ import { initSyncMeta } from "../db/syncMeta";
 import { useAppReady } from "../hooks/useAppReady";
 import { useDailySync } from "../hooks/useDailySync";
 import { logDBStartup } from "../utils/diagnostics";
+import { initNotifications } from "../notifications/notificationService";
 
 const SPLASH_TEST_MS = 0; // Set to 4000 in dev to force full splash playback
 
@@ -47,6 +49,7 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
     loading: authLoading,
     isSyncing: isAuthSyncing,
     syncError,
+    awaitingEmailVerification,
   } = useAuth();
   const router = useRouter();
   const segments = useSegments();
@@ -122,6 +125,9 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
     // Don't navigate while splash is visible or auth is loading
     if (splashVisible || authLoading) return;
 
+    // Don't navigate away from login if awaiting email verification
+    if (awaitingEmailVerification) return;
+
     const currentSegment = segments[0] as string;
     const isProtectedRoute =
       currentSegment === "(tabs)" ||
@@ -162,7 +168,7 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
     };
 
     handleNavigation();
-  }, [user, authLoading, segments, splashVisible, router]);
+  }, [user, authLoading, segments, splashVisible, router, awaitingEmailVerification]);
 
   // Render animated splash overlay when visible
   // The splash handles its own exit animation based on isReady
@@ -190,7 +196,7 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
       </Stack>
 
       {/* Auth sync overlay - shown during login/logout sync */}
-      {isAuthSyncing && (
+      {isAuthSyncing && !awaitingEmailVerification && (
         <View style={styles.syncOverlay}>
           <View style={styles.syncCard}>
             <ActivityIndicator size="large" color="#22C55E" />
@@ -210,67 +216,86 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
  * ===========
  * Entry point for the app. Handles:
  * - Database initialization
+ * - Native Expo splash screen coordination
  * - Theme provider setup
  * - Auth provider wrapping
- * - Native splash screen coordination
  *
- * Performance considerations:
- * - DB init runs once on mount
- * - Native splash hides only after DB is ready
- * - Animated splash takes over for smooth transition
+ * Splash Screen Flow:
+ * 1. App launches → Native splash visible (preventAutoHideAsync)
+ * 2. DB init starts in background
+ * 3. DB ready → Hide native splash (hideAsync)
+ * 4. Animated splash takes over (visible for minimum 3s)
+ * 5. When both conditions met (min time + app ready) → Exit animated splash
+ * 6. App interface becomes visible
  */
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const [dbReady, setDbReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
+  const [nativeSplashHidden, setNativeSplashHidden] = useState(false);
 
-  // Initialize database and hide native splash
+  // Initialize database and manage native splash screen lifecycle
   useEffect(() => {
     let mounted = true;
+    let initStartTime = Date.now();
 
     const initialize = async () => {
       try {
-        console.log("[RootLayout] Starting DB initialization...");
+        console.log("[RootLayout] Starting app initialization...");
+
+        // Initialize background notifications (Notifee + expo-notifications)
+        console.log("[RootLayout] Initializing notifications...");
+        await initNotifications();
+        console.log(`[RootLayout] ✓ initNotifications complete (${Date.now() - initStartTime}ms)`);
 
         // Initialize SQLite database
         await initDB();
-        console.log("[RootLayout] initDB complete");
+        console.log(`[RootLayout] ✓ initDB complete (${Date.now() - initStartTime}ms)`);
 
+        // Initialize sync metadata
         await initSyncMeta();
-        console.log("[RootLayout] initSyncMeta complete");
+        console.log(`[RootLayout] ✓ initSyncMeta complete (${Date.now() - initStartTime}ms)`);
 
+        // Optional: Add artificial delay in dev for testing splash duration
         if (SPLASH_TEST_MS > 0 && __DEV__) {
+          console.log(`[RootLayout] TEST MODE: Adding ${SPLASH_TEST_MS}ms delay`);
           await sleep(SPLASH_TEST_MS);
         }
 
+        // Mark DB as ready (animated splash minimum timer still running at this point)
         if (mounted) {
           setDbReady(true);
-          console.log("[RootLayout] DB ready, hiding native splash...");
+          console.log(`[RootLayout] ✓ DB ready (${Date.now() - initStartTime}ms)`);
         }
 
-        // Refresh exercise catalog in the background on app launch
+        // Hide the native splash screen now (allow animated splash to show)
+        if (mounted) {
+          try {
+            await SplashScreen.hideAsync();
+            setNativeSplashHidden(true);
+            console.log(`[RootLayout] ✓ Native splash hidden (${Date.now() - initStartTime}ms)`);
+          } catch (e) {
+            console.warn("[RootLayout] Native splash already hidden or error:", e);
+            setNativeSplashHidden(true);
+          }
+        }
+
+        // Refresh exercise catalog in background (non-blocking)
         refreshExerciseCatalogOnLaunch().catch((e) => {
           console.warn("[RootLayout] Exercise catalog refresh failed:", e);
         });
-
-        // Hide native splash (animated splash will be visible)
-        try {
-          await SplashScreen.hideAsync();
-          console.log("[RootLayout] Native splash hidden");
-        } catch (e) {
-          console.log("[RootLayout] Splash already hidden or error:", e);
-        }
       } catch (error: any) {
-        console.error("[RootLayout] Failed to initialize app:", error);
+        console.error("[RootLayout] Initialization error:", error?.message || error);
         setInitError(error?.message || "Unknown error");
 
-        // Still set ready to show error state
+        // Still mark as ready to allow recovery UI or fallback
         if (mounted) {
           setDbReady(true);
           try {
             await SplashScreen.hideAsync();
+            setNativeSplashHidden(true);
           } catch (e) {
-            // Ignore
+            // Ignore nested errors
           }
         }
       }
@@ -307,6 +332,7 @@ export default function RootLayout() {
         >
           <AuthProvider>
             <SyncProvider>
+              <BatteryOptimizationPrompt />
               <RootNavigator dbReady={dbReady} />
             </SyncProvider>
           </AuthProvider>

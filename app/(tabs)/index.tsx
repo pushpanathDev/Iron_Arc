@@ -10,6 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   FadeInDown,
   FadeInUp,
@@ -20,10 +21,17 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useAuth } from "../../auth/AuthContext";
+import { EmailVerificationPrompt } from "../../components/EmailVerificationPrompt";
 import { useGlobalSync } from "../../context/SyncContext";
 import { getUserProfile, UserProfile } from "../../db/profiles";
 import { getAllWeights } from "../../db/weights";
 import { getAllWorkouts, Workout } from "../../db/workouts";
+import {
+  clearEmailVerificationStart,
+  getEmailVerificationStart,
+  setEmailVerificationStart,
+} from "../../db/syncMeta";
+import { verificationMessages } from "../../constants/verificationMessages";
 import { useTheme } from "../../theme/theme";
 import { formatDate } from "../../utils/weekUtils";
 
@@ -62,6 +70,7 @@ export default function Home() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const { user } = useAuth();
   const { globalSync, refreshVersion } = useGlobalSync();
+  const insets = useSafeAreaInsets();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [streak, setStreak] = useState<number>(0);
@@ -70,6 +79,11 @@ export default function Home() {
   const [personalRecords, setPersonalRecords] = useState<PersonalRecord[]>([]);
   const [lastWeight, setLastWeight] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [verificationDaysLeft, setVerificationDaysLeft] = useState<number | null>(null);
+  const [showVerificationPrompt, setShowVerificationPrompt] = useState(false);
+  const [dismissVerificationBanner, setDismissVerificationBanner] = useState(false);
+
+  const verificationGraceDays = 7;
 
   // Flame animation for streak
   const flameScale = useSharedValue(1);
@@ -114,8 +128,42 @@ export default function Home() {
       loadStreak(),
       loadRecentWorkouts(),
       loadWeight(),
+      loadVerificationStatus(),
     ]);
   };
+
+  const loadVerificationStatus = async () => {
+    if (!user) return;
+    try {
+      await user.reload();
+    } catch (reloadError) {
+      // Non-blocking: keep last known status
+    }
+
+    if (user.emailVerified) {
+      setVerificationDaysLeft(null);
+      setDismissVerificationBanner(false);
+      await clearEmailVerificationStart(user.uid);
+      return;
+    }
+
+    let start = await getEmailVerificationStart(user.uid);
+    if (!start) {
+      start = Date.now();
+      await setEmailVerificationStart(user.uid, start);
+    }
+
+    const elapsedDays = Math.floor((Date.now() - start) / (24 * 60 * 60 * 1000));
+    const daysLeft = Math.max(0, verificationGraceDays - elapsedDays);
+    setVerificationDaysLeft(daysLeft);
+  };
+
+  useEffect(() => {
+    if (!user || user.emailVerified) return;
+    if (verificationDaysLeft === 0 && !showVerificationPrompt) {
+      setShowVerificationPrompt(true);
+    }
+  }, [user, verificationDaysLeft, showVerificationPrompt]);
 
   const loadProfile = async () => {
     if (!user) return;
@@ -332,17 +380,18 @@ export default function Home() {
      RENDER
      ============================== */
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={{ paddingBottom: spacing.xxl }}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-          tintColor={colors.accent}
-        />
-      }
-    >
+    <>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.background }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xxl }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.accent}
+          />
+        }
+      >
       {/* ========== HEADER ========== */}
       <Animated.View
         entering={FadeInDown.delay(100).duration(500)}
@@ -389,6 +438,69 @@ export default function Home() {
           </Pressable>
         </View>
       </Animated.View>
+
+      {/* Email Verification Banner */}
+      {user &&
+        !user.emailVerified &&
+        verificationDaysLeft !== null &&
+        !dismissVerificationBanner && (
+        <Animated.View
+          entering={FadeInDown.delay(120).duration(400)}
+          style={{ marginHorizontal: spacing.md, marginBottom: spacing.md }}
+        >
+          <View
+            style={{
+              backgroundColor:
+                verificationDaysLeft > 0 ? colors.warning + "15" : colors.error + "15",
+              borderRadius: radius.lg,
+              padding: spacing.md,
+              borderLeftWidth: 4,
+              borderLeftColor:
+                verificationDaysLeft > 0 ? colors.warning : colors.error,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+              }}
+            >
+              <View style={{ flex: 1, paddingRight: spacing.sm }}>
+                <Text
+                  style={{
+                    ...typography.caption,
+                    color: verificationDaysLeft > 0 ? colors.warning : colors.error,
+                    marginBottom: spacing.xs,
+                    fontWeight: "600",
+                  }}
+                >
+                  {verificationDaysLeft > 0
+                    ? verificationMessages.bannerTitleSoft(verificationDaysLeft)
+                    : verificationMessages.bannerTitleHard}
+                </Text>
+                <Text style={{ ...typography.body, color: colors.textPrimary }}>
+                  {verificationMessages.bannerBody}
+                </Text>
+                <Pressable
+                  onPress={() => setShowVerificationPrompt(true)}
+                  style={{ marginTop: spacing.sm, alignSelf: "flex-start" }}
+                >
+                  <Text style={{ color: colors.accent, fontWeight: "600" }}>
+                    {verificationMessages.bannerAction}
+                  </Text>
+                </Pressable>
+              </View>
+              <Pressable
+                onPress={() => setDismissVerificationBanner(true)}
+                style={{ paddingLeft: spacing.sm }}
+              >
+                <Ionicons name="close" size={18} color={colors.textMuted} />
+              </Pressable>
+            </View>
+          </View>
+        </Animated.View>
+      )}
 
       {/* ========== STREAK CARD ========== */}
       <Animated.View
@@ -878,7 +990,22 @@ export default function Home() {
           {getMotivationalQuote()}
         </Text>
       </Animated.View>
-    </ScrollView>
+      </ScrollView>
+
+      <EmailVerificationPrompt
+        visible={showVerificationPrompt}
+        user={user}
+        dismissible={verificationDaysLeft !== 0}
+        onSkip={() => setShowVerificationPrompt(false)}
+        onVerified={async () => {
+          setShowVerificationPrompt(false);
+          if (user) {
+            await clearEmailVerificationStart(user.uid);
+          }
+          await loadVerificationStatus();
+        }}
+      />
+    </>
   );
 }
 

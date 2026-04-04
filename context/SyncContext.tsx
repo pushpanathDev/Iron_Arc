@@ -98,7 +98,9 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         console.log("✅ Global sync complete");
       } catch (error) {
         console.error("❌ Global sync error:", error);
-        throw error;
+        setSyncMessage(null);
+        setIsSyncing(false);
+        // Don't re-throw - allow UI to recover
       } finally {
         setIsSyncing(false);
         setSyncMessage(null);

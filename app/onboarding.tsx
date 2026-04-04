@@ -4,20 +4,20 @@
  * Multi-step onboarding for new users:
  * 1. Intro - Welcome screen with animated gym illustration
  * 2. Info - Feature highlights
- * 3. Height - Collect user height for personalization
+ * 3. Profile - Collect name (required), height & goal (optional) for personalization
  *
- * Premium UI with consistent theming throughout.
+ * Fast & friction-free onboarding. Users can always complete profile later.
  */
 
 import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
-import { HeightPickerScreen } from "../components/HeightPickerScreen";
+import { OnboardingProfileSetup } from "../components/OnboardingProfileSetup";
 import { OnboardingInfo } from "../components/OnboardingInfo";
 import { OnboardingIntro } from "../components/OnboardingIntro";
 import { updateUserProfile } from "../db/profiles";
 
-type OnboardingStep = "intro" | "info" | "height";
+type OnboardingStep = "intro" | "info" | "profile";
 
 export default function OnboardingScreen() {
   const { user } = useAuth();
@@ -29,22 +29,42 @@ export default function OnboardingScreen() {
   }, []);
 
   const handleInfoNext = useCallback(() => {
-    setStep("height");
+    setStep("profile");
   }, []);
 
-  const handleHeightComplete = useCallback(
-    async (heightCm: number) => {
+  const handleProfileComplete = useCallback(
+    async (
+      name: string,
+      age: number | null,
+      fitnessGoal: "strength" | "muscle" | "endurance" | "weight-loss" | "general",
+      heightCm: number | null,
+      weightKg: number | null
+    ) => {
       if (!user) return;
 
       try {
-        // Save height to profile
-        await updateUserProfile(user.uid, { height: heightCm });
-        console.log("✅ Height saved:", heightCm, "cm");
+        // Save profile data
+        const profileData: any = {
+          displayName: name,
+          age: age,
+          fitnessGoal: fitnessGoal,
+        };
+
+        if (heightCm !== null) {
+          profileData.height = heightCm;
+        }
+
+        if (weightKg !== null) {
+          profileData.weight = weightKg;
+        }
+
+        await updateUserProfile(user.uid, profileData);
+        console.log("✅ Profile setup complete:", profileData);
 
         // Navigate to main app
         router.replace("/(tabs)");
       } catch (error) {
-        console.error("Failed to save height:", error);
+        console.error("Failed to save profile:", error);
         // Still navigate even if save fails
         router.replace("/(tabs)");
       }
@@ -58,10 +78,10 @@ export default function OnboardingScreen() {
       return <OnboardingIntro onStart={handleIntroStart} />;
     case "info":
       return <OnboardingInfo onNext={handleInfoNext} />;
-    case "height":
+    case "profile":
       return (
-        <HeightPickerScreen
-          onComplete={handleHeightComplete}
+        <OnboardingProfileSetup
+          onComplete={handleProfileComplete}
           showBackButton
           onBack={() => setStep("info")}
         />

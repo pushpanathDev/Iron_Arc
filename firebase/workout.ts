@@ -26,40 +26,54 @@ export async function pushWorkoutToFirebase(
   userId: string,
   workout: any
 ) {
-  if (!firestoreDb) return;
+  try {
+    if (!firestoreDb) {
+      throw new Error("Firestore database not initialized");
+    }
 
-  const ref = doc(
-    firestoreDb,
-    "users",
-    userId,
-    "workouts",
-    workout.id
-  );
-  // 👇 PASTE LOGS HERE (TOP OF FUNCTION)
-  console.log(
-    "🔥 Firebase write path:",
-    `users/${userId}/workouts/${workout.id}`
-  );
-  console.log("🔐 Auth UID:", auth.currentUser?.uid);
+    const ref = doc(
+      firestoreDb,
+      "users",
+      userId,
+      "workouts",
+      workout.id
+    );
+    
+    console.log(
+      "🔥 Firebase write path:",
+      `users/${userId}/workouts/${workout.id}`
+    );
+    console.log("🔐 Auth UID:", auth.currentUser?.uid);
 
-  // Sanitize data to avoid undefined values
-  const sanitizedWorkout = sanitizeForFirebase(userId, workout);
-  await setDoc(ref, sanitizedWorkout, { merge: true });
+    // Sanitize data to avoid undefined values
+    const sanitizedWorkout = sanitizeForFirebase(userId, workout);
+    await setDoc(ref, sanitizedWorkout, { merge: true });
+  } catch (error) {
+    console.error("Failed to push workout to Firebase:", error);
+    throw error; // Re-throw for caller to handle
+  }
 }
 
 export async function deleteWorkoutFromFirebase(
   userId: string,
   workoutId: string
 ) {
-  if (!firestoreDb) return;
+  try {
+    if (!firestoreDb) {
+      throw new Error("Firestore database not initialized");
+    }
 
-  const ref = doc(
-    firestoreDb,
-    "users",
-    userId,
-    "workouts",
-    workoutId
-  );
+    const ref = doc(
+      firestoreDb,
+      "users",
+      userId,
+      "workouts",
+      workoutId
+    );
 
-  await deleteDoc(ref);
+    await deleteDoc(ref);
+  } catch (error) {
+    console.error("Failed to delete workout from Firebase:", error);
+    throw error; // Re-throw for caller to handle
+  }
 }

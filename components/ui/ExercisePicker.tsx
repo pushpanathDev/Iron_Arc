@@ -43,9 +43,13 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
   const [isAdding, setIsAdding] = useState(false);
 
   // Load frequently used and custom exercises when category changes
+  // Clear query but preserve exercise selection when category changes
   useEffect(() => {
     setQuery("");
-    onChange(null as any);
+    // Only clear exercise if no value is set or category actually changed
+    if (!value) {
+      onChange(null as any);
+    }
     setOpen(false);
     setFrequentExercises([]);
     setCustomExercises([]);

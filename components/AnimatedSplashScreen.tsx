@@ -1,11 +1,11 @@
 /**
  * AnimatedSplashScreen - Iron Arc Edition
  * ========================================
- * Premium splash screen with cinematic minimalism:
- * - Dark metallic gradient background
- * - Glowing arc energy ring
- * - Bold IRON ARC typography
- * - Subtle particle dust
+ * Premium splash screen with dual-condition logic:
+ * - Minimum 3-second display time (animation plays fully)
+ * - Waits for app initialization to complete
+ * - Smooth exit animation when both conditions met
+ * - Safety guard prevents getting stuck
  */
 
 import Constants from "expo-constants";
@@ -30,7 +30,14 @@ interface AnimatedSplashScreenProps {
   isAppReady: boolean;
 }
 
-const SPLASH_ANIMATION_MS = 4800;
+/** Minimum time to display splash screen (allows animation to feel intentional) */
+const MINIMUM_SPLASH_DURATION_MS = 3000;
+
+/** Maximum time to wait for app initialization before forcing exit (safety guard) */
+const MAXIMUM_SPLASH_DURATION_MS = 15000;
+
+/** Duration of entry animation sequence */
+const SPLASH_ENTRY_ANIMATION_MS = 2800;
 
 const PARTICLES = [
   { x: 0.18, y: 0.22, size: 3, delay: 400, drift: -10 },
@@ -56,36 +63,121 @@ export function AnimatedSplashScreen({
   const particlesOpacity = useSharedValue(0);
   const particlesDrift = useSharedValue(0);
   const backgroundOpacity = useSharedValue(0);
+
+  // Tracking refs for exit logic
   const hasExited = useRef(false);
+  const mountTime = useRef(Date.now());
 
-  // Track animation completion
-  const [animationDone, setAnimationDone] = useState(false);
+  /**
+   * CONDITION 1: Minimum splash duration has passed
+   * Ensures animation feels intentional, not abrupt
+   */
+  const [minTimePassed, setMinTimePassed] = useState(false);
 
-  // Log splash state for debugging
+  /**
+   * CONDITION 2: App is ready (from props)
+   * Tracks when all initialization is complete
+   */
+  const [appReady, setAppReady] = useState(isAppReady);
+
+  // Log splash lifecycle on mount
   useEffect(() => {
-    console.log("[Splash] Mounted, isAppReady:", isAppReady);
+    console.log("[Splash] Mounted - starting dual-condition countdown");
+    return () => {
+      if (!hasExited.current) {
+        console.warn(
+          "[Splash] Component unmounted before exit (unexpected cleanup)",
+        );
+      }
+    };
   }, []);
 
+  // Update appReady state whenever prop changes
   useEffect(() => {
-    console.log(
-      "[Splash] State - isAppReady:",
-      isAppReady,
-      "animationDone:",
-      animationDone,
-    );
-  }, [isAppReady, animationDone]);
+    setAppReady(isAppReady);
+    if (isAppReady) {
+      console.log(
+        "[Splash] App ready signal received",
+        `(elapsed: ${Date.now() - mountTime.current}ms)`,
+      );
+    }
+  }, [isAppReady]);
 
-  // Splash duration gate (ensures full cinematic run)
+  /**
+   * CONDITION 1: Minimum time gate
+   * Waits MINIMUM_SPLASH_DURATION_MS before allowing exit
+   */
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (!animationDone) {
-        console.log("[Splash] Animation duration complete");
-        setAnimationDone(true);
+    const minTimer = setTimeout(() => {
+      console.log("[Splash] Minimum duration reached (3s)");
+      setMinTimePassed(true);
+    }, MINIMUM_SPLASH_DURATION_MS);
+
+    return () => clearTimeout(minTimer);
+  }, []);
+
+  /**
+   * SAFETY GUARD: Maximum time gate
+   * Forces exit after MAXIMUM_SPLASH_DURATION_MS even if not fully ready
+   * Prevents splash from getting stuck (e.g., if initialization stalls)
+   */
+  useEffect(() => {
+    const maxTimer = setTimeout(() => {
+      if (!hasExited.current) {
+        console.warn(
+          "[Splash] Max duration reached (15s), forcing exit for safety",
+        );
+        setAppReady(true); // Force condition satisfied to trigger exit
       }
-    }, SPLASH_ANIMATION_MS);
+    }, MAXIMUM_SPLASH_DURATION_MS);
 
-    return () => clearTimeout(timer);
-  }, [animationDone]);
+    return () => clearTimeout(maxTimer);
+  }, []);
+
+  /**
+   * DUAL-CONDITION EXIT LOGIC
+   * Triggers when: minTimePassed AND (appReady OR maxDuration exceeded)
+   */
+  useEffect(() => {
+    // Not ready to exit yet
+    if (!minTimePassed || !appReady || hasExited.current) {
+      const elapsed = Date.now() - mountTime.current;
+      const minReady = minTimePassed ? "✓" : "⏳";
+      const appReadyReady = appReady ? "✓" : "⏳";
+      if (minTimePassed !== appReady) {
+        // Only log when conditions differ (to avoid spam)
+        console.log(
+          `[Splash] Waiting - Min: ${minReady} (${elapsed}ms) | App: ${appReadyReady}`,
+        );
+      }
+      return;
+    }
+
+    // Both conditions satisfied - time to exit!
+    console.log(
+      "[Splash] Both conditions met! Starting exit animation...",
+      `(total time: ${Date.now() - mountTime.current}ms)`,
+    );
+
+    const exitTimer = setTimeout(() => {
+      if (hasExited.current) return;
+      hasExited.current = true;
+
+      // Smooth fade out exit animation
+      containerOpacity.value = withTiming(
+        0,
+        { duration: 300, easing: Easing.inOut(Easing.cubic) },
+        (finished) => {
+          if (finished) {
+            console.log("[Splash] Exit animation complete - calling callback");
+            runOnJS(onAnimationComplete)();
+          }
+        },
+      );
+    }, 100); // Small delay before exit to ensure smooth transition
+
+    return () => clearTimeout(exitTimer);
+  }, [minTimePassed, appReady, onAnimationComplete]);
 
   // Entry animation
   useEffect(() => {
@@ -138,41 +230,15 @@ export function AnimatedSplashScreen({
     );
   }, []);
 
-  // Exit animation when app is ready AND splash animation finished
+  // Cleanup: ensure no timers leak
   useEffect(() => {
-    // Wait for BOTH conditions: app ready AND animation finish
-    if (!isAppReady || !animationDone || hasExited.current) {
-      console.log(
-        "[Splash] Not ready to exit - isAppReady:",
-        isAppReady,
-        "animationDone:",
-        animationDone,
-        "hasExited:",
-        hasExited.current,
-      );
-      return;
-    }
-
-    console.log("[Splash] Both conditions met! Starting exit animation...");
-    const timer = setTimeout(() => {
-      if (hasExited.current) return;
-      hasExited.current = true;
-      console.log("[Splash] Exiting...");
-
-      // Fade out the entire container
-      containerOpacity.value = withTiming(
-        0,
-        { duration: 400, easing: Easing.inOut(Easing.cubic) },
-        (finished) => {
-          if (finished) {
-            runOnJS(onAnimationComplete)();
-          }
-        },
-      );
-    }, 200); // Small delay before fade out
-
-    return () => clearTimeout(timer);
-  }, [isAppReady, animationDone, onAnimationComplete]);
+    return () => {
+      if (!hasExited.current) {
+        console.log("[Splash] Component unmounting - ensuring clean exit");
+        hasExited.current = true;
+      }
+    };
+  }, []);
 
   // Animated styles
   const containerStyle = useAnimatedStyle(() => ({
@@ -253,7 +319,7 @@ export function AnimatedSplashScreen({
         <Text style={styles.creditsText}>Designed & Built by</Text>
         <Text style={styles.developerName}>Pushpanath</Text>
         <Text style={styles.versionText}>
-          v{Constants.expoConfig?.version || "1.0.0"}
+          v{Constants.expoConfig?.version || "1.1.1"}
         </Text>
       </Animated.View>
     </Animated.View>

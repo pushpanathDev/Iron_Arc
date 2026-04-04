@@ -12,8 +12,14 @@ export type UserProfile = {
   email: string | null;
   avatarUrl: string | null;
   height: number | null;
+  weight: number | null;
+  age: number | null;
+  fitnessGoal: "strength" | "muscle" | "endurance" | "weight-loss" | "general" | null;
   weeklyGoal: number; // Target workouts per WEEK (default: 1, max: 10)
   authProvider: "email" | "google" | null;
+  // Email verification is owned by Firebase Auth; this mirrors the latest known state.
+  isEmailVerified?: boolean | null;
+  verificationSentAt?: number | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -42,6 +48,8 @@ export async function syncProfileToFirebase(
     const docRef = doc(firestoreDb, "users", profile.userId, "profile", "data");
     const docSnap = await getDoc(docRef);
 
+    // NOTE: Do not allow clients to set isEmailVerified to true without auth check.
+    // Only update this field after confirming user.emailVerified is true.
     if (docSnap.exists()) {
       // Update existing profile
       await updateDoc(docRef, {
@@ -140,8 +148,8 @@ export async function createUserProfile(
     // Use Firebase data as source of truth for returning users
     await sqliteDb.runAsync(
       `INSERT OR REPLACE INTO user_profiles 
-       (userId, email, displayName, avatarUrl, authProvider, height, weeklyGoal, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (userId, email, displayName, avatarUrl, authProvider, height, weight, age, fitnessGoal, weeklyGoal, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         firebaseProfile.email || email,
@@ -149,6 +157,9 @@ export async function createUserProfile(
         firebaseProfile.avatarUrl,
         firebaseProfile.authProvider || authProvider,
         firebaseProfile.height,
+        firebaseProfile.weight || null,
+        firebaseProfile.age || null,
+        firebaseProfile.fitnessGoal || null,
         firebaseProfile.weeklyGoal || 4,
         firebaseProfile.createdAt || now,
         firebaseProfile.updatedAt || now,
@@ -171,7 +182,7 @@ export async function createUserProfile(
   );
 
   // Firebase: Sync profile (only for new users)
-  await syncProfileToFirebase({
+    await syncProfileToFirebase({
     userId,
     email,
     displayName,
@@ -179,6 +190,8 @@ export async function createUserProfile(
     authProvider,
     height: null,
     weeklyGoal: 1,
+      isEmailVerified: false,
+      verificationSentAt: Date.now(),
     createdAt: now,
     updatedAt: now,
   });
@@ -252,6 +265,21 @@ export async function updateUserProfile(
   if (updates.height !== undefined) {
     fields.push("height = ?");
     values.push(updates.height);
+  }
+
+  if (updates.weight !== undefined) {
+    fields.push("weight = ?");
+    values.push(updates.weight);
+  }
+
+  if (updates.age !== undefined) {
+    fields.push("age = ?");
+    values.push(updates.age);
+  }
+
+  if (updates.fitnessGoal !== undefined) {
+    fields.push("fitnessGoal = ?");
+    values.push(updates.fitnessGoal);
   }
 
   if (updates.weeklyGoal !== undefined) {

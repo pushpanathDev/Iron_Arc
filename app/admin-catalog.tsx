@@ -19,7 +19,7 @@ import {
 } from "../firebase/exerciseCatalogAdmin";
 import { useTheme } from "../theme/theme";
 import { router } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 const ALL_CATEGORIES = Object.keys(
   EXERCISES,
@@ -101,6 +101,7 @@ function normalizeCategoryMap(
 export default function AdminCatalogScreen() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const [adminStatus, setAdminStatus] = useState<
     "checking" | "allowed" | "denied"
@@ -426,7 +427,7 @@ export default function AdminCatalogScreen() {
       style={{ flex: 1, backgroundColor: colors.background }}
       contentContainerStyle={{
         padding: spacing.md,
-        paddingBottom: spacing.xxl,
+        paddingBottom: insets.bottom + spacing.xxl,
       }}
     >
       <Animated.View entering={FadeInDown.duration(300)}>

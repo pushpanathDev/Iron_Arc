@@ -1,10 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../../theme/theme";
 
 export default function TabLayout() {
   const { colors, shadows } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <SafeAreaView
@@ -21,8 +23,8 @@ export default function TabLayout() {
             borderTopColor: colors.cardBorder,
             borderTopWidth: 1,
             paddingTop: 8,
-            paddingBottom: 8,
-            height: 60,
+            paddingBottom: Math.max(8, insets.bottom),
+            minHeight: 60 + Math.max(0, insets.bottom),
             ...shadows.sm,
           },
           tabBarLabelStyle: {

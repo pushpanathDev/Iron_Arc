@@ -1,8 +1,18 @@
 import { Workout } from "@/db/workouts";
 import { useTheme } from "@/theme/theme";
+import {
+  calculateDaySummary,
+  formatSetDetails,
+  formatVolume,
+  groupWorkoutsBySession,
+} from "@/utils/workoutSummary";
 import { Ionicons } from "@expo/vector-icons";
-import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import React, { useMemo } from "react";
+import {
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import Animated, { FadeInUp } from "react-native-reanimated";
 
 interface WorkoutDaySummaryProps {
@@ -13,23 +23,17 @@ interface WorkoutDaySummaryProps {
 export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
   const { colors, spacing, radius, typography, shadows } = useTheme();
 
+  // Memoize summary calculations to optimize performance
+  const summary = useMemo(() => {
+    return calculateDaySummary(workouts);
+  }, [workouts]);
+
+  const sessions = useMemo(() => {
+    return groupWorkoutsBySession(workouts);
+  }, [workouts]);
+
   // Format display date
-  const displayDate = formatDisplayDate(date);
-
-  // Calculate totals
-  const totalSets = workouts.reduce((acc, w) => acc + (w.sets?.length || 0), 0);
-  const totalReps = workouts.reduce(
-    (acc, w) => acc + (w.sets?.reduce((s, set) => s + set.reps, 0) || 0),
-    0,
-  );
-  const totalVolume = workouts.reduce(
-    (acc, w) =>
-      acc + (w.sets?.reduce((s, set) => s + set.reps * set.weight, 0) || 0),
-    0,
-  );
-
-  // Group by category
-  const categories = [...new Set(workouts.map((w) => w.category || "Other"))];
+  const displayDate = useMemo(() => formatDisplayDate(date), [date]);
 
   if (workouts.length === 0) {
     return (
@@ -85,7 +89,7 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
               },
             ]}
           >
-            Select a day with a green dot
+            Select a day with a green dot to view workouts
           </Text>
         </View>
       </Animated.View>
@@ -100,13 +104,38 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
         {
           backgroundColor: colors.surface,
           borderRadius: radius.xl,
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.card,
+          borderWidth: 2,
+          borderColor: colors.accent,
+          overflow: "hidden",
+          ...shadows.lg,
         },
       ]}
     >
-      {/* Header */}
+      {/* HEADER - Day Summary Label */}
+      <View
+        style={{
+          backgroundColor: colors.accent,
+          paddingHorizontal: spacing.lg,
+          paddingVertical: spacing.sm,
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        <Ionicons name="star" size={18} color="#fff" />
+        <Text
+          style={{
+            color: "#fff",
+            fontWeight: "700",
+            fontSize: 12,
+            marginLeft: spacing.sm,
+            letterSpacing: 1,
+          }}
+        >
+          DAY SUMMARY
+        </Text>
+      </View>
+
+      {/* Header Section */}
       <View
         style={[
           styles.header,
@@ -114,271 +143,419 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
             padding: spacing.md,
             borderBottomWidth: 1,
             borderBottomColor: colors.divider,
+            backgroundColor: colors.surfaceElevated,
           },
         ]}
       >
-        <View>
-          <Text style={[typography.h3, { color: colors.textPrimary }]}>
-            {displayDate}
-          </Text>
-          <View style={[styles.categoryTags, { marginTop: spacing.xs }]}>
-            {categories.map((cat) => (
-              <View
-                key={cat}
+        <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+          <View style={{ flex: 1 }}>
+            <Text style={[typography.h3, { color: colors.textPrimary }]}>
+              {displayDate}
+            </Text>
+            <View
+              style={[styles.categoryTags, { marginTop: spacing.xs }]}
+            >
+              {summary.categories.map((cat) => (
+                <View
+                  key={cat}
+                  style={[
+                    styles.categoryTag,
+                    {
+                      backgroundColor: colors.accentDim,
+                      borderRadius: radius.sm,
+                      paddingVertical: 2,
+                      paddingHorizontal: spacing.xs,
+                      marginRight: spacing.xs,
+                      marginBottom: spacing.xs,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: "600",
+                      color: colors.accent,
+                    }}
+                  >
+                    {cat}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {/* Quick Stats */}
+          <View style={styles.quickStats}>
+            <View style={styles.statItem}>
+              <Text
                 style={[
-                  styles.categoryTag,
-                  {
-                    backgroundColor: colors.accentDim,
-                    borderRadius: radius.sm,
-                    paddingVertical: 2,
-                    paddingHorizontal: spacing.xs,
-                  },
+                  typography.stat,
+                  { color: colors.accent, fontWeight: "700" },
                 ]}
               >
-                <Text
-                  style={{
-                    fontSize: 11,
-                    fontWeight: "600",
-                    color: colors.accent,
-                  }}
-                >
-                  {cat}
-                </Text>
-              </View>
-            ))}
-          </View>
-        </View>
-
-        {/* Quick Stats */}
-        <View style={styles.quickStats}>
-          <View style={styles.statItem}>
-            <Text style={[typography.stat, { color: colors.accent }]}>
-              {totalVolume >= 1000
-                ? `${(totalVolume / 1000).toFixed(1)}k`
-                : totalVolume}
-            </Text>
-            <Text style={[typography.caption, { color: colors.textMuted }]}>
-              kg vol
-            </Text>
+                {formatVolume(summary.totalVolume)}
+              </Text>
+              <Text
+                style={[
+                  typography.caption,
+                  { color: colors.textMuted, fontSize: 10 },
+                ]}
+              >
+                volume
+              </Text>
+            </View>
           </View>
         </View>
       </View>
 
-      {/* Exercise Table */}
-      <View style={[styles.table, { padding: spacing.md }]}>
-        {/* Table Header */}
+      {/* Insights Section */}
+      {summary.insights.length > 0 && (
         <View
           style={[
-            styles.tableRow,
-            styles.tableHeader,
+            styles.insightsSection,
             {
-              backgroundColor: colors.surfaceElevated,
-              borderRadius: radius.md,
-              paddingVertical: spacing.xs,
-              paddingHorizontal: spacing.sm,
-              marginBottom: spacing.sm,
+              paddingHorizontal: spacing.md,
+              paddingVertical: spacing.sm,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.divider,
+              backgroundColor: colors.background,
             },
           ]}
         >
-          <Text
-            style={[
-              styles.cellExercise,
-              typography.caption,
-              { color: colors.textMuted, fontWeight: "600" },
-            ]}
-          >
-            EXERCISE
-          </Text>
-          <Text
-            style={[
-              styles.cellSets,
-              typography.caption,
-              {
-                color: colors.textMuted,
-                fontWeight: "600",
-                textAlign: "center",
-              },
-            ]}
-          >
-            SETS
-          </Text>
-          <Text
-            style={[
-              styles.cellReps,
-              typography.caption,
-              {
-                color: colors.textMuted,
-                fontWeight: "600",
-                textAlign: "center",
-              },
-            ]}
-          >
-            REPS
-          </Text>
-          <Text
-            style={[
-              styles.cellWeight,
-              typography.caption,
-              {
-                color: colors.textMuted,
-                fontWeight: "600",
-                textAlign: "right",
-              },
-            ]}
-          >
-            AVG KG
-          </Text>
-        </View>
-
-        {/* Exercise Rows */}
-        {workouts.map((workout, index) => {
-          const sets = workout.sets?.length || 0;
-          const reps = workout.sets?.reduce((acc, s) => acc + s.reps, 0) || 0;
-          const avgWeight =
-            sets > 0
-              ? Math.round(
-                  workout.sets!.reduce((acc, s) => acc + s.weight, 0) / sets,
-                )
-              : 0;
-
-          return (
-            <Animated.View
-              key={workout.id}
-              entering={FadeInUp.delay(index * 50).duration(200)}
-              style={[
-                styles.tableRow,
-                {
-                  paddingVertical: spacing.sm,
-                  paddingHorizontal: spacing.sm,
-                  borderBottomWidth: index < workouts.length - 1 ? 1 : 0,
-                  borderBottomColor: colors.divider,
-                },
-              ]}
+          {summary.insights.map((insight, idx) => (
+            <View
+              key={idx}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                marginVertical: spacing.xs,
+              }}
             >
-              <View style={styles.cellExercise}>
-                <Text
-                  style={[typography.bodyMedium, { color: colors.textPrimary }]}
-                  numberOfLines={1}
-                >
-                  {workout.exercise}
-                </Text>
-                {/* Set breakdown */}
-                <View style={[styles.setBreakdown, { marginTop: spacing.xxs }]}>
-                  {workout.sets?.slice(0, 4).map((set, i) => (
-                    <Text
-                      key={i}
-                      style={[
-                        typography.caption,
-                        { color: colors.textMuted, marginRight: spacing.xs },
-                      ]}
-                    >
-                      {set.reps}×{set.weight}
-                    </Text>
-                  ))}
-                  {(workout.sets?.length || 0) > 4 && (
-                    <Text
-                      style={[typography.caption, { color: colors.textMuted }]}
-                    >
-                      +{workout.sets!.length - 4}
-                    </Text>
-                  )}
-                </View>
-              </View>
+              <Ionicons
+                name={insight.icon as any}
+                size={14}
+                color={insight.highlight ? colors.success : colors.accent}
+                style={{ marginRight: spacing.xs }}
+              />
               <Text
                 style={[
-                  styles.cellSets,
-                  typography.bodyMedium,
-                  { color: colors.textPrimary, textAlign: "center" },
-                ]}
-              >
-                {sets}
-              </Text>
-              <Text
-                style={[
-                  styles.cellReps,
-                  typography.bodyMedium,
-                  { color: colors.textPrimary, textAlign: "center" },
-                ]}
-              >
-                {reps}
-              </Text>
-              <Text
-                style={[
-                  styles.cellWeight,
-                  typography.bodyMedium,
+                  typography.caption,
                   {
-                    color: colors.accent,
-                    fontWeight: "700",
-                    textAlign: "right",
+                    color: insight.highlight
+                      ? colors.success
+                      : colors.textSecondary,
+                    fontWeight: insight.highlight ? "600" : "400",
+                    flex: 1,
                   },
                 ]}
               >
-                {avgWeight}
+                {insight.message}
               </Text>
-            </Animated.View>
-          );
-        })}
-      </View>
+            </View>
+          ))}
+        </View>
+      )}
 
-      {/* Footer Summary */}
+      {/* Summary Stats */}
       <View
         style={[
-          styles.footer,
+          styles.summaryStats,
           {
-            backgroundColor: colors.surfaceElevated,
-            padding: spacing.md,
-            borderBottomLeftRadius: radius.xl,
-            borderBottomRightRadius: radius.xl,
+            flexDirection: "row",
+            paddingHorizontal: spacing.md,
+            paddingVertical: spacing.sm,
+            borderBottomWidth: 1,
+            borderBottomColor: colors.divider,
+            backgroundColor: colors.background,
           },
         ]}
       >
-        <View style={styles.footerStats}>
-          <View style={styles.footerStatItem}>
-            <Ionicons
-              name="layers-outline"
-              size={16}
-              color={colors.textMuted}
-            />
-            <Text
-              style={[
-                typography.caption,
-                { color: colors.textSecondary, marginLeft: spacing.xxs },
-              ]}
-            >
-              {totalSets} sets
-            </Text>
-          </View>
-          <View style={[styles.footerStatItem, { marginLeft: spacing.md }]}>
-            <Ionicons
-              name="repeat-outline"
-              size={16}
-              color={colors.textMuted}
-            />
-            <Text
-              style={[
-                typography.caption,
-                { color: colors.textSecondary, marginLeft: spacing.xxs },
-              ]}
-            >
-              {totalReps} reps
-            </Text>
-          </View>
-          <View style={[styles.footerStatItem, { marginLeft: spacing.md }]}>
-            <Ionicons
-              name="fitness-outline"
-              size={16}
-              color={colors.textMuted}
-            />
-            <Text
-              style={[
-                typography.caption,
-                { color: colors.textSecondary, marginLeft: spacing.xxs },
-              ]}
-            >
-              {workouts.length} exercises
-            </Text>
-          </View>
+        <View style={styles.statChip}>
+          <Ionicons
+            name="layers-outline"
+            size={14}
+            color={colors.accent}
+          />
+          <Text
+            style={[
+              typography.caption,
+              {
+                color: colors.textPrimary,
+                fontWeight: "600",
+                marginLeft: spacing.xs,
+              },
+            ]}
+          >
+            {summary.totalSets} Sets
+          </Text>
         </View>
+        <View style={[styles.statChip, { marginLeft: spacing.md }]}>
+          <Ionicons
+            name="repeat-outline"
+            size={14}
+            color={colors.accent}
+          />
+          <Text
+            style={[
+              typography.caption,
+              {
+                color: colors.textPrimary,
+                fontWeight: "600",
+                marginLeft: spacing.xs,
+              },
+            ]}
+          >
+            {summary.totalReps} Reps
+          </Text>
+        </View>
+        <View style={[styles.statChip, { marginLeft: spacing.md }]}>
+          <Ionicons
+            name="barbell-outline"
+            size={14}
+            color={colors.accent}
+          />
+          <Text
+            style={[
+              typography.caption,
+              {
+                color: colors.textPrimary,
+                fontWeight: "600",
+                marginLeft: spacing.xs,
+              },
+            ]}
+          >
+            {summary.totalExercises} Ex
+          </Text>
+        </View>
+      </View>
+
+      {/* Sessions and Exercises */}
+      <View style={{ padding: spacing.md }}>
+        {sessions.map((session, sessionIdx) => (
+          <View key={session.sessionId} style={{ marginBottom: spacing.md }}>
+            {/* Session Header */}
+            {sessions.length > 1 && (
+              <View
+                style={[
+                  styles.sessionHeader,
+                  {
+                    backgroundColor: colors.accentLight,
+                    borderLeftWidth: 3,
+                    borderLeftColor: colors.accent,
+                    paddingHorizontal: spacing.sm,
+                    paddingVertical: spacing.xs,
+                    borderRadius: radius.sm,
+                    marginBottom: spacing.sm,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name="folder-outline"
+                  size={14}
+                  color={colors.accent}
+                />
+                <Text
+                  style={[
+                    typography.label,
+                    {
+                      color: colors.accent,
+                      marginLeft: spacing.xs,
+                      fontSize: 12,
+                    },
+                  ]}
+                >
+                  {session.sessionId} Session
+                </Text>
+              </View>
+            )}
+
+            {/* Exercise Table */}
+            <View
+              style={[
+                styles.exerciseTable,
+                { borderRadius: radius.md, overflow: "hidden" },
+              ]}
+            >
+              {/* Table Header */}
+              <View
+                style={[
+                  styles.tableRow,
+                  styles.tableHeader,
+                  {
+                    backgroundColor: colors.surfaceElevated,
+                    paddingVertical: spacing.xs,
+                    paddingHorizontal: spacing.sm,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.cellExercise,
+                    typography.caption,
+                    {
+                      color: colors.textMuted,
+                      fontWeight: "700",
+                      fontSize: 10,
+                    },
+                  ]}
+                >
+                  EXERCISE
+                </Text>
+                <Text
+                  style={[
+                    styles.cellSets,
+                    typography.caption,
+                    {
+                      color: colors.textMuted,
+                      fontWeight: "700",
+                      fontSize: 10,
+                      textAlign: "right",
+                    },
+                  ]}
+                >
+                  SETS
+                </Text>
+                <Text
+                  style={[
+                    styles.cellWeight,
+                    typography.caption,
+                    {
+                      color: colors.textMuted,
+                      fontWeight: "700",
+                      fontSize: 10,
+                      textAlign: "right",
+                    },
+                  ]}
+                >
+                  AVG
+                </Text>
+              </View>
+
+              {/* Exercise Rows */}
+              {session.exercises.map((exercise, exIdx) => (
+                <Animated.View
+                  key={exercise.exerciseName}
+                  entering={FadeInUp.delay((sessionIdx * 50 + exIdx * 30)).duration(300)}
+                  style={[
+                    styles.tableRow,
+                    {
+                      paddingVertical: spacing.sm,
+                      paddingHorizontal: spacing.sm,
+                      borderBottomWidth:
+                        exIdx < session.exercises.length - 1 ? 1 : 0,
+                      borderBottomColor: colors.divider,
+                    },
+                  ]}
+                >
+                  <View style={styles.cellExercise}>
+                    <Text
+                      style={[
+                        typography.bodyMedium,
+                        {
+                          color: colors.textPrimary,
+                          fontWeight: "600",
+                        },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {exercise.exerciseName}
+                    </Text>
+                    {/* Set breakdown */}
+                    <Text
+                      style={[
+                        typography.caption,
+                        {
+                          color: colors.textMuted,
+                          marginTop: spacing.xxs,
+                        },
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {formatSetDetails(exercise.setDetails)}
+                    </Text>
+                  </View>
+                  <Text
+                    style={[
+                      styles.cellSets,
+                      typography.bodyMedium,
+                      {
+                        color: colors.accent,
+                        fontWeight: "700",
+                        textAlign: "right",
+                      },
+                    ]}
+                  >
+                    {exercise.totalSets}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.cellWeight,
+                      typography.bodyMedium,
+                      {
+                        color: colors.accent,
+                        fontWeight: "700",
+                        textAlign: "right",
+                      },
+                    ]}
+                  >
+                    {exercise.avgWeight}kg
+                  </Text>
+                </Animated.View>
+              ))}
+
+              {/* Session Summary */}
+              {sessions.length > 1 && (
+                <View
+                  style={[
+                    styles.tableRow,
+                    {
+                      paddingVertical: spacing.xs,
+                      paddingHorizontal: spacing.sm,
+                      backgroundColor: colors.accentLight,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      typography.caption,
+                      {
+                        color: colors.accent,
+                        fontWeight: "700",
+                        flex: 1,
+                      },
+                    ]}
+                  >
+                    Session Total
+                  </Text>
+                  <Text
+                    style={[
+                      typography.caption,
+                      {
+                        color: colors.accent,
+                        fontWeight: "700",
+                        textAlign: "right",
+                      },
+                    ]}
+                  >
+                    {session.totalSets}
+                  </Text>
+                  <Text
+                    style={[
+                      typography.caption,
+                      {
+                        color: colors.accent,
+                        fontWeight: "700",
+                        textAlign: "right",
+                      },
+                    ]}
+                  >
+                    {formatVolume(session.totalVolume)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+        ))}
       </View>
     </Animated.View>
   );
@@ -394,12 +571,12 @@ function formatDisplayDate(dateStr: string): string {
   const yesterdayStr = yesterday.toISOString().split("T")[0];
 
   if (dateStr === todayStr) {
-    return "Today";
+    return "Today's Workout";
   } else if (dateStr === yesterdayStr) {
     return "Yesterday";
   } else {
     return date.toLocaleDateString("en-US", {
-      weekday: "long",
+      weekday: "short",
       month: "short",
       day: "numeric",
     });
@@ -418,54 +595,63 @@ const styles = StyleSheet.create({
   categoryTags: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 6,
   },
-  categoryTag: {},
+  categoryTag: {
+    marginRight: 6,
+    marginBottom: 4,
+  },
   quickStats: {
-    alignItems: "flex-end",
+    justifyContent: "flex-end",
   },
   statItem: {
-    alignItems: "flex-end",
+    alignItems: "center",
   },
-  table: {},
+  insightsSection: {
+    marginVertical: 2,
+  },
+  summaryStats: {
+    alignItems: "center",
+  },
+  statChip: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  sessionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  exerciseTable: {
+    borderWidth: 1,
+  },
   tableRow: {
     flexDirection: "row",
     alignItems: "center",
   },
-  tableHeader: {},
+  tableHeader: {
+    justifyContent: "space-between",
+  },
   cellExercise: {
-    flex: 2,
+    flex: 1,
   },
   cellSets: {
     width: 45,
   },
-  cellReps: {
-    width: 45,
-  },
   cellWeight: {
-    width: 55,
-  },
-  setBreakdown: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-  },
-  footer: {},
-  footerStats: {
-    flexDirection: "row",
-    justifyContent: "center",
-  },
-  footerStatItem: {
-    flexDirection: "row",
-    alignItems: "center",
+    width: 65,
   },
   emptyState: {
     alignItems: "center",
+    justifyContent: "center",
     paddingVertical: 24,
   },
   emptyIcon: {
-    width: 56,
-    height: 56,
-    justifyContent: "center",
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     alignItems: "center",
+    justifyContent: "center",
   },
 });
+
+
+

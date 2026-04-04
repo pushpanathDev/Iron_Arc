@@ -9,6 +9,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   FadeInDown,
@@ -45,6 +46,7 @@ export default function History() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const { user } = useAuth();
   const { globalSync, refreshVersion, startSync, endSync } = useGlobalSync();
+  const insets = useSafeAreaInsets();
 
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [deletedWorkout, setDeletedWorkout] = useState<Workout | null>(null);
@@ -67,8 +69,14 @@ export default function History() {
   }, [user]);
 
   const fetchWorkouts = async () => {
-    const data = await getAllWorkouts(user!.uid);
-    setWorkouts(data);
+    if (!user?.uid) return;
+    try {
+      const data = await getAllWorkouts(user.uid);
+      setWorkouts(data);
+    } catch (error) {
+      console.error("Failed to fetch workouts:", error);
+      setSyncMessage("Failed to load workouts");
+    }
   };
 
   // Calculate total stats
@@ -153,13 +161,23 @@ export default function History() {
       return;
     }
 
+    if (!user?.uid) {
+      setSyncMessage("User not authenticated");
+      return;
+    }
+
     setIsDeleting(true);
     setDeletedWorkout(workout);
     setWorkouts((prev) => prev.filter((w) => w.id !== workout.id));
 
     try {
-      await deleteWorkoutById(workout.id, user!.uid);
+      await deleteWorkoutById(workout.id, user.uid);
       log.info(`Soft deleted workout ${workout.id}`);
+    } catch (error) {
+      console.error("Delete failed:", error);
+      // Restore the workout on error
+      setWorkouts((prev) => [...prev, workout]);
+      setSyncMessage("Failed to delete workout");
     } finally {
       setIsDeleting(false);
     }
@@ -204,7 +222,7 @@ export default function History() {
       <ScrollView
         contentContainerStyle={{
           padding: spacing.md,
-          paddingBottom: spacing.xxl,
+          paddingBottom: insets.bottom + spacing.xxl,
         }}
         refreshControl={
           <RefreshControl
@@ -503,17 +521,30 @@ export default function History() {
 
             {/* Swipeable workout list for selected date - for delete functionality */}
             {selectedDateWorkouts.length > 0 && (
-              <View style={{ marginTop: spacing.md }}>
-                <Text
-                  style={{
-                    ...typography.label,
-                    color: colors.textSecondary,
-                    marginBottom: spacing.sm,
-                    marginLeft: spacing.xs,
-                  }}
-                >
-                  SWIPE TO DELETE
-                </Text>
+              <View style={{ marginTop: spacing.lg }}>
+                <View style={{ marginBottom: spacing.md }}>
+                  <Text
+                    style={{
+                      ...typography.label,
+                      color: colors.textPrimary,
+                      marginBottom: spacing.sm,
+                      marginLeft: spacing.xs,
+                      fontSize: 14,
+                      fontWeight: "700",
+                    }}
+                  >
+                    WORKOUTS
+                  </Text>
+                  <Text
+                    style={{
+                      ...typography.caption,
+                      color: colors.textSecondary,
+                      marginLeft: spacing.xs,
+                    }}
+                  >
+                    Swipe left to delete or tap to edit
+                  </Text>
+                </View>
                 {selectedDateWorkouts.map((workout, index) => (
                   <SwipeRow
                     key={workout.id}
@@ -729,9 +760,10 @@ function SwipeRow({
   return (
     <View
       style={{
-        marginBottom: spacing.sm,
+        marginBottom: spacing.md,
         borderRadius: radius.xl,
         overflow: "hidden",
+        ...shadows.sm,
       }}
     >
       {/* DELETE ACTION */}
@@ -762,7 +794,7 @@ function SwipeRow({
               borderRadius: radius.xl,
               borderWidth: 1,
               borderColor: colors.cardBorder,
-              ...shadows.sm,
+              ...shadows.md,
             },
           ]}
         >

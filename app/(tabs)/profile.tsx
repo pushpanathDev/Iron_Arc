@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import NetInfo from "@react-native-community/netinfo";
 import Constants from "expo-constants";
-import { router } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,10 +20,13 @@ import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { useAuth } from "../../auth/AuthContext";
 import { isAdminUser } from "../../firebase/admin";
 import { SyncBadge, SyncState } from "../../components/SyncBadge";
+import { ProfileCompletionPrompt } from "../../components/ProfileCompletionPrompt";
+import { EmailVerificationPrompt } from "../../components/EmailVerificationPrompt";
 import { useGlobalSync } from "../../context/SyncContext";
 import {
   getUserProfile,
   updateUserProfile,
+  syncProfileToFirebase,
   UserProfile,
 } from "../../db/profiles";
 import {
@@ -31,10 +34,21 @@ import {
   getWorkoutSyncStatus,
   syncAllData,
 } from "../../db/syncQueue";
+import { getAllWeights } from "../../db/weights";
+import {
+  clearEmailVerificationStart,
+  getEmailVerificationStart,
+  setEmailVerificationStart,
+} from "../../db/syncMeta";
 import { useTheme } from "../../theme/theme";
 import { formatAccountDate, getAvatarUrl } from "../../utils/avatar";
 import { exportToCSV, exportToPDF } from "../../utils/exportData";
 import { createPageLogger } from "../../utils/logger";
+import { verificationMessages } from "../../constants/verificationMessages";
+import {
+  cancelTestNotification,
+  scheduleTestNotificationEvery10Minutes,
+} from "../../notifications/notificationService";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const log = createPageLogger("Profile");
@@ -60,6 +74,14 @@ export default function ProfileScreen() {
   const [isExporting, setIsExporting] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminChecked, setAdminChecked] = useState(false);
+  const [showProfileCompletion, setShowProfileCompletion] = useState(false);
+  const [latestWeight, setLatestWeight] = useState<number | null>(null);
+  const [profilePromptMode, setProfilePromptMode] = useState<"missing" | "age">("missing");
+  const [verificationDaysLeft, setVerificationDaysLeft] = useState<number | null>(null);
+  const [showVerificationPrompt, setShowVerificationPrompt] = useState(false);
+  const [dismissVerificationBanner, setDismissVerificationBanner] = useState(false);
+
+  const verificationGraceDays = 7;
 
   // Guard flag to prevent operations when component is unmounting
   const isMounted = useRef(true);
@@ -73,45 +95,87 @@ export default function ProfileScreen() {
   /* =========================
      LOAD PROFILE
      ========================= */
-  useEffect(() => {
-    const loadProfile = async () => {
-      if (!user) {
-        setIsLoading(false);
-        return;
-      }
+  const loadProfile = useCallback(async () => {
+    if (!user) {
+      setIsLoading(false);
+      return;
+    }
 
-      try {
-        const data = await getUserProfile(user.uid);
-        if (!isMounted.current) return;
+    try {
+      const [data, weights, weightStatus, workoutStatus] = await Promise.all([
+        getUserProfile(user.uid),
+        getAllWeights(user.uid),
+        getSyncStatus(user.uid),
+        getWorkoutSyncStatus(user.uid),
+      ]);
 
-        setProfile(data);
-        setDisplayName(data?.displayName || "");
-        setHeight(data?.height ? String(data.height) : "");
-        setWeeklyGoal(data?.weeklyGoal ? String(data.weeklyGoal) : "1");
+      if (!isMounted.current) return;
 
-        // Get pending sync count and update sync state
-        const [weightStatus, workoutStatus] = await Promise.all([
-          getSyncStatus(user.uid),
-          getWorkoutSyncStatus(user.uid),
-        ]);
+      setProfile(data);
+      setDisplayName(data?.displayName || "");
+      setHeight(data?.height ? String(data.height) : "");
+      setWeeklyGoal(data?.weeklyGoal ? String(data.weeklyGoal) : "1");
 
-        if (!isMounted.current) return;
+      const newestWeight = weights.length > 0 ? weights[0].weight : null;
+      setLatestWeight(newestWeight);
 
-        const total = weightStatus.pendingCount + workoutStatus.pendingCount;
-        setPendingSync(total);
-        setSyncState(total > 0 ? "pending" : "synced");
+      const total = weightStatus.pendingCount + workoutStatus.pendingCount;
+      setPendingSync(total);
+      setSyncState(total > 0 ? "pending" : "synced");
 
-        log.info(`Loaded profile for ${user.uid}`);
-      } catch (error) {
-        log.error(`Failed to load profile: ${error}`);
-        if (isMounted.current) setSyncState("failed");
-      } finally {
-        if (isMounted.current) setIsLoading(false);
-      }
-    };
-
-    loadProfile();
+      log.info(`Loaded profile for ${user.uid}`);
+    } catch (error) {
+      log.error(`Failed to load profile: ${error}`);
+      if (isMounted.current) setSyncState("failed");
+    } finally {
+      if (isMounted.current) setIsLoading(false);
+    }
   }, [user]);
+
+  const loadVerificationStatus = useCallback(async () => {
+    if (!user) return;
+    try {
+      await user.reload();
+    } catch (reloadError) {
+      // Non-blocking: keep last known status
+    }
+
+    if (user.emailVerified) {
+      setVerificationDaysLeft(null);
+      setDismissVerificationBanner(false);
+      await clearEmailVerificationStart(user.uid);
+      return;
+    }
+
+    let start = await getEmailVerificationStart(user.uid);
+    if (!start) {
+      start = Date.now();
+      await setEmailVerificationStart(user.uid, start);
+    }
+
+    const elapsedDays = Math.floor((Date.now() - start) / (24 * 60 * 60 * 1000));
+    const daysLeft = Math.max(0, verificationGraceDays - elapsedDays);
+    setVerificationDaysLeft(daysLeft);
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || user.emailVerified) return;
+    if (verificationDaysLeft === 0 && !showVerificationPrompt) {
+      setShowVerificationPrompt(true);
+    }
+  }, [user, verificationDaysLeft, showVerificationPrompt]);
+
+  useEffect(() => {
+    loadProfile();
+    loadVerificationStatus();
+  }, [loadProfile, loadVerificationStatus]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadProfile();
+      loadVerificationStatus();
+    }, [loadProfile, loadVerificationStatus]),
+  );
 
   useEffect(() => {
     let active = true;
@@ -135,6 +199,23 @@ export default function ProfileScreen() {
     };
   }, [user?.email]);
 
+  // Check if profile completion data is needed
+  useEffect(() => {
+    if (profile && !isLoading) {
+      // Only show completion prompt if BOTH weight AND age are missing
+      // If user has filled either one, show them in the profile instead
+      const needsCompletion = !profile.weight && !latestWeight && !profile.age;
+      setShowProfileCompletion(needsCompletion);
+      
+      // Debug log
+      if (needsCompletion) {
+        log.info("Profile completion needed: missing both weight and age");
+      } else {
+        log.info(`Profile complete - weight: ${profile.weight}, age: ${profile.age}`);
+      }
+    }
+  }, [profile, latestWeight, isLoading]);
+
   /* =========================
      PULL-TO-REFRESH
      ========================= */
@@ -144,18 +225,24 @@ export default function ProfileScreen() {
     setRefreshing(true);
     try {
       log.info("Pull-to-refresh triggered");
-      const data = await getUserProfile(user.uid);
+      const [data, weights, weightStatus, workoutStatus] = await Promise.all([
+        getUserProfile(user.uid),
+        getAllWeights(user.uid),
+        getSyncStatus(user.uid),
+        getWorkoutSyncStatus(user.uid),
+      ]);
+
       setProfile(data);
       setDisplayName(data?.displayName || "");
       setHeight(data?.height ? String(data.height) : "");
       setWeeklyGoal(data?.weeklyGoal ? String(data.weeklyGoal) : "1");
 
-      // Update pending sync count
-      const [weightStatus, workoutStatus] = await Promise.all([
-        getSyncStatus(user.uid),
-        getWorkoutSyncStatus(user.uid),
-      ]);
+      const newestWeight = weights.length > 0 ? weights[0].weight : null;
+      setLatestWeight(newestWeight);
+
       setPendingSync(weightStatus.pendingCount + workoutStatus.pendingCount);
+
+      await loadVerificationStatus();
 
       log.success("Profile refreshed");
     } catch (error) {
@@ -265,17 +352,68 @@ export default function ProfileScreen() {
         updates.weeklyGoal = Math.max(1, Math.min(10, goalNum));
       }
 
+      // Save to SQLite
       await updateUserProfile(user.uid, updates);
       setProfile({ ...profile, ...updates });
       setHasChanges(false);
 
-      log.success("Profile saved successfully");
+      // ✅ IMMEDIATELY SYNC TO FIREBASE
+      console.log("📤 Syncing profile to Firebase immediately...");
+      await syncProfileToFirebase({
+        userId: user.uid,
+        ...updates,
+      });
+      console.log("✅ Profile synced to Firebase");
+
+      log.success("Profile saved and synced to Firebase");
       Alert.alert("Success", "Profile updated");
     } catch (error) {
       log.error(`Failed to save profile: ${error}`);
       Alert.alert("Error", "Failed to save profile");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  /* =========================
+     PROFILE COMPLETION
+     ========================= */
+  const handleProfileCompletion = async (
+    weight: number | null,
+    age: number | null
+  ) => {
+    if (!user || !profile) return;
+
+    try {
+      const updates: any = {};
+
+      if (weight !== null && weight !== profile.weight) {
+        updates.weight = weight;
+      }
+
+      if (age !== null && age !== profile.age) {
+        updates.age = age;
+      }
+
+      if (Object.keys(updates).length > 0) {
+        // Save to SQLite
+        await updateUserProfile(user.uid, updates);
+        setProfile({ ...profile, ...updates });
+
+        // ✅ IMMEDIATELY SYNC TO FIREBASE
+        console.log("📤 Syncing profile completion to Firebase immediately...");
+        await syncProfileToFirebase({
+          userId: user.uid,
+          ...updates,
+        });
+        console.log("✅ Profile completion synced to Firebase");
+      }
+
+      setShowProfileCompletion(false);
+      log.success("Profile completion data saved and synced to Firebase");
+    } catch (error) {
+      log.error(`Failed to save profile completion: ${error}`);
+      throw error;
     }
   };
 
@@ -455,7 +593,7 @@ export default function ProfileScreen() {
         keyboardDismissMode="on-drag"
         contentContainerStyle={{
           padding: spacing.md,
-          paddingBottom: spacing.xxl,
+          paddingBottom: insets.bottom + spacing.xxl,
         }}
         refreshControl={
           <RefreshControl
@@ -508,6 +646,69 @@ export default function ProfileScreen() {
           Manage your account
         </Text>
       </Animated.View>
+
+      {/* Email Verification Banner */}
+      {user &&
+        !user.emailVerified &&
+        verificationDaysLeft !== null &&
+        !dismissVerificationBanner && (
+        <Animated.View
+          entering={FadeInDown.delay(120).duration(400)}
+          style={{ marginBottom: spacing.lg }}
+        >
+          <View
+            style={{
+              backgroundColor:
+                verificationDaysLeft > 0 ? colors.warning + "15" : colors.error + "15",
+              borderRadius: radius.lg,
+              padding: spacing.md,
+              borderLeftWidth: 4,
+              borderLeftColor:
+                verificationDaysLeft > 0 ? colors.warning : colors.error,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+              }}
+            >
+              <View style={{ flex: 1, paddingRight: spacing.sm }}>
+                <Text
+                  style={{
+                    ...typography.caption,
+                    color: verificationDaysLeft > 0 ? colors.warning : colors.error,
+                    marginBottom: spacing.xs,
+                    fontWeight: "600",
+                  }}
+                >
+                  {verificationDaysLeft > 0
+                    ? verificationMessages.bannerTitleSoft(verificationDaysLeft)
+                    : verificationMessages.bannerTitleHard}
+                </Text>
+                <Text style={{ ...typography.body, color: colors.textPrimary }}>
+                  {verificationMessages.bannerBody}
+                </Text>
+                <Pressable
+                  onPress={() => setShowVerificationPrompt(true)}
+                  style={{ marginTop: spacing.sm, alignSelf: "flex-start" }}
+                >
+                  <Text style={{ color: colors.accent, fontWeight: "600" }}>
+                    {verificationMessages.bannerAction}
+                  </Text>
+                </Pressable>
+              </View>
+              <Pressable
+                onPress={() => setDismissVerificationBanner(true)}
+                style={{ paddingLeft: spacing.sm }}
+              >
+                <Ionicons name="close" size={18} color={colors.textMuted} />
+              </Pressable>
+            </View>
+          </View>
+        </Animated.View>
+      )}
 
       {/* AVATAR & NAME HERO */}
       <Animated.View
@@ -579,6 +780,47 @@ export default function ProfileScreen() {
           <Text style={{ ...typography.caption, color: colors.textSecondary }}>
             {profile?.email || user?.email || "No email"}
           </Text>
+          {user?.emailVerified ? (
+            <View
+              style={{
+                marginLeft: spacing.xs,
+                backgroundColor: colors.success + "20",
+                borderRadius: radius.full,
+                paddingHorizontal: spacing.xs,
+                paddingVertical: 2,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: spacing.xxs,
+              }}
+            >
+              <Ionicons
+                name="checkmark-circle"
+                size={12}
+                color={colors.success}
+              />
+              <Text style={{ ...typography.label, color: colors.success }}>
+                {verificationMessages.badgeVerified}
+              </Text>
+            </View>
+          ) : (
+            <View
+              style={{
+                marginLeft: spacing.xs,
+                backgroundColor: colors.warning + "20",
+                borderRadius: radius.full,
+                paddingHorizontal: spacing.xs,
+                paddingVertical: 2,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: spacing.xxs,
+              }}
+            >
+              <Ionicons name="alert-circle" size={12} color={colors.warning} />
+              <Text style={{ ...typography.label, color: colors.warning }}>
+                {verificationMessages.badgeUnverified}
+              </Text>
+            </View>
+          )}
           {profile?.authProvider === "google" && (
             <View
               style={{
@@ -607,6 +849,48 @@ export default function ProfileScreen() {
           Member since {formatAccountDate(profile?.createdAt)}
         </Text>
       </Animated.View>
+
+      {/* Legacy Profile Completion (missing age/weight) */}
+      {(!profile?.age || (!profile?.weight && !latestWeight)) && (
+        <Animated.View
+          entering={FadeInUp.delay(170).duration(400)}
+          style={{ marginBottom: spacing.lg }}
+        >
+          <View
+            style={{
+              backgroundColor: colors.surface,
+              borderRadius: radius.lg,
+              padding: spacing.md,
+              borderWidth: 1,
+              borderColor: colors.cardBorder,
+            }}
+          >
+            <Text
+              style={{
+                ...typography.bodyMedium,
+                color: colors.textPrimary,
+                marginBottom: spacing.xs,
+              }}
+            >
+              Complete your profile
+            </Text>
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              Add your age and weight so your insights are accurate.
+            </Text>
+            <Pressable
+              onPress={() => {
+                setProfilePromptMode("missing");
+                setShowProfileCompletion(true);
+              }}
+              style={{ marginTop: spacing.sm, alignSelf: "flex-start" }}
+            >
+              <Text style={{ color: colors.accent, fontWeight: "600" }}>
+                Add missing details
+              </Text>
+            </Pressable>
+          </View>
+        </Animated.View>
+      )}
 
       {/* PROFILE FIELDS */}
       <Animated.View
@@ -640,10 +924,10 @@ export default function ProfileScreen() {
               marginBottom: spacing.xs,
             }}
           >
-            Display Name
+            Display Name (Optional)
           </Text>
           <TextInput
-            placeholder="Enter your name"
+            placeholder="Your name (set during onboarding)"
             placeholderTextColor={colors.textMuted}
             value={displayName}
             onChangeText={setDisplayName}
@@ -666,10 +950,10 @@ export default function ProfileScreen() {
               marginBottom: spacing.xs,
             }}
           >
-            Height (cm) - Optional
+            Height (cm)
           </Text>
           <TextInput
-            placeholder="Enter height"
+            placeholder="Your height"
             placeholderTextColor={colors.textMuted}
             value={height}
             onChangeText={setHeight}
@@ -684,13 +968,94 @@ export default function ProfileScreen() {
           />
         </View>
 
-        {/* Daily Goal */}
-        <View>
+        {/* Weight */}
+        <View style={{ marginBottom: spacing.lg }}>
           <Text
             style={{
               ...typography.caption,
               color: colors.textSecondary,
               marginBottom: spacing.xs,
+            }}
+          >
+            Weight (kg)
+          </Text>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: colors.surfaceElevated,
+              borderRadius: radius.md,
+              paddingHorizontal: spacing.md,
+            }}
+          >
+            <Text style={{ ...typography.body, color: colors.textPrimary }}>
+              {latestWeight ? `${latestWeight} kg` : profile?.weight ? `${profile.weight} kg` : "Not set"}
+            </Text>
+            <Pressable
+              onPress={() => router.push("/body-weight")}
+              style={{ marginLeft: "auto", paddingVertical: spacing.md }}
+            >
+              <Text style={{ color: colors.accent, fontWeight: "600" }}>
+                Log
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Age */}
+        <View style={{ marginBottom: spacing.lg }}>
+          <Text
+            style={{
+              ...typography.caption,
+              color: colors.textSecondary,
+              marginBottom: spacing.xs,
+            }}
+          >
+            Age
+          </Text>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: colors.surfaceElevated,
+              borderRadius: radius.md,
+              paddingHorizontal: spacing.md,
+            }}
+          >
+            <Text style={{ ...typography.body, color: colors.textPrimary }}>
+              {profile?.age ? `${profile.age} years` : "Not set"}
+            </Text>
+            <Pressable
+              onPress={() => {
+                setProfilePromptMode("age");
+                setShowProfileCompletion(true);
+              }}
+              style={{ marginLeft: "auto", paddingVertical: spacing.md }}
+            >
+              <Text style={{ color: colors.accent, fontWeight: "600" }}>
+                Edit
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Daily Goal */}
+        <View
+          style={{
+            paddingHorizontal: spacing.xs,
+            paddingVertical: spacing.md,
+            backgroundColor: colors.surfaceElevated,
+            borderRadius: radius.lg,
+          }}
+        >
+          <Text
+            style={{
+              ...typography.caption,
+              color: colors.textSecondary,
+              marginBottom: spacing.md,
+              fontWeight: "600",
+              textTransform: "uppercase",
+              letterSpacing: 0.5,
             }}
           >
             Daily Workout Goal
@@ -700,7 +1065,8 @@ export default function ProfileScreen() {
               flexDirection: "row",
               alignItems: "center",
               flexWrap: "wrap",
-              gap: spacing.xs,
+              gap: spacing.md,
+              marginBottom: spacing.lg,
             }}
           >
             {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
@@ -708,23 +1074,25 @@ export default function ProfileScreen() {
                 key={num}
                 onPress={() => setWeeklyGoal(String(num))}
                 style={{
-                  width: 30,
-                  height: 30,
+                  width: 40,
+                  height: 40,
                   borderRadius: radius.md,
                   backgroundColor:
                     weeklyGoal === String(num)
                       ? colors.accent
-                      : colors.surfaceElevated,
+                      : colors.surface,
                   alignItems: "center",
                   justifyContent: "center",
+                  borderWidth: weeklyGoal === String(num) ? 0 : 1,
+                  borderColor: colors.cardBorder,
                 }}
               >
                 <Text
                   style={{
                     color:
                       weeklyGoal === String(num) ? "#fff" : colors.textPrimary,
-                    fontWeight: weeklyGoal === String(num) ? "600" : "400",
-                    fontSize: num === 10 ? 10 : 12,
+                    fontWeight: weeklyGoal === String(num) ? "600" : "500",
+                    fontSize: 14,
                   }}
                 >
                   {num}
@@ -736,7 +1104,8 @@ export default function ProfileScreen() {
             style={{
               ...typography.caption,
               color: colors.textMuted,
-              marginTop: spacing.xs,
+              fontSize: 12,
+              fontStyle: "italic",
             }}
           >
             How many workouts do you aim to complete each day?
@@ -771,7 +1140,7 @@ export default function ProfileScreen() {
         </Animated.View>
       )}
 
-      {/* ACCOUNT INFO */}
+      {/* ACCOUNT INFO - Hidden for cleaner profile
       <Animated.View
         entering={FadeInUp.delay(300).duration(400)}
         style={{
@@ -838,6 +1207,7 @@ export default function ProfileScreen() {
           typography={typography}
         />
       </Animated.View>
+      */}
 
       {/* SETTINGS SECTION - Always visible at bottom */}
       <Animated.View
@@ -954,6 +1324,92 @@ export default function ProfileScreen() {
           </Text>
         )}
       </Animated.View>
+
+      {__DEV__ && (
+        <Animated.View
+          entering={FadeInUp.delay(425).duration(400)}
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: radius.xl,
+            padding: spacing.lg,
+            marginBottom: spacing.md,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            ...shadows.sm,
+          }}
+        >
+          <Text
+            style={{
+              ...typography.label,
+              color: colors.textMuted,
+              marginBottom: spacing.lg,
+            }}
+          >
+            DEV: NOTIFICATIONS
+          </Text>
+
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <Pressable
+              onPress={async () => {
+                await scheduleTestNotificationEvery10Minutes();
+                Alert.alert(
+                  "Test Scheduled",
+                  "A test notification will fire every 10 minutes. Close the app and wait.",
+                );
+              }}
+              style={{
+                flex: 1,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: colors.surfaceElevated,
+                padding: spacing.md,
+                borderRadius: radius.lg,
+                borderWidth: 1,
+                borderColor: colors.cardBorder,
+              }}
+            >
+              <Ionicons
+                name="time-outline"
+                size={18}
+                color={colors.textPrimary}
+                style={{ marginRight: spacing.xs }}
+              />
+              <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
+                Start 10-Min Test
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={async () => {
+                await cancelTestNotification();
+                Alert.alert("Test Cancelled", "Test notifications stopped.");
+              }}
+              style={{
+                flex: 1,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: colors.surfaceElevated,
+                padding: spacing.md,
+                borderRadius: radius.lg,
+                borderWidth: 1,
+                borderColor: colors.cardBorder,
+              }}
+            >
+              <Ionicons
+                name="close-circle-outline"
+                size={18}
+                color={colors.textPrimary}
+                style={{ marginRight: spacing.xs }}
+              />
+              <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
+                Stop Test
+              </Text>
+            </Pressable>
+          </View>
+        </Animated.View>
+      )}
 
       {/* EXPORT DATA SECTION */}
       <Animated.View
@@ -1234,13 +1690,38 @@ export default function ProfileScreen() {
             marginBottom: spacing.xs,
           }}
         >
-          Version {Constants.expoConfig?.version || "1.0.0"}
+          Version {Constants.expoConfig?.version || "1.1.1"}
         </Text>
         <Text style={{ ...typography.caption, color: colors.textMuted }}>
           Designed & Built by Pushpanath
         </Text>
       </Animated.View>
       </ScrollView>
+
+      {/* Profile Completion Prompt */}
+      <ProfileCompletionPrompt
+        visible={showProfileCompletion}
+        onDismiss={() => setShowProfileCompletion(false)}
+        onSave={handleProfileCompletion}
+        currentWeight={profile?.weight}
+        currentAge={profile?.age}
+        isLoading={isSaving}
+        allowWeightEdit={profilePromptMode === "missing"}
+      />
+
+      <EmailVerificationPrompt
+        visible={showVerificationPrompt}
+        user={user}
+        dismissible={verificationDaysLeft !== 0}
+        onSkip={() => setShowVerificationPrompt(false)}
+        onVerified={async () => {
+          setShowVerificationPrompt(false);
+          if (user) {
+            await clearEmailVerificationStart(user.uid);
+          }
+          await loadVerificationStatus();
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }

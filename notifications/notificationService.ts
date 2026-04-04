@@ -1,8 +1,41 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
-import { Platform } from "react-native";
+import { Alert, Linking, Platform } from "react-native";
 import { Achievement } from "../insights/achievements";
 import { Insight } from "../insights/insightEngine";
+
+// Notifee is optional - only available in development builds, not Expo Go
+let initBackgroundNotifications: (() => Promise<void>) | null = null;
+let scheduleBackgroundNotifications: ((prefs: any) => Promise<void>) | null = null;
+let scheduleStreakWarning: ((streak: number, time: string) => Promise<void>) | null = null;
+let scheduleDailyWakeUp: ((time: string) => Promise<void>) | null = null;
+let notifyAchievementUnlocked: ((achievement: Achievement) => Promise<void>) | null = null;
+let getBackgroundNotificationPreferences: (() => Promise<any>) | null = null;
+let cancelNotifeeStreakWarning: (() => Promise<void>) | null = null;
+let cancelNotifeeScheduled: (() => Promise<void>) | null = null;
+
+let notifeeAvailable = false;
+
+// Try to load Notifee - will fail gracefully in Expo Go
+try {
+  const backgroundNotifs = require("./backgroundNotificationService");
+  initBackgroundNotifications = backgroundNotifs.initBackgroundNotifications;
+  scheduleBackgroundNotifications = backgroundNotifs.scheduleBackgroundNotifications;
+  scheduleStreakWarning = backgroundNotifs.scheduleStreakWarning;
+  scheduleDailyWakeUp = backgroundNotifs.scheduleDailyWakeUp;
+  notifyAchievementUnlocked = backgroundNotifs.notifyAchievementUnlocked;
+  getBackgroundNotificationPreferences = backgroundNotifs.getBackgroundNotificationPreferences;
+  cancelNotifeeStreakWarning = backgroundNotifs.cancelStreakWarning;
+  cancelNotifeeScheduled = backgroundNotifs.cancelAllScheduledNotifications;
+  notifeeAvailable = true;
+  console.log("✅ Notifee available (native module loaded)");
+} catch (error) {
+  console.warn(
+    "⚠️ Notifee not available (requires development build).",
+    "Background notifications disabled. Run 'eas build --platform android --profile preview' to enable.",
+    error instanceof Error ? error.message : String(error)
+  );
+}
 
 /* =========================
    CONFIGURATION
@@ -11,6 +44,7 @@ import { Insight } from "../insights/insightEngine";
 // Configure notification behavior
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
+    shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
     shouldShowBanner: true,
@@ -54,22 +88,88 @@ const DEFAULT_PREFERENCES: NotificationPreferences = {
 };
 
 const PREFS_KEY = "@notification_preferences";
+const BATTERY_GUIDE_KEY = "@battery_optimization_prompted";
 const DAILY_REMINDER_ID = "daily-workout-reminder";
 const WEEKLY_SUMMARY_ID = "weekly-summary";
 const MORNING_MOTIVATION_ID = "morning-motivation";
 const EVENING_CHECKIN_ID = "evening-checkin";
 const WEEKLY_MOTIVATION_ID = "weekly-motivation";
+const TEST_NOTIFICATION_ID = "test-notification-10min";
+
+const ANDROID_REMINDER_CHANNEL_ID = "workout-reminders";
+const ANDROID_STREAK_CHANNEL_ID = "streak-warnings";
+const ANDROID_ACHIEVEMENT_CHANNEL_ID = "achievements";
+const ANDROID_INSIGHTS_CHANNEL_ID = "insights";
+
+/* =========================
+   INITIALIZATION
+   ========================= */
+
+export async function initNotifications(): Promise<void> {
+  try {
+    // Initialize Notifee if available (development builds only)
+    if (notifeeAvailable && initBackgroundNotifications) {
+      try {
+        await initBackgroundNotifications();
+        console.log("✅ Notifee initialized (background notifications enabled)");
+      } catch (error) {
+        console.warn("⚠️ Notifee initialization failed:", error);
+        // Continue anyway - expo-notifications will handle foreground
+      }
+    } else {
+      console.log("ℹ️ Notifee unavailable (Expo Go detected) - background notifications disabled");
+    }
+    
+    // Request permissions for expo-notifications
+    const hasPermission = await requestNotificationPermissions();
+    if (!hasPermission) return;
+
+    // Reschedule on every launch to restore alarms after device reboot
+    await scheduleRecurringNotifications();
+
+    // Android OEMs often block exact alarms without user action
+    await promptBatteryOptimizationDisableOnce();
+
+    console.log("✅ Notification services initialized");
+  } catch (error) {
+    console.error("Error initializing notifications:", error);
+  }
+}
 
 /* =========================
    PERMISSIONS
    ========================= */
 
 export async function requestNotificationPermissions(): Promise<boolean> {
+  // Notifications are unreliable on emulators/simulators
+  let isPhysicalDevice = true;
+  try {
+    const device = require("expo-device");
+    isPhysicalDevice = device?.isDevice ?? true;
+  } catch (error) {
+    isPhysicalDevice = true;
+  }
+
+  if (!isPhysicalDevice) {
+    console.warn("Notifications only work on a physical device");
+    return false;
+  }
+
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
   let finalStatus = existingStatus;
 
   if (existingStatus !== "granted") {
-    const { status } = await Notifications.requestPermissionsAsync();
+    const { status } = await Notifications.requestPermissionsAsync(
+      Platform.OS === "ios"
+        ? {
+            ios: {
+              allowAlert: true,
+              allowBadge: true,
+              allowSound: true,
+            },
+          }
+        : undefined,
+    );
     finalStatus = status;
   }
 
@@ -80,28 +180,66 @@ export async function requestNotificationPermissions(): Promise<boolean> {
 
   // Android: Create notification channel
   if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("workout-reminders", {
-      name: "Workout Reminders",
-      importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: "#10B981",
-    });
-
-    await Notifications.setNotificationChannelAsync("achievements", {
-      name: "Achievements",
-      importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 500],
-      lightColor: "#FFD700",
-    });
-
-    await Notifications.setNotificationChannelAsync("insights", {
-      name: "Insights & Tips",
-      importance: Notifications.AndroidImportance.DEFAULT,
-    });
+    await setupAndroidNotificationChannels();
   }
 
   console.log("✅ Notification permissions granted");
   return true;
+}
+
+async function setupAndroidNotificationChannels(): Promise<void> {
+  await Notifications.setNotificationChannelAsync(ANDROID_REMINDER_CHANNEL_ID, {
+    name: "Workout Reminders",
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: "#10B981",
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    sound: "default",
+  });
+
+  await Notifications.setNotificationChannelAsync(ANDROID_STREAK_CHANNEL_ID, {
+    name: "Streak Warnings",
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 500],
+    lightColor: "#F97316",
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    sound: "default",
+  });
+
+  await Notifications.setNotificationChannelAsync(ANDROID_ACHIEVEMENT_CHANNEL_ID, {
+    name: "Achievements",
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 500],
+    lightColor: "#FFD700",
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    sound: "default",
+  });
+
+  await Notifications.setNotificationChannelAsync(ANDROID_INSIGHTS_CHANNEL_ID, {
+    name: "Insights & Tips",
+    importance: Notifications.AndroidImportance.DEFAULT,
+  });
+}
+
+export async function promptBatteryOptimizationDisableOnce(): Promise<void> {
+  if (Platform.OS !== "android") return;
+
+  const { status } = await Notifications.getPermissionsAsync();
+  if (status !== "granted") return;
+
+  const hasPrompted = await AsyncStorage.getItem(BATTERY_GUIDE_KEY);
+  if (hasPrompted === "1") return;
+
+  await AsyncStorage.setItem(BATTERY_GUIDE_KEY, "1");
+
+  Alert.alert(
+    "Enable Reliable Notifications",
+    "To receive wake-up and workout reminders on time, please disable battery optimization for this app in device settings.",
+    [
+      { text: "Not Now", style: "cancel" },
+      { text: "Open Settings", onPress: () => Linking.openSettings() },
+    ],
+  );
 }
 
 /* =========================
@@ -145,6 +283,17 @@ export async function sendAchievementNotification(
   const prefs = await getNotificationPreferences();
   if (!prefs.enabled || !prefs.achievements) return;
 
+  // Use Notifee for background-safe notification (if available)
+  if (notifeeAvailable && notifyAchievementUnlocked) {
+    try {
+      await notifyAchievementUnlocked(achievement);
+    } catch (error) {
+      console.warn("⚠️ Notifee achievement notification failed:", error);
+      // Fall through to expo-notifications below
+    }
+  }
+
+  // Also send via expo-notifications for immediate feedback if app is open
   const tierEmoji: Record<string, string> = {
     bronze: "🥉",
     silver: "🥈",
@@ -160,7 +309,10 @@ export async function sendAchievementNotification(
       data: { type: "achievement", achievementId: achievement.id },
       sound: true,
     },
-    trigger: null, // Send immediately
+    trigger:
+      Platform.OS === "android"
+        ? { channelId: ANDROID_ACHIEVEMENT_CHANNEL_ID }
+        : null, // Send immediately
   });
 
   console.log(`🏆 Achievement notification sent: ${achievement.title}`);
@@ -177,7 +329,10 @@ export async function sendInsightNotification(insight: Insight): Promise<void> {
       data: { type: "insight", insightId: insight.id },
       sound: insight.priority === "high",
     },
-    trigger: null,
+    trigger:
+      Platform.OS === "android"
+        ? { channelId: ANDROID_INSIGHTS_CHANNEL_ID }
+        : null,
   });
 
   console.log(`💡 Insight notification sent: ${insight.title}`);
@@ -196,7 +351,10 @@ export async function sendStreakReminderNotification(
       data: { type: "streak_reminder", streak: currentStreak },
       sound: true,
     },
-    trigger: null,
+    trigger:
+      Platform.OS === "android"
+        ? { channelId: ANDROID_STREAK_CHANNEL_ID }
+        : null,
   });
 
   console.log(`🔥 Streak reminder sent: ${currentStreak} day streak`);
@@ -238,7 +396,10 @@ export async function sendMotivationalNotification(): Promise<void> {
       data: { type: "motivation" },
       sound: false,
     },
-    trigger: null,
+    trigger:
+      Platform.OS === "android"
+        ? { channelId: ANDROID_REMINDER_CHANNEL_ID }
+        : null,
   });
 }
 
@@ -256,12 +417,35 @@ export async function scheduleRecurringNotifications(
 
   if (!preferences.enabled) return;
 
-  // Daily reminder
+  // Update Notifee background notifications (if available)
+  if (notifeeAvailable && scheduleBackgroundNotifications && getBackgroundNotificationPreferences) {
+    try {
+      const bgPrefs = await getBackgroundNotificationPreferences();
+      bgPrefs.dailyReminder = preferences.dailyReminder;
+      bgPrefs.dailyReminderTime = preferences.dailyReminderTime;
+      await scheduleBackgroundNotifications(bgPrefs);
+    } catch (error) {
+      console.warn("⚠️ Notifee background scheduling failed:", error);
+      // Continue with expo-notifications
+    }
+  }
+
+  // Daily reminder (also schedule with Notifee for app closed if available)
   if (preferences.dailyReminder) {
     const [hours, minutes] = preferences.dailyReminderTime
       .split(":")
       .map(Number);
 
+    // Schedule with Notifee (works when app closed - development builds only)
+    if (notifeeAvailable && scheduleDailyWakeUp) {
+      try {
+        await scheduleDailyWakeUp(preferences.dailyReminderTime);
+      } catch (error) {
+        console.warn("⚠️ Notifee daily wake-up scheduling failed:", error);
+      }
+    }
+
+    // Also schedule with expo-notifications (for when app is open)
     await Notifications.scheduleNotificationAsync({
       identifier: DAILY_REMINDER_ID,
       content: {
@@ -274,6 +458,8 @@ export async function scheduleRecurringNotifications(
         type: Notifications.SchedulableTriggerInputTypes.DAILY,
         hour: hours,
         minute: minutes,
+        channelId:
+          Platform.OS === "android" ? ANDROID_REMINDER_CHANNEL_ID : undefined,
       },
     });
 
@@ -297,6 +483,8 @@ export async function scheduleRecurringNotifications(
         weekday: 1, // Sunday
         hour: 18,
         minute: 0,
+        channelId:
+          Platform.OS === "android" ? ANDROID_REMINDER_CHANNEL_ID : undefined,
       },
     });
 
@@ -318,6 +506,8 @@ export async function scheduleRecurringNotifications(
         type: Notifications.SchedulableTriggerInputTypes.DAILY,
         hour: 7,
         minute: 30,
+        channelId:
+          Platform.OS === "android" ? ANDROID_REMINDER_CHANNEL_ID : undefined,
       },
     });
 
@@ -334,6 +524,8 @@ export async function scheduleRecurringNotifications(
         type: Notifications.SchedulableTriggerInputTypes.DAILY,
         hour: 19,
         minute: 0,
+        channelId:
+          Platform.OS === "android" ? ANDROID_REMINDER_CHANNEL_ID : undefined,
       },
     });
 
@@ -351,6 +543,8 @@ export async function scheduleRecurringNotifications(
         weekday: 3, // Tuesday
         hour: 13,
         minute: 0,
+        channelId:
+          Platform.OS === "android" ? ANDROID_REMINDER_CHANNEL_ID : undefined,
       },
     });
 
@@ -367,6 +561,8 @@ export async function scheduleRecurringNotifications(
         weekday: 5, // Thursday
         hour: 13,
         minute: 0,
+        channelId:
+          Platform.OS === "android" ? ANDROID_REMINDER_CHANNEL_ID : undefined,
       },
     });
 
@@ -384,7 +580,17 @@ export async function scheduleStreakReminder(
   const prefs = await getNotificationPreferences();
   if (!prefs.enabled || !prefs.streakReminders || currentStreak < 3) return;
 
-  // Schedule for 8 PM if no workout logged today
+  // Use Notifee for background-safe reminder (if available)
+  // This works even when app is closed (development builds only)
+  if (notifeeAvailable && scheduleStreakWarning) {
+    try {
+      await scheduleStreakWarning(currentStreak, "20:00"); // 8 PM
+    } catch (error) {
+      console.warn("⚠️ Notifee streak warning scheduling failed:", error);
+    }
+  }
+
+  // Also add to expo-notifications for when app is open
   const now = new Date();
   const triggerDate = new Date(now);
   triggerDate.setHours(20, 0, 0, 0); // 8 PM
@@ -403,6 +609,8 @@ export async function scheduleStreakReminder(
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.DATE,
       date: triggerDate,
+      channelId:
+        Platform.OS === "android" ? ANDROID_STREAK_CHANNEL_ID : undefined,
     },
   });
 
@@ -412,10 +620,20 @@ export async function scheduleStreakReminder(
 }
 
 export async function cancelStreakReminder(): Promise<void> {
+  // Cancel from both systems
+  if (notifeeAvailable && cancelNotifeeStreakWarning) {
+    try {
+      await cancelNotifeeStreakWarning();
+    } catch (error) {
+      console.warn("⚠️ Notifee streak warning cancellation failed:", error);
+    }
+  }
+
   const today = new Date().toISOString().split("T")[0];
   await Notifications.cancelScheduledNotificationAsync(
     `streak-reminder-${today}`,
-  );
+  ).catch(() => null);
+
   console.log("✅ Streak reminder cancelled (workout logged)");
 }
 
@@ -424,9 +642,67 @@ export async function cancelStreakReminder(): Promise<void> {
    ========================= */
 
 export async function cancelAllScheduledNotifications(): Promise<void> {
+  // Cancel from expo-notifications
   await Notifications.cancelAllScheduledNotificationsAsync();
+
+  // Cancel from Notifee (if available)
+  if (notifeeAvailable && cancelNotifeeScheduled) {
+    try {
+      await cancelNotifeeScheduled();
+    } catch (error) {
+      console.warn("⚠️ Notifee cancellation failed:", error);
+    }
+  }
+
   console.log("🗑️ All scheduled notifications cancelled");
 }
+
+/* =========================
+   TEMPORARY TEST HELPERS
+   ========================= */
+
+// =========================================================
+// TEMPORARY TEST FUNCTION — DELETE BEFORE PRODUCTION
+// Fires a notification every 10 minutes to verify pipeline
+// =========================================================
+export async function scheduleTestNotificationEvery10Minutes(): Promise<void> {
+  await Notifications.cancelScheduledNotificationAsync(TEST_NOTIFICATION_ID).catch(
+    () => null,
+  );
+
+  await Notifications.scheduleNotificationAsync({
+    identifier: TEST_NOTIFICATION_ID,
+    content: {
+      title: "🧪 Test Notification",
+      body: "If you see this, background notifications are working!",
+      data: { type: "test" },
+      sound: true,
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: 600,
+      repeats: true,
+      channelId:
+        Platform.OS === "android" ? ANDROID_REMINDER_CHANNEL_ID : undefined,
+    },
+  });
+
+  console.log(
+    "[TEST] 10-minute notification scheduled. Check at:",
+    new Date(Date.now() + 600000).toISOString(),
+  );
+}
+
+// To stop the test
+export async function cancelTestNotification(): Promise<void> {
+  await Notifications.cancelScheduledNotificationAsync(TEST_NOTIFICATION_ID).catch(
+    () => null,
+  );
+  console.log("[TEST] Test notification cancelled.");
+}
+// =========================================================
+// END TEMPORARY TEST FUNCTION
+// =========================================================
 
 export async function getScheduledNotifications(): Promise<
   Notifications.NotificationRequest[]
@@ -452,19 +728,4 @@ export function addNotificationResponseReceivedListener(
   callback: (response: Notifications.NotificationResponse) => void,
 ): Notifications.EventSubscription {
   return Notifications.addNotificationResponseReceivedListener(callback);
-}
-
-/* =========================
-   INITIALIZATION
-   ========================= */
-
-export async function initNotifications(): Promise<boolean> {
-  const granted = await requestNotificationPermissions();
-
-  if (granted) {
-    const prefs = await getNotificationPreferences();
-    await scheduleRecurringNotifications(prefs);
-  }
-
-  return granted;
 }

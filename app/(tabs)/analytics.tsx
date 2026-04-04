@@ -10,6 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   FadeInDown,
   FadeInUp,
@@ -39,6 +40,7 @@ export default function Analytics() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const { user } = useAuth();
   const { globalSync, refreshVersion } = useGlobalSync();
+  const insets = useSafeAreaInsets();
 
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [weights, setWeights] = useState<BodyWeight[]>([]);
@@ -271,7 +273,7 @@ export default function Analytics() {
       style={{ flex: 1, backgroundColor: colors.background }}
       contentContainerStyle={{
         padding: spacing.md,
-        paddingBottom: spacing.xxl,
+        paddingBottom: insets.bottom + spacing.xxl,
       }}
       refreshControl={
         <RefreshControl
@@ -963,9 +965,22 @@ function WeeklyBarChart({
   spacing: any;
   radius: any;
 }) {
-  const days = ["M", "T", "W", "T", "F", "S", "S"];
+  const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const maxVal = Math.max(...data, 1);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+
+  // Calculate what day of week each bar represents
+  // data[0] = 6 days ago, data[6] = today
+  const today = new Date();
+  const todayDayOfWeek = today.getDay(); // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, etc.
+
+  // Build labels in the correct order matching data array
+  const weekDays: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const daysAgo = 6 - i;
+    const dayNumber = (todayDayOfWeek - daysAgo + 7) % 7;
+    weekDays.push(dayLabels[dayNumber]);
+  }
 
   return (
     <View>
@@ -979,7 +994,7 @@ function WeeklyBarChart({
       >
         {data.map((val, i) => {
           const height = (val / maxVal) * 70 + 10;
-          const isToday = i === 6;
+          const isToday = i === 6; // Last index is always today
           const hasWorkouts = val > 0;
           const fillColor = isToday
             ? colors.accent
@@ -990,7 +1005,7 @@ function WeeklyBarChart({
           return (
             <WeeklyBarItem
               key={i}
-              label={days[i]}
+              label={weekDays[i]}
               height={height}
               color={fillColor}
               radius={radius}
@@ -1014,7 +1029,7 @@ function WeeklyBarChart({
             textAlign: "center",
           }}
         >
-          {days[selectedIndex]} • {data[selectedIndex]} workout
+          {weekDays[selectedIndex]} • {data[selectedIndex]} workout
           {data[selectedIndex] === 1 ? "" : "s"}
         </Text>
       )}

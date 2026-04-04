@@ -15,7 +15,7 @@ import Animated, {
 import { useTheme } from "../theme/theme";
 
 const { width, height } = Dimensions.get("window");
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.1.1";
 
 interface ForgeSplashProps {
   onFinish: () => void;

@@ -85,6 +85,8 @@ export async function initDB() {
     )
   `);
 
+  // Drafts removed - using alternative approach
+
   // 🔄 Run migrations to update existing tables
   await runMigrations();
 }
@@ -378,6 +380,82 @@ async function runMigrations() {
         } catch (error) {
           console.warn(
             "⚠️ Migration failed (workouts userId column may already exist):",
+            error,
+          );
+        }
+      },
+    },
+    {
+      id: "add_weight_to_user_profiles",
+      execute: async () => {
+        try {
+          const columns = await sqliteDb.getAllAsync<{ name: string }>(
+            `PRAGMA table_info(user_profiles)`,
+          );
+
+          const hasWeight = columns.some((c) => c.name === "weight");
+
+          if (!hasWeight) {
+            await sqliteDb.runAsync(
+              `ALTER TABLE user_profiles ADD COLUMN weight REAL DEFAULT NULL`,
+            );
+            console.log("✅ Migration: Added weight column to user_profiles");
+          }
+        } catch (error) {
+          console.warn(
+            "⚠️ Migration failed (weight column may already exist):",
+            error,
+          );
+        }
+      },
+    },
+    {
+      id: "add_age_to_user_profiles",
+      execute: async () => {
+        try {
+          const columns = await sqliteDb.getAllAsync<{ name: string }>(
+            `PRAGMA table_info(user_profiles)`,
+          );
+
+          const hasAge = columns.some((c) => c.name === "age");
+
+          if (!hasAge) {
+            await sqliteDb.runAsync(
+              `ALTER TABLE user_profiles ADD COLUMN age INTEGER DEFAULT NULL`,
+            );
+            console.log("✅ Migration: Added age column to user_profiles");
+          }
+        } catch (error) {
+          console.warn(
+            "⚠️ Migration failed (age column may already exist):",
+            error,
+          );
+        }
+      },
+    },
+    {
+      id: "add_fitnessGoal_to_user_profiles",
+      execute: async () => {
+        try {
+          const columns = await sqliteDb.getAllAsync<{ name: string }>(
+            `PRAGMA table_info(user_profiles)`,
+          );
+
+          const hasFitnessGoal = columns.some(
+            (c) => c.name === "fitnessGoal",
+          );
+
+          if (!hasFitnessGoal) {
+            await sqliteDb.runAsync(
+              `ALTER TABLE user_profiles ADD COLUMN fitnessGoal TEXT DEFAULT NULL`,
+            );
+            console.log(
+              "✅ Migration: Added fitnessGoal column to user_profiles",
+            );
+          }
+        } catch (error) {
+          console.warn(
+            "⚠️ Migration failed (fitnessGoal column may already exist):",
             error,
           );
         }

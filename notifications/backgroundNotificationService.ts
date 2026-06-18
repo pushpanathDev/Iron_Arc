@@ -5,11 +5,8 @@
  * Supports offline notifications, wake-up reminders, and streak warnings
  */
 
+import notifee, { AndroidImportance, TriggerType } from "@notifee/react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import notifee, {
-  AndroidImportance,
-  TriggerType,
-} from "@notifee/react-native";
 import { Platform } from "react-native";
 import { Achievement } from "../insights/achievements";
 
@@ -440,7 +437,8 @@ export async function scheduleWeeklySummary(
     // Calculate days until target day of week
     const currentDay = triggerDate.getDay();
     const daysUntilTarget = (dayOfWeek - currentDay + 7) % 7;
-    const adjustedDays = daysUntilTarget === 0 && triggerDate <= now ? 7 : daysUntilTarget;
+    const adjustedDays =
+      daysUntilTarget === 0 && triggerDate <= now ? 7 : daysUntilTarget;
 
     triggerDate.setDate(triggerDate.getDate() + adjustedDays);
 

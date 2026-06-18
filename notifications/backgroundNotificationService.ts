@@ -44,6 +44,82 @@ const STREAK_WARNING_ID = "streak-warning-notification";
 const DAILY_WAKEUP_ID = "daily-wakeup-notification";
 const WEEKLY_SUMMARY_ID = "weekly-summary-notification";
 
+const NOTIFICATION_CODES = {
+  DAILY_WAKEUP: "daily_wakeup",
+  WAKEUP_CUSTOM: "wakeup_custom",
+  STREAK_WARNING: "streak_warning",
+  WEEKLY_SUMMARY: "weekly_summary",
+  ACHIEVEMENT_UNLOCKED: "achievement_unlocked",
+  URGENT: "urgent",
+} as const;
+
+type DayPeriod = "morning" | "afternoon" | "evening" | "night";
+
+type NotificationCopy = {
+  title: string;
+  body: string;
+};
+
+const DAILY_REMINDER_COPY: Record<DayPeriod, NotificationCopy> = {
+  morning: {
+    title: "Morning workout time",
+    body: "Start your day strong with a quick session. Even 15 minutes counts.",
+  },
+  afternoon: {
+    title: "Midday reset",
+    body: "A short lift or walk keeps your momentum rolling.",
+  },
+  evening: {
+    title: "Evening session",
+    body: "Finish strong with your planned workout or a light routine.",
+  },
+  night: {
+    title: "Night wind-down",
+    body: "Close the day with mobility or stretching to stay consistent.",
+  },
+};
+
+const WEEKLY_SUMMARY_COPY: NotificationCopy = {
+  title: "Weekly progress check-in",
+  body: "Review your stats and lock in next week's goal.",
+};
+
+function getTimePeriod(time: string): DayPeriod {
+  const [hoursRaw, minutesRaw] = time.split(":");
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw);
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return "morning";
+  }
+
+  const boundedHours = Math.max(0, Math.min(23, hours));
+  const boundedMinutes = Math.max(0, Math.min(59, minutes));
+  const minutesSinceMidnight = boundedHours * 60 + boundedMinutes;
+
+  if (minutesSinceMidnight >= 5 * 60 && minutesSinceMidnight < 11 * 60) {
+    return "morning";
+  }
+  if (minutesSinceMidnight >= 11 * 60 && minutesSinceMidnight < 16 * 60) {
+    return "afternoon";
+  }
+  if (minutesSinceMidnight >= 16 * 60 && minutesSinceMidnight < 21 * 60) {
+    return "evening";
+  }
+  return "night";
+}
+
+function getDailyReminderCopy(time: string): NotificationCopy {
+  return DAILY_REMINDER_COPY[getTimePeriod(time)];
+}
+
+function getStreakWarningCopy(streak: number): NotificationCopy {
+  return {
+    title: `${streak} day streak at risk`,
+    body: "Log any workout today to keep it alive.",
+  };
+}
+
 /* =========================
    INITIALIZATION
    ========================= */
@@ -155,8 +231,11 @@ export async function scheduleWakeUpReminder(
     await notifee.createTriggerNotification(
       {
         id: notificationId,
-        title: "Time to Train! 💪",
+        title: "Time to train",
         body: message,
+        data: {
+          code: NOTIFICATION_CODES.WAKEUP_CUSTOM,
+        },
         android: {
           channelId: "workout-reminders",
           importance: AndroidImportance.HIGH,
@@ -192,6 +271,7 @@ export async function scheduleDailyWakeUp(
 ): Promise<void> {
   try {
     const [hours, minutes] = time.split(":").map(Number);
+    const { title, body } = getDailyReminderCopy(time);
 
     // Calculate next occurrence
     const now = new Date();
@@ -206,8 +286,11 @@ export async function scheduleDailyWakeUp(
     await notifee.createTriggerNotification(
       {
         id: DAILY_WAKEUP_ID,
-        title: "Rise & Grind! ☀️",
-        body: "Time for your workout. Let's crush today's goals!",
+        title,
+        body,
+        data: {
+          code: NOTIFICATION_CODES.DAILY_WAKEUP,
+        },
         android: {
           channelId: "workout-reminders",
           importance: AndroidImportance.HIGH,
@@ -252,6 +335,7 @@ export async function scheduleStreakWarning(
 
   try {
     const [hours, minutes] = warningTime.split(":").map(Number);
+    const { title, body } = getStreakWarningCopy(currentStreak);
     const now = new Date();
     const triggerDate = new Date(now);
     triggerDate.setHours(hours, minutes, 0);
@@ -265,8 +349,11 @@ export async function scheduleStreakWarning(
     await notifee.createTriggerNotification(
       {
         id: STREAK_WARNING_ID,
-        title: `🔥 ${currentStreak} Day Streak at Risk!`,
-        body: "Don't break your streak! Log a workout today.",
+        title,
+        body,
+        data: {
+          code: NOTIFICATION_CODES.STREAK_WARNING,
+        },
         android: {
           channelId: "streak-warnings",
           importance: AndroidImportance.HIGH,
@@ -315,6 +402,9 @@ export async function notifyAchievementUnlocked(
       id: `achievement-${achievement.id}-${Date.now()}`,
       title: `${tierEmoji[achievement.tier]} Achievement Unlocked!`,
       body: `${achievement.title} - ${achievement.description}`,
+      data: {
+        code: NOTIFICATION_CODES.ACHIEVEMENT_UNLOCKED,
+      },
       android: {
         channelId: "achievements",
         importance: AndroidImportance.HIGH,
@@ -340,6 +430,7 @@ export async function scheduleWeeklySummary(
 ): Promise<void> {
   try {
     const [hours, minutes] = time.split(":").map(Number);
+    const { title, body } = WEEKLY_SUMMARY_COPY;
 
     // Calculate next occurrence of specified day and time
     const now = new Date();
@@ -356,8 +447,11 @@ export async function scheduleWeeklySummary(
     await notifee.createTriggerNotification(
       {
         id: WEEKLY_SUMMARY_ID,
-        title: "Weekly Progress 📊",
-        body: "Check your stats and see how you performed this week!",
+        title,
+        body,
+        data: {
+          code: NOTIFICATION_CODES.WEEKLY_SUMMARY,
+        },
         android: {
           channelId: "insights",
           importance: AndroidImportance.DEFAULT,
@@ -428,6 +522,9 @@ export async function sendUrgentNotification(
       id: `urgent-${Date.now()}`,
       title,
       body,
+      data: {
+        code: NOTIFICATION_CODES.URGENT,
+      },
       android: {
         channelId,
         importance: AndroidImportance.HIGH,

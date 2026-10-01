@@ -15,13 +15,15 @@ import { useAuth } from "../auth/AuthContext";
 import { OnboardingProfileSetup } from "../components/OnboardingProfileSetup";
 import { OnboardingInfo } from "../components/OnboardingInfo";
 import { OnboardingIntro } from "../components/OnboardingIntro";
-import { updateUserProfile } from "../db/profiles";
+import { userApi } from "../services/api";
+import { useToast } from "../context/ToastContext";
 
 type OnboardingStep = "intro" | "info" | "profile";
 
 export default function OnboardingScreen() {
-  const { user } = useAuth();
+  const { user, setAwaitingEmailVerification } = useAuth();
   const router = useRouter();
+  const { showToast } = useToast();
   const [step, setStep] = useState<OnboardingStep>("intro");
 
   const handleIntroStart = useCallback(() => {
@@ -58,18 +60,24 @@ export default function OnboardingScreen() {
           profileData.weight = weightKg;
         }
 
-        await updateUserProfile(user.uid, profileData);
+        await userApi.updateProfile(profileData);
         console.log("✅ Profile setup complete:", profileData);
 
+        setAwaitingEmailVerification(false);
         // Navigate to main app
         router.replace("/(tabs)");
       } catch (error) {
         console.error("Failed to save profile:", error);
-        // Still navigate even if save fails
+        showToast({
+          message: "Couldn't save your profile. You can update it anytime in Settings.",
+          type: "warning",
+          duration: 5000,
+        });
+        setAwaitingEmailVerification(false);
         router.replace("/(tabs)");
       }
     },
-    [user, router],
+    [user, router, setAwaitingEmailVerification],
   );
 
   // Render current step
@@ -90,3 +98,5 @@ export default function OnboardingScreen() {
       return <OnboardingIntro onStart={handleIntroStart} />;
   }
 }
+
+

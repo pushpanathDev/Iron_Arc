@@ -35,20 +35,15 @@ import { useAuth } from "../../auth/AuthContext";
 import { useTheme } from "../../theme/theme";
 import { formatDate, getWeekStart } from "../../utils/weekUtils";
 
-import {
-  BodyWeight,
-  getAllWeights,
-  insertWeight,
-  softDeleteWeight,
-} from "../../db/weights";
-import { updateUserProfile } from "../../db/profiles";
+import { useQueryClient } from "@tanstack/react-query";
+import { BodyWeight, weightApi } from "../../services/api";
+import { useAllWeights, useLogWeight } from "../../hooks/useWeights";
+import { useUnitPreference } from "../../hooks/useUnitPreference";
+import { displayWeight, toKg, weightLabel } from "../../utils/unitConversion";
 
-import { SyncState } from "../../components/SyncBadge";
 import { WeightScale } from "../../components/WeightScale";
-import { useGlobalSync } from "../../context/SyncContext";
 import { createPageLogger } from "../../utils/logger";
 
-import * as Crypto from "expo-crypto";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 const log = createPageLogger("BodyWeight");
 const SCREEN_WIDTH = Dimensions.get("window").width;
@@ -162,17 +157,21 @@ function LongPressButton({
 export default function BodyWeightScreen() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const { user } = useAuth();
-  const { globalSync, refreshVersion, startSync, endSync } = useGlobalSync();
   const insets = useSafeAreaInsets();
 
-  const [weight, setWeight] = useState("");
-  const [history, setHistory] = useState<BodyWeight[]>([]);
+  const { data: rawHistory = [], isLoading, refetch } = useAllWeights();
+  const logWeightMutation = useLogWeight();
+  const queryClient = useQueryClient();
+  const { unit } = useUnitPreference();
+
+  // Sort history: latest first
+  const history = [...rawHistory].sort((a, b) => b.date.localeCompare(a.date));
+
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [deletedWeight, setDeletedWeight] = useState<BodyWeight | null>(null);
-  const [syncState, setSyncState] = useState<SyncState>("synced");
   const [isSaving, setIsSaving] = useState(false);
 
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -180,128 +179,68 @@ export default function BodyWeightScreen() {
   const logDate = formatDate(selectedDate);
   const weekStart = getWeekStart(selectedDate);
 
-  /* =========================
-     LOAD SQLITE
-     ========================= */
-  const loadWeights = useCallback(async () => {
-    if (!user?.uid) {
-      setHistory([]);
-      setWeight("");
-      return;
-    }
-
-    try {
-      const data = await getAllWeights(user.uid);
-      // Latest first
-      const sorted = [...data].sort((a, b) => b.date.localeCompare(a.date));
-      setHistory(sorted);
-
-      // Find entry for selected date (allow daily updates)
-      const existingEntry = sorted.find((w) => w.date === logDate);
-      setWeight(existingEntry ? String(existingEntry.weight) : "");
-    } catch (error) {
-      console.error("Failed to load weights:", error);
-      setMessage("Failed to load weights");
-      setHistory([]);
-    }
-  }, [user?.uid, logDate]);
+  // Pre-fill the input with today's entry if it exists
+  const existingEntry = history.find((w) => w.date === logDate);
+  const [weight, setWeight] = useState("");
 
   useEffect(() => {
-    loadWeights();
-  }, [loadWeights]);
+    setWeight(existingEntry ? String(existingEntry.weight) : "");
+  }, [logDate, existingEntry?.weight]);
 
   /* =========================
-     PULL-TO-REFRESH (GLOBAL SYNC)
+     PULL-TO-REFRESH
      ========================= */
   const handleRefresh = async () => {
-    if (!user) return;
-
     setRefreshing(true);
     try {
-      log.info("Pull-to-refresh triggered");
-
-      // Trigger global sync - pushes local changes THEN pulls from Firebase
-      await globalSync(user.uid);
-
-      // Reload data after sync
-      await loadWeights();
-      setMessage("Synced ✓");
-      log.success("Body weight synced via global sync");
+      await refetch();
+      setMessage("Refreshed ✓");
+      log.success("Body weight refreshed");
     } catch (error) {
-      log.error(
-        "Refresh sync failed",
-        error instanceof Error ? error.message : String(error),
-      );
-      setMessage("Sync failed - check your connection");
+      log.error("Refresh failed", error instanceof Error ? error.message : String(error));
+      setMessage("Refresh failed");
     } finally {
       setRefreshing(false);
       setTimeout(() => setMessage(null), 2000);
     }
   };
-
-  // Refresh when global sync happens on another screen
-  useEffect(() => {
-    if (!user || refreshVersion === 0) return;
-    loadWeights();
-  }, [refreshVersion]);
   /* =========================
      SAVE / UPDATE
      ========================= */
   async function saveWeight() {
-    if (!user?.uid || !weight) {
+    if (!weight) {
       setMessage("Please enter weight");
       return;
     }
 
-    // Guard against double saves
     if (isSaving || refreshing) {
       setMessage("Please wait...");
       return;
     }
 
     setIsSaving(true);
-    setSyncState("syncing");
 
     try {
       const weightValue = parseFloat(weight);
       if (isNaN(weightValue) || weightValue <= 0) {
         setMessage("Please enter a valid weight");
-        setSyncState("failed");
         return;
       }
 
-      // Allow multiple entries per week (daily flexibility)
-      // Just add/update entry for this date
-      const newWeight: BodyWeight = {
-        id: `${user.uid}_${logDate}`, // Use date as part of ID
-        userId: user.uid,
-        date: logDate, // Actual date user picked
-        weekStart: formatDate(weekStart), // For grouping in analytics
-        weight: weightValue,
-        createdAt: Date.now(),
-        isSynced: 0, // Mark as unsynced - will sync on app focus
-      };
+      const weightInKg = toKg(weightValue, unit);
+      await logWeightMutation.mutateAsync({
+        date: logDate,
+        weight: weightInKg,
+        weekStart: formatDate(weekStart),
+      });
 
-      await insertWeight(newWeight);
-
-      // Keep profile weight in sync with the latest entry
-      try {
-        await updateUserProfile(user.uid, { weight: weightValue });
-      } catch (profileError) {
-        console.warn("Failed to update profile weight:", profileError);
-      }
-
-      setMessage("Weight saved ✓ (syncing...)");
-      loadWeights();
-      log.success("Weight saved", `${weight}kg on ${logDate}`);
-      setSyncState("pending");
-
+      setMessage("Weight saved ✓");
+      log.success("Weight saved", `${weight}${weightLabel(unit)} on ${logDate}`);
       setTimeout(() => setMessage(null), 1500);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       log.error("Save failed", errorMsg);
       setMessage(`Failed to save weight: ${errorMsg}`);
-      setSyncState("failed");
     } finally {
       setIsSaving(false);
     }
@@ -311,71 +250,59 @@ export default function BodyWeightScreen() {
      DELETE WITH UNDO
      ========================= */
   async function deleteWeight(item: BodyWeight) {
-    if (!user?.uid) {
-      setMessage("User not authenticated");
-      return;
-    }
-
-    // Guard against delete while syncing/refreshing
     if (refreshing || isSaving) {
-      setMessage("Please wait until sync completes");
+      setMessage("Please wait...");
       return;
     }
 
-    // Store for undo
     setDeletedWeight(item);
 
-    // Remove from UI immediately
-    setHistory((prev) => prev.filter((w) => w.id !== item.id));
+    // Optimistically remove from cache — UI updates immediately
+    queryClient.setQueryData<BodyWeight[]>(["weights", "all"], (old) =>
+      old ? old.filter((w) => w.id !== item.id) : [],
+    );
 
-    // Soft delete (will be synced later)
-    await softDeleteWeight(item.id);
-    log.success("Weight deleted", item.id);
-
-    // Start undo timer (5 seconds)
+    // Defer the actual API delete — fires only if undo is not tapped
     if (undoTimer.current) clearTimeout(undoTimer.current);
-    undoTimer.current = setTimeout(() => {
+    undoTimer.current = setTimeout(async () => {
+      try {
+        await weightApi.delete(item.id);
+        queryClient.invalidateQueries({ queryKey: ["weights"] });
+        log.success("Weight deleted", item.id);
+      } catch (error) {
+        // Restore the item on failure
+        queryClient.setQueryData<BodyWeight[]>(["weights", "all"], (old) =>
+          old
+            ? [...old, item].sort((a, b) => b.date.localeCompare(a.date))
+            : [item],
+        );
+        setMessage("Failed to delete");
+        log.error("Delete failed", error);
+      }
       setDeletedWeight(null);
     }, 5000);
   }
 
-  const undoDelete = async () => {
-    if (!deletedWeight || !user) return;
-
-    // Re-insert the weight
-    await insertWeight({
-      ...deletedWeight,
-      isDeleted: 0,
-    });
-
-    setDeletedWeight(null);
+  const undoDelete = () => {
+    if (!deletedWeight) return;
     if (undoTimer.current) clearTimeout(undoTimer.current);
-
-    loadWeights();
-    log.info(`Undo delete ${deletedWeight.id}`);
+    // Restore item to cache — real undo, no API call made
+    queryClient.setQueryData<BodyWeight[]>(["weights", "all"], (old) =>
+      old
+        ? [...old, deletedWeight].sort((a, b) => b.date.localeCompare(a.date))
+        : [deletedWeight],
+    );
+    setDeletedWeight(null);
+    log.info(`Undo: restored weight entry ${deletedWeight.id}`);
   };
 
-  /* =========================
-     SAFE UUID
-     ========================= */
-  function generateId() {
-    try {
-      return Crypto.randomUUID();
-    } catch {
-      return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-        const r = (Math.random() * 16) | 0;
-        const v = c === "x" ? r : (r & 0x3) | 0x8;
-        return v.toString(16);
-      });
-    }
-  }
-
-  // Calculate stats
-  const currentWeight = history[0]?.weight || 0;
-  const previousWeight = history[1]?.weight || currentWeight;
-  const weightChange = currentWeight - previousWeight;
-  const firstWeight = history[history.length - 1]?.weight || currentWeight;
-  const totalChange = currentWeight - firstWeight;
+  // Calculate stats (server stores kg, convert for display)
+  const currentWeightKg = history[0]?.weight || 0;
+  const previousWeightKg = history[1]?.weight || currentWeightKg;
+  const firstWeightKg = history[history.length - 1]?.weight || currentWeightKg;
+  const currentWeight = displayWeight(currentWeightKg, unit);
+  const weightChange = displayWeight(currentWeightKg - previousWeightKg, unit);
+  const totalChange = displayWeight(currentWeightKg - firstWeightKg, unit);
 
   // Chart data (last 7 entries)
   const chartData = [...history].reverse().slice(-7);
@@ -468,7 +395,7 @@ export default function BodyWeightScreen() {
                     marginLeft: spacing.xs,
                   }}
                 >
-                  kg
+                  {weightLabel(unit)}
                 </Text>
               </View>
             </View>
@@ -504,7 +431,7 @@ export default function BodyWeightScreen() {
                     marginLeft: 4,
                   }}
                 >
-                  {Math.abs(weightChange).toFixed(1)} kg
+                  {Math.abs(weightChange).toFixed(1)} {weightLabel(unit)}
                 </Text>
               </View>
             )}
@@ -524,7 +451,7 @@ export default function BodyWeightScreen() {
               </Text>
               <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
                 {totalChange > 0 ? "+" : ""}
-                {totalChange.toFixed(1)} kg
+                {totalChange.toFixed(1)} {weightLabel(unit)}
               </Text>
             </View>
             <View>
@@ -567,6 +494,7 @@ export default function BodyWeightScreen() {
             width={chartWidth}
             height={chartHeight}
             colors={colors}
+            unit={unit}
           />
         </Animated.View>
       )}
@@ -624,9 +552,10 @@ export default function BodyWeightScreen() {
           >
             <LongPressButton
               onIncrement={() => {
+                const bwStep = unit === "lbs" ? 1 : 0.5;
                 setWeight((prev) => {
                   const current = parseFloat(prev) || 0;
-                  const next = Math.max(0, current - 0.5);
+                  const next = Math.max(0, current - bwStep);
                   return next.toFixed(1);
                 });
               }}
@@ -660,10 +589,10 @@ export default function BodyWeightScreen() {
             />
             <LongPressButton
               onIncrement={() => {
+                const bwStep = unit === "lbs" ? 1 : 0.5;
                 setWeight((prev) => {
                   const current = parseFloat(prev) || 0;
-                  // Safety bound: cap weight increments at 999.9kg
-                  const next = Math.min(999.9, current + 0.5);
+                  const next = Math.min(999.9, current + bwStep);
                   return next.toFixed(1);
                 });
               }}
@@ -679,7 +608,7 @@ export default function BodyWeightScreen() {
               <Ionicons name="add" size={24} color={colors.accent} />
             </LongPressButton>
             <Text style={{ ...typography.body, color: colors.textSecondary }}>
-              kg
+              {weightLabel(unit)}
             </Text>
           </View>
         </View>
@@ -832,6 +761,7 @@ export default function BodyWeightScreen() {
               onDelete={() => deleteWeight(item)}
               index={index}
               disabled={refreshing || isSaving}
+              weightUnit={unit}
             />
           ))
         )}
@@ -887,12 +817,14 @@ function WeightSwipeRow({
   onDelete,
   index,
   disabled = false,
+  weightUnit = "kg",
 }: {
   item: BodyWeight;
   prevItem?: BodyWeight;
   onDelete: () => void;
   index: number;
   disabled?: boolean;
+  weightUnit?: "kg" | "lbs";
 }) {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const translateX = useSharedValue(0);
@@ -994,7 +926,7 @@ function WeightSwipeRow({
           {/* Weight */}
           <View style={{ flex: 1 }}>
             <Text style={{ ...typography.h3, color: colors.textPrimary }}>
-              {item.weight} kg
+              {displayWeight(item.weight, weightUnit)} {weightLabel(weightUnit)}
             </Text>
             {prevItem && (
               <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -1023,7 +955,7 @@ function WeightSwipeRow({
                     marginLeft: 2,
                   }}
                 >
-                  {Math.abs(diff).toFixed(1)} kg
+                  {displayWeight(Math.abs(diff), weightUnit).toFixed(1)} {weightLabel(weightUnit)}
                 </Text>
               </View>
             )}
@@ -1045,11 +977,13 @@ function WeightChart({
   width,
   height,
   colors,
+  unit,
 }: {
   data: BodyWeight[];
   width: number;
   height: number;
   colors: any;
+  unit: "kg" | "lbs";
 }) {
   if (data.length < 2) return null;
 
@@ -1170,7 +1104,7 @@ function WeightChart({
               textAlign: "center",
             }}
           >
-            {selected.weight.toFixed(1)} kg
+            {displayWeight(selected.weight, unit).toFixed(1)} {weightLabel(unit)}
           </Text>
           <Text
             style={{

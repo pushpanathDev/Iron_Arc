@@ -15,7 +15,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Dimensions,
@@ -84,13 +84,15 @@ interface OnboardingProfileSetupProps {
  * Generate height values for the ruler
  */
 function generateHeightValues(unit: Unit): number[] {
+  // Descending order: tallest at top, shortest at bottom.
+  // Scrolling DOWN shows shorter values — matches the physical ruler metaphor.
   if (unit === "cm") {
-    return Array.from({ length: CM_MAX - CM_MIN + 1 }, (_, i) => CM_MIN + i);
+    return Array.from({ length: CM_MAX - CM_MIN + 1 }, (_, i) => CM_MAX - i);
   } else {
     const values: number[] = [];
-    for (let ft = FT_MIN; ft <= FT_MAX; ft++) {
+    for (let ft = FT_MAX; ft >= FT_MIN; ft--) {
       const maxInch = ft === FT_MAX ? 3 : 11;
-      for (let inch = 0; inch <= maxInch; inch++) {
+      for (let inch = ft === FT_MAX ? 3 : 11; inch >= 0; inch--) {
         values.push(ft * 12 + inch);
       }
     }
@@ -215,6 +217,18 @@ export function OnboardingProfileSetup({
   const ITEM_HEIGHT = 12;
   const toggleProgress = useSharedValue(0);
   const buttonScale = useSharedValue(1);
+
+  // Scroll to the default height (170 cm) on first render
+  useEffect(() => {
+    const index = heightValues.indexOf(selectedHeight);
+    if (index !== -1) {
+      setTimeout(() => {
+        flatListRef.current?.scrollTo({ y: index * ITEM_HEIGHT, animated: false });
+      }, 150);
+    }
+    // Only run on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleBack = () => {
     if (onBack) {

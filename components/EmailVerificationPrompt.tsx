@@ -11,7 +11,7 @@
 
 import { Ionicons } from "@expo/vector-icons";
 import { User, verifyBeforeUpdateEmail } from "firebase/auth";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -19,7 +19,6 @@ import {
   Text,
   View,
   TextInput,
-  ScrollView,
   Alert,
 } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
@@ -50,7 +49,7 @@ export function EmailVerificationPrompt({
   onVerified,
   dismissible = true,
 }: EmailVerificationPromptProps) {
-  const { colors, spacing, radius, typography, shadows } = useTheme();
+  const { colors, spacing, radius, typography } = useTheme();
   const [loading, setLoading] = useState(false);
   const [resent, setResent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +59,10 @@ export function EmailVerificationPrompt({
   const [lastResendTime, setLastResendTime] = useState<number>(0);
   const [resendCooldown, setResendCooldown] = useState(0);
   const [checkingVerification, setCheckingVerification] = useState(false);
+  const verificationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const verificationDelayIndexRef = useRef(0);
 
   // Cooldown timer for resend button
   useEffect(() => {
@@ -74,23 +77,53 @@ export function EmailVerificationPrompt({
 
   // Auto-check verification status while prompt is visible
   useEffect(() => {
-    if (!visible || !user) return;
+    const delays = [5000, 10000, 20000, 30000];
 
-    let mounted = true;
-    const interval = setInterval(async () => {
-      try {
-        const synced = await syncVerificationStatus(user);
-        if (mounted && (synced || user.emailVerified)) {
-          onVerified?.();
-        }
-      } catch (reloadError) {
-        // Silent - network hiccup or transient auth error
+    if (!visible || !user) {
+      if (verificationTimeoutRef.current) {
+        clearTimeout(verificationTimeoutRef.current);
+        verificationTimeoutRef.current = null;
       }
-    }, 5000);
+      verificationDelayIndexRef.current = 0;
+      return;
+    }
+
+    verificationDelayIndexRef.current = 0;
+
+    const clearVerificationTimer = () => {
+      if (verificationTimeoutRef.current) {
+        clearTimeout(verificationTimeoutRef.current);
+        verificationTimeoutRef.current = null;
+      }
+    };
+
+    const scheduleNextCheck = () => {
+      clearVerificationTimer();
+
+      verificationTimeoutRef.current = setTimeout(async () => {
+        try {
+          const synced = await syncVerificationStatus(user);
+          if (synced || user.emailVerified) {
+            clearVerificationTimer();
+            onVerified?.();
+            return;
+          }
+        } catch {
+          // Silent - network hiccup or transient auth error
+        }
+
+        verificationDelayIndexRef.current = Math.min(
+          verificationDelayIndexRef.current + 1,
+          delays.length - 1,
+        );
+        scheduleNextCheck();
+      }, delays[verificationDelayIndexRef.current]);
+    };
+
+    scheduleNextCheck();
 
     return () => {
-      mounted = false;
-      clearInterval(interval);
+      clearVerificationTimer();
     };
   }, [visible, user, onVerified]);
 
@@ -231,7 +264,7 @@ export function EmailVerificationPrompt({
       } else {
         setError(verificationMessages.verifyExpired);
       }
-    } catch (reloadError: any) {
+        } catch {
       setError(verificationMessages.verifyCheckFailed);
     } finally {
       setCheckingVerification(false);
@@ -321,7 +354,8 @@ export function EmailVerificationPrompt({
               lineHeight: 22,
             }}
           >
-            We've sent a verification link to{"\n"}
+            {"We've sent a verification link to "}
+            {"\n"}
             <Text style={{ fontWeight: "600", color: colors.accent }}>
               {user.email}
             </Text>
@@ -418,7 +452,7 @@ export function EmailVerificationPrompt({
               textAlign: "center",
             }}
           >
-            Didn't receive the email? Check your spam folder.
+            {"Didn't receive the email? Check your spam folder."}
           </Text>
 
           {/* BUTTONS */}
@@ -500,7 +534,7 @@ export function EmailVerificationPrompt({
                 <ActivityIndicator color={colors.textPrimary} size="small" />
               )}
               <Text style={{ color: colors.textPrimary, fontWeight: "500" }}>
-                I've Verified My Email
+                {"I've Verified My Email"}
               </Text>
             </Pressable>
           </View>

@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import NetInfo from "@react-native-community/netinfo";
 import Constants from "expo-constants";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -18,29 +17,23 @@ import {
 } from "react-native";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { useAuth } from "../../auth/AuthContext";
-import { isAdminUser } from "../../firebase/admin";
-import { SyncBadge, SyncState } from "../../components/SyncBadge";
+import { SyncBadge } from "../../components/SyncBadge";
 import { ProfileCompletionPrompt } from "../../components/ProfileCompletionPrompt";
 import { EmailVerificationPrompt } from "../../components/EmailVerificationPrompt";
-import { useGlobalSync } from "../../context/SyncContext";
-import {
-  getUserProfile,
-  updateUserProfile,
-  syncProfileToFirebase,
-  UserProfile,
-} from "../../db/profiles";
-import {
-  getSyncStatus,
-  getWorkoutSyncStatus,
-  syncAllData,
-} from "../../db/syncQueue";
-import { getAllWeights } from "../../db/weights";
+import { useQueryClient } from "@tanstack/react-query";
+import { useProfile, useUpdateProfile } from "../../hooks/useProfile";
+import { useUnitPreference } from "../../hooks/useUnitPreference";
+import { useLatestWeight } from "../../hooks/useWeights";
 import {
   clearEmailVerificationStart,
   getEmailVerificationStart,
   setEmailVerificationStart,
 } from "../../db/syncMeta";
 import { useTheme } from "../../theme/theme";
+import {
+  useThemeContext,
+  type ThemePreference,
+} from "../../context/ThemeContext";
 import { formatAccountDate, getAvatarUrl } from "../../utils/avatar";
 import { exportToCSV, exportToPDF } from "../../utils/exportData";
 import { createPageLogger } from "../../utils/logger";
@@ -55,27 +48,29 @@ const log = createPageLogger("Profile");
 
 export default function ProfileScreen() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
-  const { user, logout, isSyncing: isAuthSyncing } = useAuth();
-  const { startSync, endSync } = useGlobalSync();
+  const { preference: themePreference, setPreference: setThemePreference } = useThemeContext();
+  const { user, logout } = useAuth();
   const insets = useSafeAreaInsets();
 
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { data: profile, isLoading, refetch: refetchProfile } = useProfile();
+  const updateProfile = useUpdateProfile();
+  const { data: latestWeightEntry } = useLatestWeight();
+  const { unit: weightUnit, setUnit: setWeightUnit } = useUnitPreference();
+
+  const latestWeight = latestWeightEntry?.weight ?? null;
+  const isAdmin = profile?.isAdmin ?? false;
+
   const [isSaving, setIsSaving] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [height, setHeight] = useState("");
+  const [age, setAge] = useState("");
+  const [fitnessGoal, setFitnessGoal] = useState<string | null>(null);
   const [weeklyGoal, setWeeklyGoal] = useState("1");
   const [hasChanges, setHasChanges] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [pendingSync, setPendingSync] = useState(0);
-  const [syncState, setSyncState] = useState<SyncState>("synced");
   const [isExporting, setIsExporting] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [adminChecked, setAdminChecked] = useState(false);
   const [showProfileCompletion, setShowProfileCompletion] = useState(false);
-  const [latestWeight, setLatestWeight] = useState<number | null>(null);
   const [profilePromptMode, setProfilePromptMode] = useState<"missing" | "age">("missing");
   const [verificationDaysLeft, setVerificationDaysLeft] = useState<number | null>(null);
   const [showVerificationPrompt, setShowVerificationPrompt] = useState(false);
@@ -83,62 +78,20 @@ export default function ProfileScreen() {
 
   const verificationGraceDays = 7;
 
-  // Guard flag to prevent operations when component is unmounting
-  const isMounted = useRef(true);
-
+  // Initialize form when profile loads
   useEffect(() => {
-    return () => {
-      isMounted.current = false;
-    };
-  }, []);
-
-  /* =========================
-     LOAD PROFILE
-     ========================= */
-  const loadProfile = useCallback(async () => {
-    if (!user) {
-      setIsLoading(false);
-      return;
+    if (profile) {
+      setDisplayName(profile.displayName || "");
+      setHeight(profile.height ? String(profile.height) : "");
+      setAge(profile.age ? String(profile.age) : "");
+      setFitnessGoal(profile.fitnessGoal || null);
+      setWeeklyGoal(profile.weeklyGoal ? String(profile.weeklyGoal) : "1");
     }
-
-    try {
-      const [data, weights, weightStatus, workoutStatus] = await Promise.all([
-        getUserProfile(user.uid),
-        getAllWeights(user.uid),
-        getSyncStatus(user.uid),
-        getWorkoutSyncStatus(user.uid),
-      ]);
-
-      if (!isMounted.current) return;
-
-      setProfile(data);
-      setDisplayName(data?.displayName || "");
-      setHeight(data?.height ? String(data.height) : "");
-      setWeeklyGoal(data?.weeklyGoal ? String(data.weeklyGoal) : "1");
-
-      const newestWeight = weights.length > 0 ? weights[0].weight : null;
-      setLatestWeight(newestWeight);
-
-      const total = weightStatus.pendingCount + workoutStatus.pendingCount;
-      setPendingSync(total);
-      setSyncState(total > 0 ? "pending" : "synced");
-
-      log.info(`Loaded profile for ${user.uid}`);
-    } catch (error) {
-      log.error(`Failed to load profile: ${error}`);
-      if (isMounted.current) setSyncState("failed");
-    } finally {
-      if (isMounted.current) setIsLoading(false);
-    }
-  }, [user]);
+  }, [profile?.id]);
 
   const loadVerificationStatus = useCallback(async () => {
     if (!user) return;
-    try {
-      await user.reload();
-    } catch (reloadError) {
-      // Non-blocking: keep last known status
-    }
+    try { await user.reload(); } catch {}
 
     if (user.emailVerified) {
       setVerificationDaysLeft(null);
@@ -152,10 +105,8 @@ export default function ProfileScreen() {
       start = Date.now();
       await setEmailVerificationStart(user.uid, start);
     }
-
     const elapsedDays = Math.floor((Date.now() - start) / (24 * 60 * 60 * 1000));
-    const daysLeft = Math.max(0, verificationGraceDays - elapsedDays);
-    setVerificationDaysLeft(daysLeft);
+    setVerificationDaysLeft(Math.max(0, verificationGraceDays - elapsedDays));
   }, [user]);
 
   useEffect(() => {
@@ -165,54 +116,17 @@ export default function ProfileScreen() {
     }
   }, [user, verificationDaysLeft, showVerificationPrompt]);
 
-  useEffect(() => {
-    loadProfile();
-    loadVerificationStatus();
-  }, [loadProfile, loadVerificationStatus]);
-
   useFocusEffect(
     useCallback(() => {
-      loadProfile();
       loadVerificationStatus();
-    }, [loadProfile, loadVerificationStatus]),
+    }, [loadVerificationStatus]),
   );
 
-  useEffect(() => {
-    let active = true;
-    const checkAdmin = async () => {
-      if (!user?.email) {
-        if (active) {
-          setIsAdmin(false);
-          setAdminChecked(true);
-        }
-        return;
-      }
-      const allowed = await isAdminUser(user.email);
-      if (active) {
-        setIsAdmin(allowed);
-        setAdminChecked(true);
-      }
-    };
-    checkAdmin();
-    return () => {
-      active = false;
-    };
-  }, [user?.email]);
-
-  // Check if profile completion data is needed
+  // Show profile completion if data is missing
   useEffect(() => {
     if (profile && !isLoading) {
-      // Only show completion prompt if BOTH weight AND age are missing
-      // If user has filled either one, show them in the profile instead
       const needsCompletion = !profile.weight && !latestWeight && !profile.age;
       setShowProfileCompletion(needsCompletion);
-      
-      // Debug log
-      if (needsCompletion) {
-        log.info("Profile completion needed: missing both weight and age");
-      } else {
-        log.info(`Profile complete - weight: ${profile.weight}, age: ${profile.age}`);
-      }
     }
   }, [profile, latestWeight, isLoading]);
 
@@ -220,30 +134,9 @@ export default function ProfileScreen() {
      PULL-TO-REFRESH
      ========================= */
   const handleRefresh = async () => {
-    if (!user) return;
-
     setRefreshing(true);
     try {
-      log.info("Pull-to-refresh triggered");
-      const [data, weights, weightStatus, workoutStatus] = await Promise.all([
-        getUserProfile(user.uid),
-        getAllWeights(user.uid),
-        getSyncStatus(user.uid),
-        getWorkoutSyncStatus(user.uid),
-      ]);
-
-      setProfile(data);
-      setDisplayName(data?.displayName || "");
-      setHeight(data?.height ? String(data.height) : "");
-      setWeeklyGoal(data?.weeklyGoal ? String(data.weeklyGoal) : "1");
-
-      const newestWeight = weights.length > 0 ? weights[0].weight : null;
-      setLatestWeight(newestWeight);
-
-      setPendingSync(weightStatus.pendingCount + workoutStatus.pendingCount);
-
-      await loadVerificationStatus();
-
+      await Promise.all([refetchProfile(), loadVerificationStatus()]);
       log.success("Profile refreshed");
     } catch (error) {
       log.error(`Failed to refresh profile: ${error}`);
@@ -253,84 +146,23 @@ export default function ProfileScreen() {
   };
 
   /* =========================
-     SYNC ALL DATA (Weights + Workouts)
-     ========================= */
-  const handleSync = async () => {
-    if (!user || isSyncing) {
-      if (!user) setSyncMessage("Not logged in");
-      return;
-    }
-
-    setIsSyncing(true);
-    setSyncState("syncing");
-    setSyncMessage(null);
-    startSync("Syncing..."); // Show global floating loader
-    log.info("Manual sync triggered from Profile");
-
-    try {
-      // Reset failed records to allow retry after code fixes
-      const result = await syncAllData(user.uid, true);
-
-      if (!isMounted.current) return;
-
-      const totalSynced = result.weights.synced + result.workouts.synced;
-      const totalFailed = result.weights.failed + result.workouts.failed;
-      const bothSuccess = result.weights.success && result.workouts.success;
-
-      if (bothSuccess && totalSynced > 0) {
-        log.success(
-          "Sync completed",
-          `Weights: ${result.weights.synced}, Workouts: ${result.workouts.synced}`,
-        );
-        setSyncMessage(`Synced ${totalSynced} records ✓`);
-        setPendingSync(0);
-        setSyncState("synced");
-      } else if (totalFailed > 0) {
-        log.warn("Sync partial", `${totalFailed} records failed to sync`);
-        setSyncMessage(`Synced ${totalSynced}, Failed: ${totalFailed}`);
-        setSyncState("failed");
-      } else {
-        setSyncMessage("All up to date!");
-        setPendingSync(0);
-        setSyncState("synced");
-      }
-    } catch (error) {
-      log.error(`Sync failed: ${error}`);
-      if (isMounted.current) {
-        setSyncMessage(
-          `Sync failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        );
-        setSyncState("failed");
-      }
-    } finally {
-      endSync(); // Hide global floating loader
-      if (isMounted.current) {
-        setIsSyncing(false);
-        setTimeout(() => setSyncMessage(null), 3000);
-      }
-    }
-  };
-
-  /* =========================
      DETECT CHANGES
      ========================= */
   useEffect(() => {
     if (!profile) return;
-
     const nameChanged = displayName !== (profile.displayName || "");
-    const heightChanged =
-      height !== (profile.height ? String(profile.height) : "");
-    const goalChanged =
-      weeklyGoal !== (profile.weeklyGoal ? String(profile.weeklyGoal) : "1");
-
-    setHasChanges(nameChanged || heightChanged || goalChanged);
-  }, [displayName, height, weeklyGoal, profile]);
+    const heightChanged = height !== (profile.height ? String(profile.height) : "");
+    const ageChanged = age !== (profile.age ? String(profile.age) : "");
+    const goalChanged = weeklyGoal !== (profile.weeklyGoal ? String(profile.weeklyGoal) : "1");
+    const fitnessGoalChanged = fitnessGoal !== (profile.fitnessGoal || null);
+    setHasChanges(nameChanged || heightChanged || ageChanged || goalChanged || fitnessGoalChanged);
+  }, [displayName, height, age, fitnessGoal, weeklyGoal, profile]);
 
   /* =========================
      SAVE PROFILE
      ========================= */
   const handleSaveProfile = async () => {
-    if (!user || !profile) return;
+    if (!profile) return;
 
     setIsSaving(true);
     try {
@@ -339,36 +171,50 @@ export default function ProfileScreen() {
       if (displayName !== (profile.displayName || "")) {
         updates.displayName = displayName || null;
       }
-
       if (height && height !== String(profile.height || "")) {
         updates.height = parseFloat(height) || null;
       } else if (!height && profile.height) {
         updates.height = null;
       }
-
-      // Daily goal update (ensure it's between 1-10)
+      const parsedAge = parseInt(age) || null;
+      if (parsedAge !== (profile.age || null)) {
+        updates.age = parsedAge && parsedAge > 0 && parsedAge < 120 ? parsedAge : null;
+      }
+      if (fitnessGoal !== (profile.fitnessGoal || null)) {
+        updates.fitnessGoal = fitnessGoal;
+      }
       const goalNum = parseInt(weeklyGoal) || 1;
       if (goalNum !== (profile.weeklyGoal || 1)) {
-        updates.weeklyGoal = Math.max(1, Math.min(10, goalNum));
+        updates.weeklyGoal = Math.max(1, Math.min(7, goalNum));
       }
 
-      // Save to SQLite
-      await updateUserProfile(user.uid, updates);
-      setProfile({ ...profile, ...updates });
-      setHasChanges(false);
-
-      // ✅ IMMEDIATELY SYNC TO FIREBASE
-      console.log("📤 Syncing profile to Firebase immediately...");
-      await syncProfileToFirebase({
-        userId: user.uid,
-        ...updates,
+      log.debug("Saving profile update", {
+        userId: user?.uid,
+        updates,
       });
-      console.log("✅ Profile synced to Firebase");
 
-      log.success("Profile saved and synced to Firebase");
+      await updateProfile.mutateAsync(updates);
+      setHasChanges(false);
+      log.success("Profile saved");
       Alert.alert("Success", "Profile updated");
     } catch (error) {
-      log.error(`Failed to save profile: ${error}`);
+      if (error && typeof error === "object" && "status" in error) {
+        const apiError = error as {
+          status?: number;
+          message?: string;
+          errors?: { field: string; message: string }[];
+        };
+        log.error(
+          "Failed to save profile",
+          `status=${apiError.status ?? "unknown"}`,
+          {
+            message: apiError.message,
+            errors: apiError.errors,
+          }
+        );
+      } else {
+        log.error(`Failed to save profile: ${error}`);
+      }
       Alert.alert("Error", "Failed to save profile");
     } finally {
       setIsSaving(false);
@@ -382,35 +228,16 @@ export default function ProfileScreen() {
     weight: number | null,
     age: number | null
   ) => {
-    if (!user || !profile) return;
-
     try {
       const updates: any = {};
-
-      if (weight !== null && weight !== profile.weight) {
-        updates.weight = weight;
-      }
-
-      if (age !== null && age !== profile.age) {
-        updates.age = age;
-      }
+      if (weight !== null && weight !== profile?.weight) updates.weight = weight;
+      if (age !== null && age !== profile?.age) updates.age = age;
 
       if (Object.keys(updates).length > 0) {
-        // Save to SQLite
-        await updateUserProfile(user.uid, updates);
-        setProfile({ ...profile, ...updates });
-
-        // ✅ IMMEDIATELY SYNC TO FIREBASE
-        console.log("📤 Syncing profile completion to Firebase immediately...");
-        await syncProfileToFirebase({
-          userId: user.uid,
-          ...updates,
-        });
-        console.log("✅ Profile completion synced to Firebase");
+        await updateProfile.mutateAsync(updates);
       }
-
       setShowProfileCompletion(false);
-      log.success("Profile completion data saved and synced to Firebase");
+      log.success("Profile completion saved");
     } catch (error) {
       log.error(`Failed to save profile completion: ${error}`);
       throw error;
@@ -421,104 +248,34 @@ export default function ProfileScreen() {
      LOGOUT
      ========================= */
   const handleLogout = async () => {
-    // Check network connectivity first
-    const networkState = await NetInfo.fetch();
-    const isOnline =
-      networkState.isConnected && networkState.isInternetReachable;
+    Alert.alert(
+      "Log Out?",
+      "Your data is safely stored in the cloud. You can log back in at any time.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Log Out",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              // Clear React Query cache so no stale data or background refetches
+              // fire unauthenticated requests after sign-out
+              queryClient.cancelQueries();
+              queryClient.clear();
 
-    // Also check if there's pending data to sync
-    let hasPendingData = false;
-    if (user) {
-      try {
-        const [weightStatus, workoutStatus] = await Promise.all([
-          getSyncStatus(user.uid),
-          getWorkoutSyncStatus(user.uid),
-        ]);
-        hasPendingData =
-          weightStatus.pendingCount + workoutStatus.pendingCount > 0;
-      } catch (e) {
-        // If we can't check, assume there might be pending data
-        hasPendingData = true;
-      }
-    }
+              await logout();
+              log.info("User logged out");
 
-    if (!isOnline && hasPendingData) {
-      // OFFLINE with pending data - WARN about data loss
-      Alert.alert(
-        "⚠️ You're Offline",
-        "You have unsynced data that will be LOST if you log out now.\n\nConnect to the internet and try again, or tap 'Log Out Anyway' to continue (data will be lost).",
-        [
-          {
-            text: "Cancel",
-            style: "cancel",
+              // Explicitly navigate to login instead of relying only on the auth guard
+              router.replace("/login");
+            } catch (error) {
+              log.error(`Logout failed: ${error}`);
+              Alert.alert("Error", "Failed to log out. Please try again.");
+            }
           },
-          {
-            text: "Log Out Anyway",
-            style: "destructive",
-            onPress: async () => {
-              try {
-                log.warn("User logging out OFFLINE - data may be lost!");
-                await logout();
-                log.info("User logged out (offline - data may be lost)");
-              } catch (error) {
-                log.error(`Logout failed: ${error}`);
-                Alert.alert("Error", "Failed to log out. Please try again.");
-              }
-            },
-          },
-        ],
-      );
-    } else if (!isOnline && !hasPendingData) {
-      // OFFLINE but no pending data - safe to logout
-      Alert.alert(
-        "Log Out?",
-        "You're offline, but all your data is already synced. Safe to log out!",
-        [
-          {
-            text: "Cancel",
-            style: "cancel",
-          },
-          {
-            text: "Log Out",
-            style: "destructive",
-            onPress: async () => {
-              try {
-                await logout();
-                log.info("User logged out (offline, no pending data)");
-              } catch (error) {
-                log.error(`Logout failed: ${error}`);
-                Alert.alert("Error", "Failed to log out. Please try again.");
-              }
-            },
-          },
-        ],
-      );
-    } else {
-      // ONLINE - normal flow with auto-sync
-      Alert.alert(
-        "Log Out?",
-        "Your data will be automatically synced to the cloud before logging out.",
-        [
-          {
-            text: "Cancel",
-            style: "cancel",
-          },
-          {
-            text: "Log Out",
-            style: "destructive",
-            onPress: async () => {
-              try {
-                await logout();
-                log.info("User logged out (with auto-sync)");
-              } catch (error) {
-                log.error(`Logout failed: ${error}`);
-                Alert.alert("Error", "Failed to log out. Please try again.");
-              }
-            },
-          },
-        ],
-      );
-    }
+        },
+      ],
+    );
   };
 
   /* =========================
@@ -533,29 +290,20 @@ export default function ProfileScreen() {
         {
           text: "Export",
           onPress: async () => {
-            if (!user) {
-              Alert.alert("Error", "You must be logged in to export data.");
-              return;
-            }
-
             setIsExporting(true);
             try {
               log.info(`Starting ${format.toUpperCase()} export...`);
-
               if (format === "csv") {
-                await exportToCSV(user.uid);
+                await exportToCSV();
               } else {
-                await exportToPDF(user.uid);
+                await exportToPDF();
               }
-
               log.success(`${format.toUpperCase()} export completed`);
             } catch (error) {
               log.error(`Export failed: ${error}`);
               Alert.alert(
                 "Export Failed",
-                error instanceof Error
-                  ? error.message
-                  : "An unknown error occurred",
+                error instanceof Error ? error.message : "An unknown error occurred",
               );
             } finally {
               setIsExporting(false);
@@ -566,7 +314,7 @@ export default function ProfileScreen() {
     );
   };
 
-  if (isLoading) {
+  if (isLoading && !profile) {
     return (
       <View
         style={{
@@ -615,7 +363,7 @@ export default function ProfileScreen() {
         >
           <View style={{ flexDirection: "row", alignItems: "center" }}>
             <Pressable
-              onPress={() => router.back()}
+              onPress={() => router.navigate("/(tabs)")}
               style={{ marginRight: spacing.sm }}
             >
               <Ionicons
@@ -628,13 +376,8 @@ export default function ProfileScreen() {
               Profile
             </Text>
           </View>
-          {/* Sync Status Badge in Header */}
-          <SyncBadge
-            state={syncState}
-            pendingCount={pendingSync}
-            compact
-            onPress={handleSync}
-          />
+          {/* Data is always in sync with the backend */}
+          <SyncBadge state="synced" pendingCount={0} compact />
         </View>
         <Text
           style={{
@@ -846,7 +589,7 @@ export default function ProfileScreen() {
             marginTop: spacing.xs,
           }}
         >
-          Member since {formatAccountDate(profile?.createdAt)}
+          Member since {profile?.createdAt ? formatAccountDate(new Date(profile.createdAt).getTime()) : "—"}
         </Text>
       </Animated.View>
 
@@ -1013,29 +756,71 @@ export default function ProfileScreen() {
           >
             Age
           </Text>
-          <View
+          <TextInput
+            value={age}
+            onChangeText={setAge}
+            placeholder="e.g. 25"
+            placeholderTextColor={colors.textMuted}
+            keyboardType="number-pad"
             style={{
-              flexDirection: "row",
-              alignItems: "center",
               backgroundColor: colors.surfaceElevated,
               borderRadius: radius.md,
               paddingHorizontal: spacing.md,
+              paddingVertical: spacing.md,
+              color: colors.textPrimary,
+              ...typography.body,
+            }}
+          />
+        </View>
+
+        {/* Fitness Goal */}
+        <View style={{ marginBottom: spacing.lg }}>
+          <Text
+            style={{
+              ...typography.caption,
+              color: colors.textSecondary,
+              marginBottom: spacing.sm,
             }}
           >
-            <Text style={{ ...typography.body, color: colors.textPrimary }}>
-              {profile?.age ? `${profile.age} years` : "Not set"}
-            </Text>
-            <Pressable
-              onPress={() => {
-                setProfilePromptMode("age");
-                setShowProfileCompletion(true);
-              }}
-              style={{ marginLeft: "auto", paddingVertical: spacing.md }}
-            >
-              <Text style={{ color: colors.accent, fontWeight: "600" }}>
-                Edit
-              </Text>
-            </Pressable>
+            Fitness Goal
+          </Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+            {[
+              { id: "strength", label: "Strength", emoji: "🏋️" },
+              { id: "muscle", label: "Muscle Gain", emoji: "💪" },
+              { id: "endurance", label: "Endurance", emoji: "🏃" },
+              { id: "weight-loss", label: "Weight Loss", emoji: "⚖️" },
+              { id: "general", label: "General", emoji: "🎯" },
+            ].map((goal) => {
+              const selected = fitnessGoal === goal.id;
+              return (
+                <Pressable
+                  key={goal.id}
+                  onPress={() => setFitnessGoal(goal.id)}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingVertical: spacing.sm,
+                    paddingHorizontal: spacing.md,
+                    borderRadius: radius.lg,
+                    backgroundColor: selected ? colors.accent : colors.surfaceElevated,
+                    borderWidth: 1,
+                    borderColor: selected ? colors.accent : colors.cardBorder,
+                  }}
+                >
+                  <Text style={{ fontSize: 14, marginRight: 4 }}>{goal.emoji}</Text>
+                  <Text
+                    style={{
+                      ...typography.caption,
+                      color: selected ? "#fff" : colors.textPrimary,
+                      fontWeight: selected ? "700" : "500",
+                    }}
+                  >
+                    {goal.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
         </View>
 
@@ -1069,7 +854,7 @@ export default function ProfileScreen() {
               marginBottom: spacing.lg,
             }}
           >
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
+            {[1, 2, 3, 4, 5, 6, 7].map((num) => (
               <Pressable
                 key={num}
                 onPress={() => setWeeklyGoal(String(num))}
@@ -1110,6 +895,72 @@ export default function ProfileScreen() {
           >
             How many workouts do you aim to complete each day?
           </Text>
+        </View>
+      </Animated.View>
+
+      {/* WEIGHT UNIT PREFERENCE */}
+      <Animated.View
+        entering={FadeInUp.delay(480).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          padding: spacing.lg,
+          marginBottom: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+        }}
+      >
+        <Text
+          style={{
+            ...typography.label,
+            color: colors.textMuted,
+            marginBottom: spacing.md,
+          }}
+        >
+          WEIGHT UNIT
+        </Text>
+        <View
+          style={{
+            flexDirection: "row",
+            gap: spacing.sm,
+          }}
+        >
+          {(["kg", "lbs"] as const).map((u) => (
+            <Pressable
+              key={u}
+              onPress={() => setWeightUnit(u)}
+              style={{
+                flex: 1,
+                paddingVertical: spacing.md,
+                borderRadius: radius.lg,
+                backgroundColor:
+                  weightUnit === u ? colors.accent : colors.surfaceElevated,
+                alignItems: "center",
+                borderWidth: weightUnit === u ? 0 : 1,
+                borderColor: colors.cardBorder,
+              }}
+            >
+              <Text
+                style={{
+                  color: weightUnit === u ? "#fff" : colors.textPrimary,
+                  fontWeight: "700",
+                  fontSize: 16,
+                }}
+              >
+                {u.toUpperCase()}
+              </Text>
+              <Text
+                style={{
+                  color: weightUnit === u ? "rgba(255,255,255,0.7)" : colors.textMuted,
+                  fontSize: 12,
+                  marginTop: 2,
+                }}
+              >
+                {u === "kg" ? "Kilograms" : "Pounds"}
+              </Text>
+            </Pressable>
+          ))}
         </View>
       </Animated.View>
 
@@ -1209,7 +1060,7 @@ export default function ProfileScreen() {
       </Animated.View>
       */}
 
-      {/* SETTINGS SECTION - Always visible at bottom */}
+      {/* DATA STATUS SECTION */}
       <Animated.View
         entering={FadeInUp.delay(400).duration(400)}
         style={{
@@ -1229,100 +1080,32 @@ export default function ProfileScreen() {
             marginBottom: spacing.lg,
           }}
         >
-          DATA & SYNC
+          DATA
         </Text>
 
-        {/* Sync Status */}
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: spacing.md,
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <View
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: radius.md,
-                backgroundColor:
-                  pendingSync > 0 ? colors.warningLight : colors.successLight,
-                justifyContent: "center",
-                alignItems: "center",
-                marginRight: spacing.sm,
-              }}
-            >
-              <Ionicons
-                name={
-                  pendingSync > 0 ? "cloud-upload-outline" : "checkmark-circle"
-                }
-                size={20}
-                color={pendingSync > 0 ? colors.warning : colors.success}
-              />
-            </View>
-            <View>
-              <Text
-                style={{ ...typography.bodyMedium, color: colors.textPrimary }}
-              >
-                {pendingSync > 0 ? `${pendingSync} pending` : "All synced"}
-              </Text>
-              <Text
-                style={{ ...typography.caption, color: colors.textSecondary }}
-              >
-                {pendingSync > 0 ? "Tap to sync now" : "Data is up to date"}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Sync Button */}
-        <Pressable
-          onPress={handleSync}
-          disabled={isSyncing}
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: colors.accent,
-            padding: spacing.md,
-            borderRadius: radius.lg,
-            opacity: isSyncing ? 0.6 : 1,
-          }}
-        >
-          {isSyncing ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Ionicons
-                name="sync-outline"
-                size={20}
-                color="#fff"
-                style={{ marginRight: spacing.xs }}
-              />
-              <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
-                Sync Now
-              </Text>
-            </>
-          )}
-        </Pressable>
-
-        {syncMessage && (
-          <Text
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <View
             style={{
-              textAlign: "center",
-              color: syncMessage.includes("failed")
-                ? colors.error
-                : colors.success,
-              marginTop: spacing.md,
-              fontWeight: "500",
-              fontSize: 14,
+              width: 40,
+              height: 40,
+              borderRadius: radius.md,
+              backgroundColor: colors.successLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: spacing.sm,
             }}
           >
-            {syncMessage}
-          </Text>
-        )}
+            <Ionicons name="cloud-done-outline" size={20} color={colors.success} />
+          </View>
+          <View>
+            <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
+              All data synced
+            </Text>
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              Stored securely in the cloud
+            </Text>
+          </View>
+        </View>
       </Animated.View>
 
       {__DEV__ && (
@@ -1410,6 +1193,183 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
       )}
+
+      {/* AI WORKOUT PLAN */}
+      <Animated.View
+        entering={FadeInUp.delay(430).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+          marginBottom: spacing.md,
+        }}
+      >
+        <Pressable
+          onPress={() => router.push("/ai-plan")}
+          style={{ flexDirection: "row", alignItems: "center", padding: spacing.lg }}
+        >
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: radius.md,
+              backgroundColor: colors.accentLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: spacing.sm,
+            }}
+          >
+            <Ionicons name="sparkles" size={20} color={colors.accent} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
+              AI Workout Plan
+            </Text>
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              {profile?.activePlan ? "View & manage your plan" : "Generate with Gemini AI"}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </Pressable>
+      </Animated.View>
+
+      {/* NOTIFICATION SETTINGS */}
+      <Animated.View
+        entering={FadeInUp.delay(440).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+          marginBottom: spacing.md,
+        }}
+      >
+        <Pressable
+          onPress={() => router.push("/notification-settings")}
+          style={{ flexDirection: "row", alignItems: "center", padding: spacing.lg }}
+        >
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: radius.md,
+              backgroundColor: colors.secondaryLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: spacing.sm,
+            }}
+          >
+            <Ionicons name="notifications-outline" size={20} color={colors.secondary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
+              Notification Settings
+            </Text>
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              Reminders, achievements, weekly summary
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </Pressable>
+      </Animated.View>
+
+      {/* APPEARANCE */}
+      <Animated.View
+        entering={FadeInUp.delay(445).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+          marginBottom: spacing.md,
+        }}
+      >
+        <View style={{ padding: spacing.lg }}>
+          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}>
+            <View
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: radius.md,
+                backgroundColor: "#78350F20",
+                justifyContent: "center",
+                alignItems: "center",
+                marginRight: spacing.sm,
+              }}
+            >
+              <Ionicons name="color-palette-outline" size={20} color="#92400E" />
+            </View>
+            <View>
+              <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>Appearance</Text>
+              <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+                Choose your preferred theme
+              </Text>
+            </View>
+          </View>
+
+          {/* Three-way toggle */}
+          <View
+            style={{
+              flexDirection: "row",
+              backgroundColor: colors.surfaceElevated,
+              borderRadius: radius.lg,
+              padding: 3,
+              borderWidth: 1,
+              borderColor: colors.cardBorder,
+            }}
+          >
+            {(
+              [
+                { value: "system" as ThemePreference, label: "System", icon: "phone-portrait-outline" as const },
+                { value: "light" as ThemePreference, label: "Light", icon: "sunny-outline" as const },
+                { value: "dark" as ThemePreference, label: "Dark", icon: "moon-outline" as const },
+              ]
+            ).map((opt) => {
+              const active = themePreference === opt.value;
+              return (
+                <Pressable
+                  key={opt.value}
+                  onPress={() => setThemePreference(opt.value)}
+                  style={{
+                    flex: 1,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    paddingVertical: spacing.sm,
+                    borderRadius: radius.md,
+                    backgroundColor: active ? colors.surface : "transparent",
+                    gap: 5,
+                    borderWidth: active ? 1 : 0,
+                    borderColor: active ? colors.cardBorder : "transparent",
+                  }}
+                >
+                  <Ionicons
+                    name={opt.icon}
+                    size={15}
+                    color={active ? colors.accent : colors.textMuted}
+                  />
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontWeight: active ? "700" : "500",
+                      color: active ? colors.accent : colors.textMuted,
+                    }}
+                  >
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      </Animated.View>
 
       {/* EXPORT DATA SECTION */}
       <Animated.View
@@ -1542,7 +1502,7 @@ export default function ProfileScreen() {
       </Animated.View>
 
       {/* ADMIN TOOLS */}
-      {adminChecked && isAdmin && (
+      {isAdmin && (
         <Animated.View
           entering={FadeInUp.delay(520).duration(400)}
           style={{
@@ -1604,12 +1564,10 @@ export default function ProfileScreen() {
           borderWidth: 1,
           borderColor: colors.cardBorder,
           ...shadows.sm,
-          opacity: isAuthSyncing ? 0.7 : 1,
         }}
       >
         <Pressable
           onPress={handleLogout}
-          disabled={isAuthSyncing}
           style={{
             flexDirection: "row",
             alignItems: "center",
@@ -1621,35 +1579,20 @@ export default function ProfileScreen() {
               width: 40,
               height: 40,
               borderRadius: radius.md,
-              backgroundColor: isAuthSyncing
-                ? colors.surfaceElevated
-                : colors.errorLight,
+              backgroundColor: colors.errorLight,
               justifyContent: "center",
               alignItems: "center",
               marginRight: spacing.sm,
             }}
           >
-            {isAuthSyncing ? (
-              <ActivityIndicator size="small" color={colors.accent} />
-            ) : (
-              <Ionicons name="log-out-outline" size={20} color={colors.error} />
-            )}
+            <Ionicons name="log-out-outline" size={20} color={colors.error} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text
-              style={{
-                ...typography.bodyMedium,
-                color: isAuthSyncing ? colors.textSecondary : colors.error,
-              }}
-            >
-              {isAuthSyncing ? "Syncing data..." : "Log Out"}
+            <Text style={{ ...typography.bodyMedium, color: colors.error }}>
+              Log Out
             </Text>
-            <Text
-              style={{ ...typography.caption, color: colors.textSecondary }}
-            >
-              {isAuthSyncing
-                ? "Please wait while your data is saved"
-                : "Sign out of your account"}
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              Sign out of your account
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />

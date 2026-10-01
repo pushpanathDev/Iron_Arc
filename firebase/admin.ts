@@ -1,33 +1,14 @@
-import { doc, getDoc } from "firebase/firestore";
-import { firestoreDb } from "./config";
+import { userApi } from "../services/api";
 
-const ALLOWLIST_DOC = doc(firestoreDb, "adminUsers", "allowlist");
-
-export async function getAdminAllowlist(): Promise<string[]> {
+/**
+ * Check if the current user is authorized as an admin.
+ * Delegates to the backend profile endpoint where isAdmin is set server-side.
+ */
+export async function isAdminUser(): Promise<boolean> {
   try {
-    const snap = await getDoc(ALLOWLIST_DOC);
-    if (!snap.exists()) return [];
-    const data = snap.data() as { emails?: string[] };
-    return Array.isArray(data.emails) ? data.emails : [];
+    const profile = await userApi.getProfile();
+    return profile.isAdmin === true;
   } catch {
-    return [];
+    return false;
   }
-}
-
-export async function isAdminUser(
-  email?: string | null,
-): Promise<boolean> {
-  if (!email) return false;
-  const allowlist = await getAdminAllowlist();
-  const normalized = email.trim().toLowerCase();
-  const isAllowed = allowlist.some(
-    (e) => e.trim().toLowerCase() === normalized,
-  );
-  console.log("[Admin] Logged in user:", normalized);
-  console.log(
-    "[Admin] Allowlist:",
-    allowlist.map((e) => e.trim().toLowerCase()),
-  );
-  console.log("[Admin] isAdmin:", isAllowed);
-  return isAllowed;
 }

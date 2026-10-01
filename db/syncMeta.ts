@@ -1,49 +1,41 @@
-import { sqliteDb } from "./sqlite";
+import * as SecureStore from "expo-secure-store";
 
-export async function initSyncMeta() {
-  await sqliteDb.runAsync(`
-    CREATE TABLE IF NOT EXISTS sync_meta (
-      key TEXT PRIMARY KEY,
-      value TEXT
-    )
-  `);
+function sanitizeKey(key: string) {
+  return key.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-export async function getLastSync(key: string): Promise<number | null> {
-  const row = await sqliteDb.getFirstAsync<{ value: string }>(
-    `SELECT value FROM sync_meta WHERE key = ?`,
-    [key]
-  );
-  return row ? Number(row.value) : null;
+async function getKV(key: string): Promise<string | null> {
+  return SecureStore.getItemAsync(sanitizeKey(key));
 }
 
-export async function setLastSync(key: string, timestamp: number) {
-  await sqliteDb.runAsync(
-    `INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?)`,
-    [key, String(timestamp)]
-  );
+async function setKV(key: string, value: string): Promise<void> {
+  await SecureStore.setItemAsync(sanitizeKey(key), value);
 }
 
-function getEmailVerificationKey(userId: string) {
-  return `email_verification_start:${userId}`;
+async function deleteKV(key: string): Promise<void> {
+  await SecureStore.deleteItemAsync(sanitizeKey(key));
+}
+
+function emailVerificationKey(userId: string) {
+  return `evs_${userId}`;
 }
 
 export async function getEmailVerificationStart(
   userId: string,
 ): Promise<number | null> {
-  return getLastSync(getEmailVerificationKey(userId));
+  const raw = await getKV(emailVerificationKey(userId));
+  return raw ? Number(raw) : null;
 }
 
 export async function setEmailVerificationStart(
   userId: string,
   timestamp: number,
-) {
-  await setLastSync(getEmailVerificationKey(userId), timestamp);
+): Promise<void> {
+  await setKV(emailVerificationKey(userId), String(timestamp));
 }
 
-export async function clearEmailVerificationStart(userId: string) {
-  await sqliteDb.runAsync(
-    `DELETE FROM sync_meta WHERE key = ?`,
-    [getEmailVerificationKey(userId)],
-  );
+export async function clearEmailVerificationStart(
+  userId: string,
+): Promise<void> {
+  await deleteKV(emailVerificationKey(userId));
 }

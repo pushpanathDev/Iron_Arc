@@ -4,7 +4,7 @@
  * Provides functions for grouping workouts, calculating metrics, and generating insights
  */
 
-import { Workout } from "../db/workouts";
+import { Workout } from "../services/api";
 
 export interface ExerciseSummary {
   exerciseName: string;

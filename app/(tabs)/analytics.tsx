@@ -1,9 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { router, useFocusEffect } from "expo-router";
+import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Dimensions,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -20,13 +19,12 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Circle, G, Path } from "react-native-svg";
 
-import { useAuth } from "../../auth/AuthContext";
-import { useGlobalSync } from "../../context/SyncContext";
 import { useTheme } from "../../theme/theme";
 
-import { getUserProfile } from "../../db/profiles";
-import { BodyWeight, getAllWeights } from "../../db/weights";
-import { getAllWorkouts, Workout } from "../../db/workouts";
+import { useProfile } from "../../hooks/useProfile";
+import { useAllWeights } from "../../hooks/useWeights";
+import { useAllWorkouts } from "../../hooks/useWorkouts";
+import { BodyWeight } from "../../services/api";
 import {
   generateInsights,
   Insight,
@@ -34,80 +32,71 @@ import {
 } from "../../insights/insightEngine";
 import { formatDate } from "../../utils/weekUtils";
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
-
 export default function Analytics() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
-  const { user } = useAuth();
-  const { globalSync, refreshVersion } = useGlobalSync();
   const insets = useSafeAreaInsets();
 
-  const [workouts, setWorkouts] = useState<Workout[]>([]);
-  const [weights, setWeights] = useState<BodyWeight[]>([]);
+  const { data: workouts = [], refetch: refetchWorkouts } = useAllWorkouts();
+  const { data: rawWeights = [], refetch: refetchWeights } = useAllWeights();
+  const { data: profile } = useProfile();
+
+  // Sort weights ascending for charts
+  const weights = [...rawWeights].sort((a, b) => a.date.localeCompare(b.date));
+
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedPeriod, setSelectedPeriod] = useState<
-    "week" | "month" | "all"
-  >("week");
-  const [insights, setInsights] = useState<Insight[]>([]);
-  const [weeklyGoal, setWeeklyGoal] = useState(1); // Daily goal - default to 1 workout per day
-  const [selectedWeightIndex, setSelectedWeightIndex] = useState<number | null>(
-    null,
-  );
+  const [selectedPeriod, setSelectedPeriod] = useState<"week" | "month" | "all">("week");
+  const [selectedWeightIndex, setSelectedWeightIndex] = useState<number | null>(null);
 
-  /* =========================
-     LOAD DATA
-     ========================= */
-  const reloadData = useCallback(async () => {
-    if (!user) {
-      setWorkouts([]);
-      setWeights([]);
-      setInsights([]);
-      return;
-    }
-
-    const [w, bw, profile] = await Promise.all([
-      getAllWorkouts(user.uid),
-      getAllWeights(user.uid),
-      getUserProfile(user.uid),
-    ]);
-
-    bw.sort((a, b) => a.date.localeCompare(b.date));
-    setWorkouts(w);
-    setWeights(bw);
-
-    // Load weekly goal from profile
-    if (profile?.weeklyGoal) {
-      setWeeklyGoal(profile.weeklyGoal);
-    }
-
-    // Generate insights from workout and weight data
-    const generatedInsights = generateInsights(w, bw);
-    setInsights(generatedInsights);
-  }, [user]);
-
-  useFocusEffect(
-    useCallback(() => {
-      reloadData();
-    }, [reloadData]),
-  );
+  const weeklyGoal = profile?.weeklyGoal ?? 1;
+  const insights = useMemo(() => generateInsights(workouts, weights), [workouts, weights]);
 
   const handleRefresh = useCallback(async () => {
-    if (!user) return;
     setRefreshing(true);
     try {
-      // Trigger global sync to pull from Firebase
-      await globalSync(user.uid);
-      await reloadData();
+      await Promise.all([refetchWorkouts(), refetchWeights()]);
     } finally {
       setRefreshing(false);
     }
-  }, [reloadData, user, globalSync]);
+  }, [refetchWorkouts, refetchWeights]);
 
-  // Refresh when global sync happens on another screen
-  useEffect(() => {
-    if (!user || refreshVersion === 0) return;
-    reloadData();
-  }, [refreshVersion]);
+  /* =========================
+     PERSONAL RECORDS
+     ========================= */
+  const personalRecords = useMemo(() => {
+    const prMap = new Map<string, { weight: number; reps: number; date: string }>();
+    workouts.forEach((w) => {
+      const best = w.sets.reduce(
+        (max, s) => (s.weight > max.weight ? s : max),
+        { weight: 0, reps: 0 } as { weight: number; reps: number },
+      );
+      const existing = prMap.get(w.exercise);
+      if (!existing || best.weight > existing.weight) {
+        prMap.set(w.exercise, { weight: best.weight, reps: best.reps, date: w.date });
+      }
+    });
+    return Array.from(prMap.entries())
+      .sort((a, b) => b[1].weight - a[1].weight)
+      .slice(0, 5)
+      .map(([exercise, pr]) => ({ exercise, ...pr }));
+  }, [workouts]);
+
+  /* =========================
+     MUSCLE HEATMAP
+     ========================= */
+  const muscleHeatmap = useMemo(() => {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000);
+    const countMap = new Map<string, number>();
+    workouts.forEach((w) => {
+      if (new Date(w.date) >= cutoff && w.category) {
+        countMap.set(w.category, (countMap.get(w.category) || 0) + 1);
+      }
+    });
+    const maxCount = Math.max(1, ...Array.from(countMap.values()));
+    return Array.from(countMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([muscle, count]) => ({ muscle, count, intensity: count / maxCount }));
+  }, [workouts]);
 
   /* =========================
      COMPUTED STATS
@@ -436,7 +425,7 @@ export default function Analytics() {
               }}
             >
               <Text style={{ ...typography.label, color: colors.textMuted }}>
-                TODAY'S GOAL
+                {"TODAY'S GOAL"}
               </Text>
               <Pressable
                 onPress={() => router.push("/(tabs)/profile")}
@@ -718,6 +707,146 @@ export default function Analytics() {
               </View>
             );
           })}
+        </Animated.View>
+      )}
+
+      {/* PERSONAL RECORDS */}
+      {personalRecords.length > 0 && (
+        <Animated.View
+          entering={FadeInUp.delay(650).duration(400)}
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: radius.xl,
+            padding: spacing.lg,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            marginBottom: spacing.md,
+            ...shadows.sm,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}>
+            <Ionicons name="trophy" size={18} color={colors.warning} />
+            <Text style={{ ...typography.h3, color: colors.textPrimary, marginLeft: spacing.xs }}>
+              Personal Records
+            </Text>
+          </View>
+          {personalRecords.map((pr, i) => (
+            <View
+              key={pr.exercise}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingVertical: spacing.sm,
+                borderTopWidth: i > 0 ? 1 : 0,
+                borderTopColor: colors.cardBorder,
+              }}
+            >
+              <View
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: radius.full,
+                  backgroundColor: i === 0 ? colors.warning + "22" : colors.surfaceElevated,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  marginRight: spacing.sm,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 12,
+                    fontWeight: "700",
+                    color: i === 0 ? colors.warning : colors.textMuted,
+                  }}
+                >
+                  #{i + 1}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{ ...typography.bodyMedium, color: colors.textPrimary }}
+                  numberOfLines={1}
+                >
+                  {pr.exercise}
+                </Text>
+                <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+                  {pr.date}
+                </Text>
+              </View>
+              <View style={{ alignItems: "flex-end" }}>
+                <Text style={{ ...typography.bodyMedium, color: colors.accent, fontWeight: "700" }}>
+                  {pr.weight} kg
+                </Text>
+                <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+                  {pr.reps} reps
+                </Text>
+              </View>
+            </View>
+          ))}
+        </Animated.View>
+      )}
+
+      {/* MUSCLE GROUP HEATMAP */}
+      {muscleHeatmap.length > 0 && (
+        <Animated.View
+          entering={FadeInUp.delay(670).duration(400)}
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: radius.xl,
+            padding: spacing.lg,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            marginBottom: spacing.md,
+            ...shadows.sm,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.xs }}>
+            <Ionicons name="body" size={18} color={colors.accent} />
+            <Text style={{ ...typography.h3, color: colors.textPrimary, marginLeft: spacing.xs }}>
+              Muscle Heatmap
+            </Text>
+          </View>
+          <Text style={{ ...typography.caption, color: colors.textSecondary, marginBottom: spacing.md }}>
+            Training frequency — last 28 days
+          </Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+            {muscleHeatmap.map(({ muscle, count, intensity }) => {
+              const alpha = Math.round(40 + intensity * 180).toString(16).padStart(2, "0");
+              return (
+                <View
+                  key={muscle}
+                  style={{
+                    paddingVertical: spacing.sm,
+                    paddingHorizontal: spacing.md,
+                    borderRadius: radius.lg,
+                    backgroundColor: colors.accent + alpha,
+                    borderWidth: 1,
+                    borderColor: colors.accent + "40",
+                    alignItems: "center",
+                    minWidth: 90,
+                  }}
+                >
+                  <Text
+                    style={{
+                      ...typography.bodyMedium,
+                      color: intensity > 0.5 ? "#fff" : colors.textPrimary,
+                      fontWeight: "600",
+                    }}
+                  >
+                    {muscle}
+                  </Text>
+                  <Text
+                    style={{
+                      ...typography.caption,
+                      color: intensity > 0.5 ? "rgba(255,255,255,0.8)" : colors.textSecondary,
+                    }}
+                  >
+                    {count}×
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
         </Animated.View>
       )}
 
@@ -1066,7 +1195,7 @@ function WeeklyBarItem({
     animatedHeight.value = withTiming(isSelected ? height + 8 : height, {
       duration: 180,
     });
-  }, [height, isSelected]);
+  }, [animatedHeight, height, isSelected]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     height: animatedHeight.value,

@@ -3,7 +3,6 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -15,35 +14,42 @@ import {
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import * as Crypto from "expo-crypto";
-
 import CategoryPicker from "../components/ui/CategoryPicker";
 import ExercisePicker from "../components/ui/ExercisePicker";
 import { ProfileCompletionPrompt } from "../components/ProfileCompletionPrompt";
+import { RestTimer } from "../components/RestTimer";
 
+import { z } from "zod";
 import { useAuth } from "../auth/AuthContext";
 import { ExerciseCategory } from "../data/exercises";
-import { getAllWorkouts, insertWorkout } from "../db/workouts";
-import { getUserProfile, updateUserProfile, syncProfileToFirebase } from "../db/profiles";
+import { workoutApi, userApi } from "../services/api";
+import { useWorkout, useCreateWorkout, useUpdateWorkout } from "../hooks/useWorkouts";
+import { useProfile } from "../hooks/useProfile";
+import { useUnitPreference } from "../hooks/useUnitPreference";
+import { useToast } from "../context/ToastContext";
 import { useTheme } from "../theme/theme";
 import { formatDate } from "../utils/weekUtils";
+import { displayWeight, toKg, weightLabel, weightStep } from "../utils/unitConversion";
 
+const setSchema = z.object({
+  reps: z
+    .string()
+    .min(1, "Reps required")
+    .refine((v) => Number(v) > 0, { message: "Reps must be > 0" })
+    .refine((v) => Number(v) <= 999, { message: "Reps must be ≤ 999" }),
+  weight: z
+    .string()
+    .min(1, "Weight required")
+    .refine((v) => !isNaN(Number(v)), { message: "Weight must be a number" })
+    .refine((v) => Number(v) >= 0, { message: "Weight must be ≥ 0" }),
+});
 
-/* =========================
-   SAFE UUID GENERATOR
-   ========================= */
-function generateWorkoutId() {
-  try {
-    return Crypto.randomUUID();
-  } catch {
-    // Ultra-rare fallback (should almost never happen)
-    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-      const r = (Math.random() * 16) | 0;
-      const v = c === "x" ? r : (r & 0x3) | 0x8;
-      return v.toString(16);
-    });
-  }
-}
+const workoutSchema = z.object({
+  exercise: z.string({ required_error: "Please select an exercise" }).min(1, "Please select an exercise"),
+  category: z.string({ required_error: "Please select a category" }).min(1, "Please select a category"),
+  sets: z.array(setSchema).min(1, "At least one set is required"),
+});
+
 
 /* =========================
    LONG PRESS BUTTON (for hold-to-increment)
@@ -158,9 +164,18 @@ export default function AddWorkout() {
   const insets = useSafeAreaInsets();
 
   const { user } = useAuth();
+  const { showToast } = useToast();
+
+  // Fetch existing workout when in edit mode
+  const { data: existingWorkout } = useWorkout(isEdit ? String(id) : "");
+  const { data: profile } = useProfile();
+  const { unit } = useUnitPreference();
+  const step = weightStep(unit);
+
+  const createWorkout = useCreateWorkout();
+  const updateWorkout = useUpdateWorkout();
 
   const [showProfileCompletion, setShowProfileCompletion] = useState(false);
-  const [userProfile, setUserProfile] = useState<any>(null);
   const profileCheckDoneRef = useRef(false);
 
   const [notes, setNotes] = useState("");
@@ -171,57 +186,40 @@ export default function AddWorkout() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [originalCreatedAt, setOriginalCreatedAt] = useState<number | null>(
-    null,
-  );
+  const [populated, setPopulated] = useState(false);
+  const [showRestTimer, setShowRestTimer] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   /* =========================
-     LOAD WORKOUT (EDIT MODE)
+     POPULATE FORM (EDIT MODE)
      ========================= */
   useEffect(() => {
-    if (!user || isEdit === undefined) return;
-
-    const loadWorkout = async () => {
-      // If editing existing workout, load it
-      if (isEdit) {
-        const workouts = await getAllWorkouts(user.uid);
-        const workout = workouts.find((w) => w.id === id);
-        if (!workout) return;
-
-        setCategory((workout.category as ExerciseCategory) ?? null);
-        setExercise(workout.exercise);
-        setNotes(workout.notes ?? "");
-        setWorkoutDate(new Date(workout.date));
-        setOriginalCreatedAt(workout.createdAt);
-        setSets(
-          workout.sets.map((s) => ({
-            reps: String(s.reps),
-            weight: String(s.weight),
-          })),
-        );
-      } else if (!profileCheckDoneRef.current) {
-        // For new workouts, check profile once (not edit mode)
-        profileCheckDoneRef.current = true;
-        
-        try {
-          const profile = await getUserProfile(user.uid);
-          setUserProfile(profile);
-          
-          // Only show completion if BOTH weight AND age are missing
-          if (profile && !profile.weight && !profile.age) {
-            setShowProfileCompletion(true);
-          }
-        } catch (error) {
-          console.error("Failed to check profile:", error);
-          // Continue without profile completion if check fails
-        }
-      }
-    };
-
-    if (user?.uid) {
-      loadWorkout();
+    if (isEdit && existingWorkout && !populated) {
+      setCategory((existingWorkout.category as ExerciseCategory) ?? null);
+      setExercise(existingWorkout.exercise);
+      setNotes(existingWorkout.notes ?? "");
+      setWorkoutDate(new Date(existingWorkout.date));
+      setSets(
+        existingWorkout.sets.map((s) => ({
+          reps: String(s.reps),
+          weight: String(displayWeight(s.weight, unit)),
+        })),
+      );
+      setPopulated(true);
     }
-  }, [user?.uid, isEdit, id]);
+  }, [isEdit, existingWorkout, populated]);
+
+  /* =========================
+     PROFILE COMPLETION CHECK (NEW WORKOUT)
+     ========================= */
+  useEffect(() => {
+    if (!isEdit && profile && !profileCheckDoneRef.current) {
+      profileCheckDoneRef.current = true;
+      if (!profile.weight && !profile.age) {
+        setShowProfileCompletion(true);
+      }
+    }
+  }, [isEdit, profile]);
 
   /* =========================
      SAVE & HELPER FUNCTIONS
@@ -267,38 +265,56 @@ export default function AddWorkout() {
     setSets(sets.filter((_, i) => i !== index));
 
   const saveWorkout = async () => {
-    if (!category || !exercise || !user) {
-      setMessage("Please select a category and exercise");
+    if (!user) return;
+
+    // Zod validation
+    const parsed = workoutSchema.safeParse({ exercise, category, sets });
+    if (!parsed.success) {
+      const errors: Record<string, string> = {};
+      parsed.error.issues.forEach((issue) => {
+        const key = issue.path.join(".");
+        errors[key] = issue.message;
+      });
+      setValidationErrors(errors);
+      // Show the first error as a toast
+      showToast({ message: parsed.error.issues[0].message, type: "warning" });
       return;
     }
+    setValidationErrors({});
+
+    setSaving(true);
+
+    const parsedSets = sets.map((s) => ({
+      reps: Number(s.reps),
+      weight: toKg(Number(s.weight), unit),
+    }));
 
     try {
-      setSaving(true);
-
-      const workout = {
-        id: isEdit ? String(id) : generateWorkoutId(),
-        userId: user.uid,
-        date: formatDate(workoutDate),
-        exercise,
-        category,
-        notes,
-        createdAt: isEdit ? originalCreatedAt ?? Date.now() : Date.now(),
-        sets: sets.map((s) => ({
-          reps: Number(s.reps),
-          weight: Number(s.weight),
-        })),
-      };
-
-      // ✅ SQLite only (offline-first)
-      // Firebase sync happens on pull-to-refresh via syncWorkoutQueue()
-      await insertWorkout(workout);
+      if (isEdit && id) {
+        await updateWorkout.mutateAsync({
+          id: String(id),
+          data: {
+            date: formatDate(workoutDate),
+            exercise: exercise!,
+            category: category!,
+            notes: notes || null,
+            sets: parsedSets,
+          },
+        });
+      } else {
+        await createWorkout.mutateAsync({
+          date: formatDate(workoutDate),
+          exercise: exercise!,
+          category: category!,
+          notes: notes || undefined,
+          sets: parsedSets,
+        });
+      }
 
       setMessage(isEdit ? "Workout updated ✓" : "Workout saved ✓");
       setTimeout(() => router.back(), 600);
     } catch (e) {
       console.error("Error saving workout:", e);
-      const errorMsg = typeof e === "object" && e !== null && "message" in e ? (e as any).message : "Failed to save workout";
-      setMessage(`Error: ${errorMsg}`);
     } finally {
       setSaving(false);
     }
@@ -308,51 +324,21 @@ export default function AddWorkout() {
     weight: number | null,
     age: number | null
   ) => {
-    if (!user?.uid) return;
-
     try {
       const updates: any = {};
-      let hasUpdates = false;
+      if (weight !== null && weight > 0) updates.weight = weight;
+      if (age !== null && age > 0) updates.age = age;
 
-      if (weight !== null && weight > 0) {
-        updates.weight = weight;
-        hasUpdates = true;
+      if (Object.keys(updates).length > 0) {
+        await userApi.updateProfile(updates);
       }
 
-      if (age !== null && age > 0) {
-        updates.age = age;
-        hasUpdates = true;
-      }
-
-      if (hasUpdates) {
-        // Save to local SQLite
-        await updateUserProfile(user.uid, updates);
-        console.log("✅ Profile updated locally:", updates);
-
-        // IMMEDIATELY SYNC TO FIREBASE
-        // Don't wait for manual sync - save to Firebase right away
-        console.log("📤 Syncing profile to Firebase immediately...");
-        await syncProfileToFirebase({
-          userId: user.uid,
-          ...updates,
-        });
-        console.log("✅ Profile synced to Firebase");
-      }
-
-      // CRITICAL: Mark that we've shown completion once
       setShowProfileCompletion(false);
-      setUserProfile((prev: any) => ({
-        ...prev,
-        weight: weight ?? prev?.weight,
-        age: age ?? prev?.age,
-      }));
-      
       setMessage("Profile updated ✓");
-      setTimeout(() => router.back(), 600);
+      setTimeout(() => setMessage(null), 1500);
     } catch (error) {
       console.error("Error saving profile:", error);
-      const errorMsg = error instanceof Error ? error.message : "Unknown error";
-      setMessage(`Failed to save profile: ${errorMsg}`);
+      setMessage(`Failed to save profile: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
 
@@ -386,7 +372,7 @@ export default function AddWorkout() {
           }}
         >
           <Pressable
-            onPress={() => router.back()}
+            onPress={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")}
             style={{ marginRight: spacing.sm }}
           >
             <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
@@ -492,11 +478,21 @@ export default function AddWorkout() {
           EXERCISE
         </Text>
         <CategoryPicker value={category} onChange={setCategory} />
+        {validationErrors["category"] && (
+          <Text style={{ color: colors.error, fontSize: 12, marginTop: 4 }}>
+            {validationErrors["category"]}
+          </Text>
+        )}
         <ExercisePicker
           category={category}
           value={exercise}
           onChange={setExercise}
         />
+        {validationErrors["exercise"] && (
+          <Text style={{ color: colors.error, fontSize: 12, marginTop: 4 }}>
+            {validationErrors["exercise"]}
+          </Text>
+        )}
       </Animated.View>
 
       {/* SETS */}
@@ -512,29 +508,54 @@ export default function AddWorkout() {
           <Text style={{ ...typography.label, color: colors.textMuted }}>
             SETS
           </Text>
-          <Pressable
-            onPress={addSet}
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              paddingVertical: spacing.xs,
-              paddingHorizontal: spacing.sm,
-              backgroundColor: colors.accentLight,
-              borderRadius: radius.lg,
-            }}
-          >
-            <Ionicons name="add" size={16} color={colors.accent} />
-            <Text
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <Pressable
+              onPress={() => setShowRestTimer(true)}
               style={{
-                color: colors.accent,
-                fontWeight: "600",
-                fontSize: 14,
-                marginLeft: 4,
+                flexDirection: "row",
+                alignItems: "center",
+                paddingVertical: spacing.xs,
+                paddingHorizontal: spacing.sm,
+                backgroundColor: colors.secondaryLight,
+                borderRadius: radius.lg,
               }}
             >
-              Add Set
-            </Text>
-          </Pressable>
+              <Ionicons name="timer-outline" size={16} color={colors.secondary} />
+              <Text
+                style={{
+                  color: colors.secondary,
+                  fontWeight: "600",
+                  fontSize: 14,
+                  marginLeft: 4,
+                }}
+              >
+                Rest
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={addSet}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingVertical: spacing.xs,
+                paddingHorizontal: spacing.sm,
+                backgroundColor: colors.accentLight,
+                borderRadius: radius.lg,
+              }}
+            >
+              <Ionicons name="add" size={16} color={colors.accent} />
+              <Text
+                style={{
+                  color: colors.accent,
+                  fontWeight: "600",
+                  fontSize: 14,
+                  marginLeft: 4,
+                }}
+              >
+                Add Set
+              </Text>
+            </Pressable>
+          </View>
         </View>
 
         {sets.map((set, index) => (
@@ -708,7 +729,14 @@ export default function AddWorkout() {
                     );
                   })}
                 </View>
+                {/* Reps validation error — outside the presets row, inside reps column */}
+                {validationErrors[`sets.${index}.reps`] && (
+                  <Text style={{ color: colors.error, fontSize: 11, marginTop: 4 }}>
+                    {validationErrors[`sets.${index}.reps`]}
+                  </Text>
+                )}
               </View>
+              {/* END reps column */}
 
               {/* Weight with +/- buttons */}
               <View style={{ flex: 1 }}>
@@ -719,7 +747,7 @@ export default function AddWorkout() {
                     marginBottom: spacing.xs,
                   }}
                 >
-                  Weight (kg)
+                  Weight ({weightLabel(unit)})
                 </Text>
                 <View
                   style={{
@@ -729,7 +757,7 @@ export default function AddWorkout() {
                   }}
                 >
                   <LongPressButton
-                    onIncrement={() => incrementValue(index, "weight", -2.5)}
+                    onIncrement={() => incrementValue(index, "weight", -step)}
                     style={{
                       width: 40,
                       height: 48,
@@ -765,7 +793,7 @@ export default function AddWorkout() {
                     }}
                   />
                   <LongPressButton
-                    onIncrement={() => incrementValue(index, "weight", 2.5)}
+                    onIncrement={() => incrementValue(index, "weight", step)}
                     style={{
                       width: 40,
                       height: 48,
@@ -778,8 +806,17 @@ export default function AddWorkout() {
                     <Ionicons name="add" size={20} color={colors.accent} />
                   </LongPressButton>
                 </View>
+                {/* Weight validation error — outside the buttons row, inside weight column */}
+                {validationErrors[`sets.${index}.weight`] && (
+                  <Text style={{ color: colors.error, fontSize: 11, marginTop: 4 }}>
+                    {validationErrors[`sets.${index}.weight`]}
+                  </Text>
+                )}
               </View>
+              {/* END weight column */}
+
             </View>
+            {/* END reps + weight row */}
           </Animated.View>
         ))}
       </Animated.View>
@@ -865,14 +902,19 @@ export default function AddWorkout() {
       <ProfileCompletionPrompt
         visible={showProfileCompletion}
         onDismiss={() => {
+          // User skipped profile completion — keep them on the form to log their workout
           setShowProfileCompletion(false);
-          setMessage("Workout saved ✓");
-          setTimeout(() => router.back(), 600);
         }}
         onSave={handleProfileCompletion}
-        currentWeight={userProfile?.weight}
-        currentAge={userProfile?.age}
+        currentWeight={profile?.weight}
+        currentAge={profile?.age}
         isLoading={saving}
+      />
+
+      {/* Rest Timer */}
+      <RestTimer
+        visible={showRestTimer}
+        onClose={() => setShowRestTimer(false)}
       />
 
     </KeyboardAvoidingView>

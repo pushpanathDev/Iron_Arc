@@ -1,67 +1,21 @@
 import { User, sendEmailVerification } from "firebase/auth";
-import {
-  doc,
-  getDoc,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-} from "firebase/firestore";
-import { auth, firestoreDb } from "../firebase/config";
+import * as SecureStore from "expo-secure-store";
 
-const PROFILE_DOC = (userId: string) =>
-  doc(firestoreDb, "users", userId, "profile", "data");
+const RESEND_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes
+
+function verificationSentKey(userId: string) {
+  return `evs_sent_${userId}`;
+}
 
 export type VerificationMeta = {
   isEmailVerified?: boolean;
   verificationSentAt?: number | null;
 };
 
-const RESEND_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes
-
-export async function getVerificationMeta(
-  userId: string,
-): Promise<VerificationMeta | null> {
-  try {
-    const snap = await getDoc(PROFILE_DOC(userId));
-    if (!snap.exists()) return null;
-    const data = snap.data() as VerificationMeta;
-    return data;
-  } catch (error) {
-    console.warn("Failed to read verification meta:", error);
-    return null;
-  }
-}
-
-export async function updateVerificationMeta(
-  userId: string,
-  meta: VerificationMeta,
-) {
-  try {
-    const ref = PROFILE_DOC(userId);
-    const snap = await getDoc(ref);
-    if (snap.exists()) {
-      await updateDoc(ref, {
-        ...meta,
-        updatedAt: Date.now(),
-      });
-    } else {
-      await setDoc(ref, {
-        ...meta,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-    }
-  } catch (error) {
-    console.warn("Failed to update verification meta:", error);
-  }
-}
-
 export async function canResendVerificationEmail(userId: string) {
-  const meta = await getVerificationMeta(userId);
-  if (!meta?.verificationSentAt) {
-    return { allowed: true, waitSeconds: 0 };
-  }
-  const elapsed = Date.now() - meta.verificationSentAt;
+  const raw = await SecureStore.getItemAsync(verificationSentKey(userId));
+  if (!raw) return { allowed: true, waitSeconds: 0 };
+  const elapsed = Date.now() - Number(raw);
   if (elapsed < RESEND_COOLDOWN_MS) {
     return {
       allowed: false,
@@ -72,10 +26,21 @@ export async function canResendVerificationEmail(userId: string) {
 }
 
 export async function recordVerificationSent(userId: string) {
-  await updateVerificationMeta(userId, {
-    isEmailVerified: false,
-    verificationSentAt: Date.now(),
-  });
+  await SecureStore.setItemAsync(verificationSentKey(userId), String(Date.now()));
+}
+
+export async function updateVerificationMeta(
+  userId: string,
+  meta: VerificationMeta,
+) {
+  if (meta.verificationSentAt) {
+    await SecureStore.setItemAsync(
+      verificationSentKey(userId),
+      String(meta.verificationSentAt),
+    );
+  } else if (meta.verificationSentAt === null) {
+    await SecureStore.deleteItemAsync(verificationSentKey(userId));
+  }
 }
 
 export async function sendVerificationEmail(user: User) {
@@ -86,20 +51,24 @@ export async function sendVerificationEmail(user: User) {
 export async function syncVerificationStatus(user: User) {
   try {
     await user.reload();
-  } catch (error) {
+  } catch {
     // Non-blocking: keep last known state
   }
 
   if (!user.emailVerified) return false;
 
-  await updateVerificationMeta(user.uid, {
-    isEmailVerified: true,
-    verificationSentAt: null,
-  });
+  try {
+    await user.getIdToken(true);
+  } catch {
+    // Best-effort refresh so backend sees the updated emailVerified claim
+  }
+
+  // Clear the resend timestamp once verified
+  try {
+    await SecureStore.deleteItemAsync(verificationSentKey(user.uid));
+  } catch {
+    // Non-critical
+  }
 
   return true;
-}
-
-export function getCurrentUser() {
-  return auth.currentUser;
 }

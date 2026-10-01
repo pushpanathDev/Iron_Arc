@@ -8,8 +8,7 @@
 import { File, Paths } from "expo-file-system";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-import { BodyWeight, getAllWeights } from "../db/weights";
-import { Workout, getAllWorkouts } from "../db/workouts";
+import { BodyWeight, Workout, workoutApi, weightApi } from "../services/api";
 
 /* ==============================
    TYPES
@@ -107,13 +106,13 @@ function generateWeightsCSV(weights: BodyWeight[]): string {
  * Export data to CSV files and share
  */
 export async function exportToCSV(
-  userId: string,
   includeWorkouts: boolean = true,
   includeWeights: boolean = true,
 ): Promise<void> {
-  // Fetch data from local database
-  const workouts = await getAllWorkouts(userId);
-  const weights = await getAllWeights(userId);
+  const [workouts, weights] = await Promise.all([
+    workoutApi.listAll(),
+    weightApi.listAll(),
+  ]);
 
   const timestamp = new Date().toISOString().split("T")[0];
   const cacheDir = Paths.cache.uri;
@@ -570,12 +569,12 @@ function generatePDFHTML(
  * Export data to PDF and share
  */
 export async function exportToPDF(
-  userId: string,
   userName: string = "",
 ): Promise<void> {
-  // Fetch data from local database
-  const workouts = await getAllWorkouts(userId);
-  const weights = await getAllWeights(userId);
+  const [workouts, weights] = await Promise.all([
+    workoutApi.listAll(),
+    weightApi.listAll(),
+  ]);
 
   try {
     const stats = calculateExportStats(workouts, weights);

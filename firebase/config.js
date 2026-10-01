@@ -1,7 +1,4 @@
-// src/firebase/config.js
-
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
 import {
   initializeAuth,
   getReactNativePersistence,
@@ -17,13 +14,8 @@ const firebaseConfig = {
   appId: "1:89046456850:web:d03cd0ce0968a82556d6cb",
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Firestore
-export const firestoreDb = getFirestore(app);
-
-// ✅ Firebase Auth with persistence (VERY IMPORTANT)
 export const auth = initializeAuth(app, {
   persistence: getReactNativePersistence(AsyncStorage),
 });

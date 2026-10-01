@@ -1,6 +1,4 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { doc, getDoc } from "firebase/firestore";
-import { firestoreDb } from "../firebase/config";
 import { EXERCISES, ExerciseCategory } from "./exercises";
 
 const CACHE_KEY = "@exercise_catalog_v1";
@@ -84,15 +82,7 @@ async function setCachedCatalog(catalog: CachedExerciseCatalog) {
 }
 
 async function fetchRemoteCatalog(): Promise<CachedExerciseCatalog | null> {
-  try {
-    const snap = await getDoc(doc(firestoreDb, "exerciseCatalog", "v1"));
-    if (!snap.exists()) return null;
-    const catalog = normalizeCatalog(snap.data() as ExerciseCatalogDoc);
-    await setCachedCatalog(catalog);
-    return catalog;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 function applyRemovals(

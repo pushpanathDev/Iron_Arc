@@ -1,4 +1,3 @@
-import { sqliteDb } from "../db/sqlite";
 
 /* =========================
    ACHIEVEMENT TYPES
@@ -286,39 +285,28 @@ export const ACHIEVEMENTS: Record<AchievementId, Omit<Achievement, "unlockedAt" 
 };
 
 /* =========================
-   DATABASE OPERATIONS
+   IN-MEMORY ACHIEVEMENT TRACKING
+   (persistence delegated to backend via /api/achievements/sync)
    ========================= */
 
-export async function initAchievementsTable() {
-  await sqliteDb.runAsync(`
-    CREATE TABLE IF NOT EXISTS achievements (
-      id TEXT PRIMARY KEY,
-      unlockedAt INTEGER
-    )
-  `);
+const _unlockedInSession = new Map<AchievementId, number>();
+
+export function getUnlockedAchievements(): Map<AchievementId, number> {
+  return _unlockedInSession;
 }
 
-export async function getUnlockedAchievements(): Promise<Map<AchievementId, number>> {
-  const rows = await sqliteDb.getAllAsync<{ id: string; unlockedAt: number }>(
-    `SELECT * FROM achievements`
-  );
-  return new Map(rows.map((r) => [r.id as AchievementId, r.unlockedAt]));
+export function unlockAchievementLocally(id: AchievementId): boolean {
+  if (_unlockedInSession.has(id)) return false;
+  _unlockedInSession.set(id, Date.now());
+  return true;
 }
 
-export async function unlockAchievement(id: AchievementId): Promise<boolean> {
-  const existing = await sqliteDb.getFirstAsync<{ id: string }>(
-    `SELECT id FROM achievements WHERE id = ?`,
-    [id]
-  );
-
-  if (existing) return false; // Already unlocked
-
-  await sqliteDb.runAsync(
-    `INSERT INTO achievements (id, unlockedAt) VALUES (?, ?)`,
-    [id, Date.now()]
-  );
-
-  return true; // Newly unlocked
+export function seedFromServer(badgeKeys: string[]) {
+  for (const key of badgeKeys) {
+    if (!_unlockedInSession.has(key as AchievementId)) {
+      _unlockedInSession.set(key as AchievementId, Date.now());
+    }
+  }
 }
 
 /* =========================
@@ -341,78 +329,61 @@ export async function checkAchievements(
   weightLogsCount: number,
   goalReached: boolean
 ): Promise<AchievementCheckResult> {
-  await initAchievementsTable();
-  
-  const unlockedMap = await getUnlockedAchievements();
+  const unlockedMap = getUnlockedAchievements();
   const newlyUnlocked: Achievement[] = [];
   const allAchievements: Achievement[] = [];
 
-  // Helper to check and unlock
-  const check = async (
-    id: AchievementId,
-    current: number,
-    requirement: number
-  ) => {
+  const check = (id: AchievementId, current: number, requirement: number) => {
     const def = ACHIEVEMENTS[id];
     const isUnlocked = unlockedMap.has(id);
     const progress = Math.min(100, Math.round((current / requirement) * 100));
 
     if (!isUnlocked && current >= requirement) {
-      const justUnlocked = await unlockAchievement(id);
+      const justUnlocked = unlockAchievementLocally(id);
       if (justUnlocked) {
-        newlyUnlocked.push({
-          ...def,
-          unlockedAt: Date.now(),
-          progress: 100,
-          current,
-        });
+        newlyUnlocked.push({ ...def, unlockedAt: Date.now(), progress: 100, current });
       }
     }
 
-    allAchievements.push({
-      ...def,
-      unlockedAt: unlockedMap.get(id),
-      progress,
-      current,
-    });
+    allAchievements.push({ ...def, unlockedAt: unlockedMap.get(id), progress, current });
   };
 
   // Workout milestones
-  await check("first_workout", totalWorkouts, 1);
-  await check("workout_10", totalWorkouts, 10);
-  await check("workout_50", totalWorkouts, 50);
-  await check("workout_100", totalWorkouts, 100);
-  await check("workout_500", totalWorkouts, 500);
+  check("first_workout", totalWorkouts, 1);
+  check("workout_10", totalWorkouts, 10);
+  check("workout_50", totalWorkouts, 50);
+  check("workout_100", totalWorkouts, 100);
+  check("workout_500", totalWorkouts, 500);
 
   // Streak achievements
-  await check("streak_3", currentStreak, 3);
-  await check("streak_7", currentStreak, 7);
-  await check("streak_14", currentStreak, 14);
-  await check("streak_21", currentStreak, 21);
-  await check("streak_30", currentStreak, 30);
-  await check("streak_60", currentStreak, 60);
-  await check("streak_100", currentStreak, 100);
-  await check("streak_365", currentStreak, 365);
+  check("streak_3", currentStreak, 3);
+  check("streak_7", currentStreak, 7);
+  check("streak_14", currentStreak, 14);
+  check("streak_21", currentStreak, 21);
+  check("streak_30", currentStreak, 30);
+  check("streak_60", currentStreak, 60);
+  check("streak_100", currentStreak, 100);
+  check("streak_365", currentStreak, 365);
 
   // Volume achievements
-  await check("volume_1k", totalVolume, 1000);
-  await check("volume_10k", totalVolume, 10000);
-  await check("volume_50k", totalVolume, 50000);
-  await check("volume_100k", totalVolume, 100000);
-  await check("volume_500k", totalVolume, 500000);
-  await check("volume_1m", totalVolume, 1000000);
+  check("volume_1k", totalVolume, 1000);
+  check("volume_10k", totalVolume, 10000);
+  check("volume_50k", totalVolume, 50000);
+  check("volume_100k", totalVolume, 100000);
+  check("volume_500k", totalVolume, 500000);
+  check("volume_1m", totalVolume, 1000000);
 
   // Consistency
-  await check("consistency_4x_week", workoutsThisWeek, 4);
-  await check("consistency_month", consecutiveWeeks4Plus, 4);
+  check("consistency_4x_week", workoutsThisWeek, 4);
+  check("consistency_month", consecutiveWeeks4Plus, 4);
 
   // Categories
-  await check("all_rounder", categoriesWorked.length, 6);
-  await check("leg_day_warrior", legWorkouts, 10);
+  check("all_rounder", categoriesWorked.length, 6);
+  check("leg_day_warrior", legWorkouts, 10);
 
   // Weight
-  await check("weight_logged_30", weightLogsCount, 30);
-  await check("weight_goal_reached", goalReached ? 1 : 0, 1);
+  check("weight_logged_30", weightLogsCount, 30);
+  check("weight_goal_reached", goalReached ? 1 : 0, 1);
 
   return { newlyUnlocked, allAchievements };
 }

@@ -1,8 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { Alert, Linking, Platform } from "react-native";
 import { Achievement } from "../insights/achievements";
 import { Insight } from "../insights/insightEngine";
+
+// expo-notifications removed remote push support from Expo Go in SDK 53.
+// Local scheduled notifications still work, but skip permission requests &
+// scheduling in Expo Go to avoid noisy console errors.
+const IS_EXPO_GO = Constants.appOwnership === "expo";
 
 // Notifee is optional - only available in development builds, not Expo Go
 let initBackgroundNotifications: (() => Promise<void>) | null = null;
@@ -106,6 +112,14 @@ const ANDROID_INSIGHTS_CHANNEL_ID = "insights";
    ========================= */
 
 export async function initNotifications(): Promise<void> {
+  if (IS_EXPO_GO) {
+    console.log(
+      "ℹ️ Expo Go detected — push notifications unavailable (SDK 53+). " +
+        "Run `eas build --platform android --profile preview` for full notification support.",
+    );
+    return;
+  }
+
   try {
     // Initialize Notifee if available (development builds only)
     if (notifeeAvailable && initBackgroundNotifications) {

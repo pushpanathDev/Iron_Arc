@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useFocusEffect } from "expo-router";
 
-import { getAllWorkouts, Workout } from "../db/workouts";
-import { getAllWeights, BodyWeight } from "../db/weights";
-import { useAuth } from "../auth/AuthContext";
+import { useAllWorkouts } from "./useWorkouts";
+import { useAllWeights } from "./useWeights";
+import { useAchievements, useSyncAchievements } from "./useAchievements";
+import { Workout, BodyWeight, ApiAchievement } from "../services/api";
 
 import {
   generateInsights,
@@ -47,103 +48,90 @@ export interface InsightsAndAchievements {
 export function useInsightsAndAchievements(
   goalWeight?: number
 ): InsightsAndAchievements {
-  const { user } = useAuth();
+  const { data: workouts = [], isLoading: loadingWorkouts, refetch: refetchWorkouts } = useAllWorkouts();
+  const { data: weights = [], isLoading: loadingWeights, refetch: refetchWeights } = useAllWeights();
+  const { data: serverAchievements = [] } = useAchievements();
+  const syncAchievements = useSyncAchievements();
 
   const [insights, setInsights] = useState<Insight[]>([]);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
   const [newAchievements, setNewAchievements] = useState<Achievement[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [streak, setStreak] = useState(0);
   const [totalWorkouts, setTotalWorkouts] = useState(0);
   const [totalVolume, setTotalVolume] = useState(0);
+
+  const isLoading = loadingWorkouts || loadingWeights;
 
   // Initialize notifications on mount
   useEffect(() => {
     initNotifications();
   }, []);
 
-  // Main data loading function
-  const loadData = useCallback(async () => {
-    if (!user) {
-      setInsights([]);
-      setAchievements([]);
-      setIsLoading(false);
-      return;
-    }
+  // Recompute insights and achievements whenever data changes
+  useEffect(() => {
+    if (isLoading) return;
 
-    setIsLoading(true);
+    const stats = calculateStats(workouts, weights);
+    setStreak(stats.streak);
+    setTotalWorkouts(stats.totalWorkouts);
+    setTotalVolume(stats.totalVolume);
 
-    try {
-      // Fetch data
-      const [workouts, weights] = await Promise.all([
-        getAllWorkouts(user.uid),
-        getAllWeights(user.uid),
-      ]);
+    const newInsights = generateInsights(workouts, weights, goalWeight);
+    if (newInsights.length < 2) newInsights.push(getRandomMotivation());
+    setInsights(newInsights);
 
-      // Calculate stats
-      const stats = calculateStats(workouts, weights);
-      setStreak(stats.streak);
-      setTotalWorkouts(stats.totalWorkouts);
-      setTotalVolume(stats.totalVolume);
-
-      // Generate insights
-      const newInsights = generateInsights(workouts, weights, goalWeight);
-      
-      // Add random motivation if insights are few
-      if (newInsights.length < 2) {
-        newInsights.push(getRandomMotivation());
-      }
-      
-      setInsights(newInsights);
-
-      // Check achievements
-      const achievementResult = await checkAchievements(
-        stats.totalWorkouts,
-        stats.streak,
-        stats.totalVolume,
-        stats.workoutsThisWeek,
-        stats.consecutiveWeeks4Plus,
-        stats.categoriesWorked,
-        stats.legWorkouts,
-        weights.length,
-        goalWeight ? stats.goalReached(goalWeight, weights) : false
-      );
-
+    checkAchievements(
+      stats.totalWorkouts,
+      stats.streak,
+      stats.totalVolume,
+      stats.workoutsThisWeek,
+      stats.consecutiveWeeks4Plus,
+      stats.categoriesWorked,
+      stats.legWorkouts,
+      weights.length,
+      goalWeight ? stats.goalReached(goalWeight, weights) : false
+    ).then(async (achievementResult: AchievementCheckResult) => {
       setAchievements(achievementResult.allAchievements);
-      setNewAchievements(achievementResult.newlyUnlocked);
 
-      // Send notifications for new achievements
-      for (const achievement of achievementResult.newlyUnlocked) {
+      // Determine which achievements are newly unlocked vs. already on server
+      const serverKeys = new Set(serverAchievements.map((a: any) => a.badgeKey));
+      const newlyUnlocked = achievementResult.newlyUnlocked.filter(
+        (a: Achievement) => !serverKeys.has(a.id)
+      );
+      setNewAchievements(newlyUnlocked);
+
+      // Sync newly unlocked achievements to backend
+      const allUnlockedKeys = achievementResult.allAchievements.map((a: Achievement) => a.id);
+      if (allUnlockedKeys.length > 0) {
+        syncAchievements.mutate(allUnlockedKeys);
+      }
+
+      // Notifications for truly new ones
+      for (const achievement of newlyUnlocked) {
         await sendAchievementNotification(achievement);
       }
 
-      // Send high-priority insight notifications
+      // High-priority insights
       const highPriorityInsights = newInsights.filter(
-        (i) => i.priority === "high" && i.type !== "streak"
+        (i: Insight) => i.priority === "high" && i.type !== "streak"
       );
       for (const insight of highPriorityInsights.slice(0, 1)) {
         await sendInsightNotification(insight);
       }
 
-      // Handle streak reminders
       if (stats.streak > 2 && !stats.hasWorkedOutToday) {
         await scheduleStreakReminder(stats.streak);
       } else if (stats.hasWorkedOutToday) {
         await cancelStreakReminder();
       }
-    } catch (error) {
-      console.error("Error loading insights/achievements:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user, goalWeight]);
+    }).catch((error: unknown) => {
+      console.error("Error computing achievements:", error);
+    });
+  }, [workouts, weights, goalWeight, isLoading, serverAchievements]);
 
-  // Load on focus
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [loadData])
-  );
+  const refresh = useCallback(async () => {
+    await Promise.all([refetchWorkouts(), refetchWeights()]);
+  }, [refetchWorkouts, refetchWeights]);
 
   return {
     insights,
@@ -153,7 +141,7 @@ export function useInsightsAndAchievements(
     streak,
     totalWorkouts,
     totalVolume,
-    refresh: loadData,
+    refresh,
   };
 }
 

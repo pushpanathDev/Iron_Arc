@@ -22,15 +22,13 @@ import Animated, {
 import { useAuth } from "../../auth/AuthContext";
 import { WorkoutCalendar } from "../../components/ui/WorkoutCalendar";
 import { WorkoutDaySummary } from "../../components/ui/WorkoutDaySummary";
-import { useGlobalSync } from "../../context/SyncContext";
-import {
-  Workout,
-  deleteWorkoutById,
-  getAllWorkouts,
-  insertWorkout,
-} from "../../db/workouts";
+import { useQueryClient } from "@tanstack/react-query";
+import { useAllWorkouts } from "../../hooks/useWorkouts";
+import { useUnitPreference } from "../../hooks/useUnitPreference";
+import { Workout, workoutApi } from "../../services/api";
 import { useTheme } from "../../theme/theme";
 import { createPageLogger } from "../../utils/logger";
+import { displayWeight, weightLabel } from "../../utils/unitConversion";
 import { formatDate } from "../../utils/weekUtils";
 
 const log = createPageLogger("History");
@@ -45,10 +43,12 @@ type ViewMode = "calendar" | "list";
 export default function History() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const { user } = useAuth();
-  const { globalSync, refreshVersion, startSync, endSync } = useGlobalSync();
   const insets = useSafeAreaInsets();
 
-  const [workouts, setWorkouts] = useState<Workout[]>([]);
+  const { data: workouts = [], isLoading, refetch } = useAllWorkouts();
+  const queryClient = useQueryClient();
+  const { unit } = useUnitPreference();
+
   const [deletedWorkout, setDeletedWorkout] = useState<Workout | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
@@ -63,29 +63,14 @@ export default function History() {
 
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    if (!user) return;
-    fetchWorkouts();
-  }, [user]);
-
-  const fetchWorkouts = async () => {
-    if (!user?.uid) return;
-    try {
-      const data = await getAllWorkouts(user.uid);
-      setWorkouts(data);
-    } catch (error) {
-      console.error("Failed to fetch workouts:", error);
-      setSyncMessage("Failed to load workouts");
-    }
-  };
-
   // Calculate total stats
   const totalSets = workouts.reduce((acc, w) => acc + (w.sets?.length || 0), 0);
-  const totalVolume = workouts.reduce((acc, w) => {
+  const totalVolumeKg = workouts.reduce((acc, w) => {
     return (
       acc + (w.sets?.reduce((s, set) => s + set.weight * set.reps, 0) || 0)
     );
   }, 0);
+  const totalVolume = displayWeight(totalVolumeKg, unit);
 
   // Get all workout dates for calendar indicators
   const workoutDates = useMemo(() => {
@@ -120,86 +105,81 @@ export default function History() {
   }, []);
 
   /* =========================
-     PULL TO REFRESH (GLOBAL SYNC)
+     PULL TO REFRESH
      ========================= */
   const handleRefresh = async () => {
-    if (!user) return;
     setRefreshing(true);
     setSyncMessage(null);
-
     try {
-      log.info("Pull-to-refresh: triggering global sync...");
-
-      // Trigger global sync - pushes local changes THEN pulls from Firebase
-      await globalSync(user.uid);
-
-      await fetchWorkouts();
-      setSyncMessage("Synced ✓");
-      log.info("History refreshed (global sync)");
+      await refetch();
+      setSyncMessage("Refreshed ✓");
+      log.info("History refreshed");
     } catch (e) {
       log.error(`Refresh failed: ${e}`);
-      setSyncMessage("Sync failed");
+      setSyncMessage("Refresh failed");
     } finally {
       setRefreshing(false);
       setTimeout(() => setSyncMessage(null), 3000);
     }
   };
 
-  // Refresh when global sync happens on another screen
-  useEffect(() => {
-    if (!user || refreshVersion === 0) return;
-    fetchWorkouts();
-  }, [refreshVersion]);
-
   /* =========================
      DELETE + UNDO
      ========================= */
   const deleteWorkout = async (workout: Workout) => {
-    // Guard against delete while syncing/refreshing
     if (refreshing || isDeleting) {
-      setSyncMessage("Please wait until sync completes");
+      setSyncMessage("Please wait...");
       return;
     }
 
-    if (!user?.uid) {
+    if (!user) {
       setSyncMessage("User not authenticated");
       return;
     }
 
     setIsDeleting(true);
     setDeletedWorkout(workout);
-    setWorkouts((prev) => prev.filter((w) => w.id !== workout.id));
 
-    try {
-      await deleteWorkoutById(workout.id, user.uid);
-      log.info(`Soft deleted workout ${workout.id}`);
-    } catch (error) {
-      console.error("Delete failed:", error);
-      // Restore the workout on error
-      setWorkouts((prev) => [...prev, workout]);
-      setSyncMessage("Failed to delete workout");
-    } finally {
-      setIsDeleting(false);
-    }
+    // Optimistically remove from cache immediately so the UI updates
+    queryClient.setQueryData<Workout[]>(["workouts", "all"], (old) =>
+      old ? old.filter((w) => w.id !== workout.id) : [],
+    );
+    setIsDeleting(false);
 
-    undoTimer.current = setTimeout(() => {
+    // Defer the actual API delete — fires only if undo is not tapped
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = setTimeout(async () => {
+      try {
+        await workoutApi.delete(workout.id);
+        queryClient.invalidateQueries({ queryKey: ["workouts"] });
+        log.info(`Deleted workout ${workout.id}`);
+      } catch (error) {
+        // Restore the item in the cache on failure
+        queryClient.setQueryData<Workout[]>(["workouts", "all"], (old) =>
+          old ? [...old, workout].sort(
+            (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+          ) : [workout],
+        );
+        setSyncMessage("Failed to delete workout");
+        log.error("Delete failed", error);
+      }
       setDeletedWorkout(null);
-    }, 4000);
+    }, 4500);
   };
 
-  const undoDelete = async () => {
-    if (!deletedWorkout || !user) return;
-
+  const undoDelete = () => {
+    if (!deletedWorkout) return;
     if (undoTimer.current) clearTimeout(undoTimer.current);
-
-    await insertWorkout({
-      ...deletedWorkout,
-      isSynced: 0,
-    });
-    await fetchWorkouts();
+    // Restore the item to the cache — real undo
+    queryClient.setQueryData<Workout[]>(["workouts", "all"], (old) =>
+      old
+        ? [...old, deletedWorkout].sort(
+            (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+          )
+        : [deletedWorkout],
+    );
     setDeletedWorkout(null);
-
-    log.info(`Undo delete ${deletedWorkout.id}`);
+    log.info(`Undo: restored workout ${deletedWorkout.id}`);
   };
 
   // Group workouts by date
@@ -405,7 +385,7 @@ export default function History() {
             <Text
               style={{ ...typography.caption, color: colors.textSecondary }}
             >
-              Volume (kg)
+              Volume ({weightLabel(unit)})
             </Text>
           </View>
         </Animated.View>
@@ -558,6 +538,7 @@ export default function History() {
                     }
                     index={index}
                     disabled={refreshing || isDeleting}
+                    weightUnit={unit}
                   />
                 ))}
               </View>
@@ -620,6 +601,7 @@ export default function History() {
                   }
                   index={index}
                   disabled={refreshing || isDeleting}
+                  weightUnit={unit}
                 />
               ))}
             </Animated.View>
@@ -723,12 +705,14 @@ function SwipeRow({
   onEdit,
   index,
   disabled = false,
+  weightUnit = "kg",
 }: {
   workout: Workout;
   onDelete: () => void;
   onEdit: () => void;
   index: number;
   disabled?: boolean;
+  weightUnit?: "kg" | "lbs";
 }) {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const translateX = useSharedValue(0);
@@ -753,8 +737,9 @@ function SwipeRow({
     transform: [{ translateX: translateX.value }],
   }));
 
-  const totalVolume =
+  const totalVolumeKg =
     workout.sets?.reduce((acc, s) => acc + s.weight * s.reps, 0) || 0;
+  const rowVolume = displayWeight(totalVolumeKg, weightUnit);
   const totalReps = workout.sets?.reduce((acc, s) => acc + s.reps, 0) || 0;
 
   return (
@@ -870,12 +855,12 @@ function SwipeRow({
                 </Text>
               </View>
               <Text style={{ ...typography.h3, color: colors.accent }}>
-                {totalVolume.toLocaleString()}
+                {rowVolume.toLocaleString()}
               </Text>
               <Text
                 style={{ ...typography.caption, color: colors.textSecondary }}
               >
-                kg volume
+                {weightLabel(weightUnit)} volume
               </Text>
             </View>
           </View>
@@ -901,7 +886,7 @@ function SwipeRow({
                 <Text
                   style={{ ...typography.caption, color: colors.textPrimary }}
                 >
-                  {set.reps}×{set.weight}kg
+                  {set.reps}×{displayWeight(set.weight, weightUnit)}{weightLabel(weightUnit)}
                 </Text>
               </View>
             ))}

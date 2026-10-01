@@ -123,11 +123,11 @@ export default function AdminCatalogScreen() {
   useEffect(() => {
     let active = true;
     const check = async () => {
-      if (!user?.email) {
+      if (!user) {
         if (active) setAdminStatus("denied");
         return;
       }
-      const allowed = await isAdminUser(user.email);
+      const allowed = await isAdminUser();
       if (!active) return;
       setAdminStatus(allowed ? "allowed" : "denied");
     };
@@ -135,7 +135,7 @@ export default function AdminCatalogScreen() {
     return () => {
       active = false;
     };
-  }, [user?.email]);
+  }, [user]);
 
   useEffect(() => {
     let active = true;
@@ -389,7 +389,7 @@ export default function AdminCatalogScreen() {
           Your account isn’t on the admin allowlist.
         </Text>
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")}
           style={{
             marginTop: spacing.lg,
             paddingVertical: spacing.sm,
@@ -439,7 +439,7 @@ export default function AdminCatalogScreen() {
           }}
         >
           <Pressable
-            onPress={() => router.back()}
+            onPress={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")}
             style={{ marginRight: spacing.sm }}
           >
             <Ionicons

@@ -1,4 +1,4 @@
-import { Workout } from "@/db/workouts";
+import { Workout } from "@/services/api";
 import { useTheme } from "@/theme/theme";
 import {
   calculateDaySummary,

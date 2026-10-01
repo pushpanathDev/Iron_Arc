@@ -1,4 +1,4 @@
-import { useColorScheme } from "react-native";
+import { useThemeContext } from "../context/ThemeContext";
 
 /* ============================================
    FORGE - PREMIUM DESIGN SYSTEM
@@ -271,8 +271,9 @@ export const typography = {
    ========================= */
 
 export function useTheme() {
-  const scheme = useColorScheme();
-  const colors = scheme === "dark" ? darkColors : lightColors;
+  const { resolved } = useThemeContext();
+  const colors = resolved === "dark" ? darkColors : lightColors;
+  const isDark = resolved === "dark";
 
-  return { colors, spacing, radius, shadows, typography };
+  return { colors, spacing, radius, shadows, typography, isDark };
 }

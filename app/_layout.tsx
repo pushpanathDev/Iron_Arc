@@ -4,10 +4,20 @@ import {
   DefaultTheme,
   ThemeProvider,
 } from "@react-navigation/native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import NetInfo from "@react-native-community/netinfo";
+import {
+  focusManager,
+  onlineManager,
+  QueryClient,
+} from "@tanstack/react-query";
+import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { SplashScreen, Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { AppState, Platform } from "react-native";
+import type { AppStateStatus } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -15,15 +25,49 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../auth/AuthContext";
 import { AnimatedSplashScreen } from "../components/AnimatedSplashScreen";
 import { BatteryOptimizationPrompt } from "../components/BatteryOptimizationPrompt";
-import { SyncProvider } from "../context/SyncContext";
-import { refreshExerciseCatalogOnLaunch } from "../data/exerciseCatalog";
-import { getUserProfile } from "../db/profiles";
-import { initDB } from "../db/schema";
-import { initSyncMeta } from "../db/syncMeta";
+import { ThemeProvider as AppThemeProvider } from "../context/ThemeContext";
+import { ToastProvider } from "../context/ToastContext";
 import { useAppReady } from "../hooks/useAppReady";
-import { useDailySync } from "../hooks/useDailySync";
-import { logDBStartup } from "../utils/diagnostics";
 import { initNotifications } from "../notifications/notificationService";
+
+// Ensures Expo Router always starts at (tabs) even after dev reload state restore
+export const unstable_settings = {
+  initialRouteName: "(tabs)",
+};
+
+// --- Online / Focus managers (run once at module level) ---
+
+onlineManager.setEventListener((setOnline) => {
+  return NetInfo.addEventListener((state) => {
+    setOnline(!!state.isConnected);
+  });
+});
+
+function onAppStateChange(status: AppStateStatus) {
+  if (Platform.OS !== "web") {
+    focusManager.setFocused(status === "active");
+  }
+}
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5,
+      gcTime: 1000 * 60 * 30,
+      retry: 2,
+      refetchOnWindowFocus: false,
+    },
+    mutations: {
+      retry: 3,
+    },
+  },
+});
+
+const asyncStoragePersister = createAsyncStoragePersister({
+  storage: AsyncStorage,
+  key: "IRON_ARC_QUERY_CACHE",
+  throttleTime: 1000,
+});
 
 const SPLASH_TEST_MS = 0; // Set to 4000 in dev to force full splash playback
 
@@ -47,8 +91,6 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
   const {
     user,
     loading: authLoading,
-    isSyncing: isAuthSyncing,
-    syncError,
     awaitingEmailVerification,
   } = useAuth();
   const router = useRouter();
@@ -98,15 +140,6 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
     return () => clearTimeout(timer);
   }, [forceSplashHoldUntil]);
 
-  // 🌅 Run daily sync on app focus (MUST be called before conditional return)
-  useDailySync(user?.uid);
-
-  // 📊 Log DB state on user change
-  useEffect(() => {
-    if (user?.uid) {
-      logDBStartup(user.uid).catch(console.error);
-    }
-  }, [user?.uid]);
 
   /**
    * Handle splash animation completion.
@@ -133,36 +166,24 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
       currentSegment === "(tabs)" ||
       currentSegment === "add-workout" ||
       currentSegment === "modal" ||
-      currentSegment === "admin-catalog";
+      currentSegment === "admin-catalog" ||
+      currentSegment === "ai-plan" ||
+      currentSegment === "notification-settings" ||
+      currentSegment === "plan-detail";
     const isLoginRoute = currentSegment === "login";
     const isOnboardingRoute = currentSegment === "onboarding";
 
     const handleNavigation = async () => {
       if (!user && isProtectedRoute) {
-        // User logged out while on protected route
         router.replace("/login");
       } else if (user && isLoginRoute) {
-        // User logged in - check if needs onboarding
-        try {
-          const profile = await getUserProfile(user.uid);
-          if (!profile?.height) {
-            // New user or missing height - go to onboarding
-            router.replace("/onboarding" as any);
-          } else {
-            // Returning user with complete profile
-            router.replace("/(tabs)");
-          }
-        } catch (error) {
-          console.error("Failed to check profile:", error);
-          router.replace("/(tabs)");
-        }
+        router.replace("/(tabs)");
       } else if (
         user &&
         !isProtectedRoute &&
         !isOnboardingRoute &&
         !isLoginRoute
       ) {
-        // User on unknown route - go to tabs
         router.replace("/(tabs)");
       }
     };
@@ -185,29 +206,32 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
   if (authLoading) return null;
 
   return (
-    <>
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="login" />
-        <Stack.Screen name="onboarding" />
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="add-workout" options={{ presentation: "modal" }} />
-        <Stack.Screen name="modal" options={{ presentation: "modal" }} />
-        <Stack.Screen name="admin-catalog" />
-      </Stack>
-
-      {/* Auth sync overlay - shown during login/logout sync */}
-      {isAuthSyncing && !awaitingEmailVerification && (
-        <View style={styles.syncOverlay}>
-          <View style={styles.syncCard}>
-            <ActivityIndicator size="large" color="#22C55E" />
-            <Text style={styles.syncTitle}>Syncing your data...</Text>
-            <Text style={styles.syncSubtitle}>
-              Please wait while we sync your workouts
-            </Text>
-          </View>
-        </View>
-      )}
-    </>
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        animation: "slide_from_right",
+        animationDuration: 280,
+        gestureEnabled: true,
+        gestureDirection: "horizontal",
+        fullScreenGestureEnabled: true,
+      }}
+    >
+      <Stack.Screen name="(tabs)" options={{ animation: "fade" }} />
+      <Stack.Screen name="login" options={{ animation: "fade" }} />
+      <Stack.Screen name="onboarding" options={{ animation: "fade" }} />
+      <Stack.Screen
+        name="add-workout"
+        options={{ presentation: "modal", animation: "slide_from_bottom" }}
+      />
+      <Stack.Screen
+        name="modal"
+        options={{ presentation: "modal", animation: "slide_from_bottom" }}
+      />
+      <Stack.Screen name="admin-catalog" />
+      <Stack.Screen name="ai-plan" />
+      <Stack.Screen name="notification-settings" />
+      <Stack.Screen name="plan-detail" />
+    </Stack>
   );
 }
 
@@ -234,6 +258,12 @@ export default function RootLayout() {
   const [initError, setInitError] = useState<string | null>(null);
   const [nativeSplashHidden, setNativeSplashHidden] = useState(false);
 
+  // Subscribe to AppState changes for focusManager
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", onAppStateChange);
+    return () => sub.remove();
+  }, []);
+
   // Initialize database and manage native splash screen lifecycle
   useEffect(() => {
     let mounted = true;
@@ -247,14 +277,6 @@ export default function RootLayout() {
         console.log("[RootLayout] Initializing notifications...");
         await initNotifications();
         console.log(`[RootLayout] ✓ initNotifications complete (${Date.now() - initStartTime}ms)`);
-
-        // Initialize SQLite database
-        await initDB();
-        console.log(`[RootLayout] ✓ initDB complete (${Date.now() - initStartTime}ms)`);
-
-        // Initialize sync metadata
-        await initSyncMeta();
-        console.log(`[RootLayout] ✓ initSyncMeta complete (${Date.now() - initStartTime}ms)`);
 
         // Optional: Add artificial delay in dev for testing splash duration
         if (SPLASH_TEST_MS > 0 && __DEV__) {
@@ -280,10 +302,6 @@ export default function RootLayout() {
           }
         }
 
-        // Refresh exercise catalog in background (non-blocking)
-        refreshExerciseCatalogOnLaunch().catch((e) => {
-          console.warn("[RootLayout] Exercise catalog refresh failed:", e);
-        });
       } catch (error: any) {
         console.error("[RootLayout] Initialization error:", error?.message || error);
         setInitError(error?.message || "Unknown error");
@@ -327,52 +345,25 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <ThemeProvider
-          value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
+        <PersistQueryClientProvider
+          client={queryClient}
+          persistOptions={{ persister: asyncStoragePersister }}
         >
-          <AuthProvider>
-            <SyncProvider>
-              <BatteryOptimizationPrompt />
-              <RootNavigator dbReady={dbReady} />
-            </SyncProvider>
-          </AuthProvider>
-          <StatusBar style="auto" />
-        </ThemeProvider>
+          <ThemeProvider
+            value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
+          >
+            <AppThemeProvider>
+              <AuthProvider>
+                <ToastProvider>
+                  <BatteryOptimizationPrompt />
+                  <RootNavigator dbReady={dbReady} />
+                </ToastProvider>
+              </AuthProvider>
+            </AppThemeProvider>
+            <StatusBar style="auto" />
+          </ThemeProvider>
+        </PersistQueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
-
-const styles = StyleSheet.create({
-  syncOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 9999,
-  },
-  syncCard: {
-    backgroundColor: "#1A1A2E",
-    borderRadius: 20,
-    padding: 32,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-    minWidth: 250,
-  },
-  syncTitle: {
-    color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "600",
-    marginTop: 16,
-  },
-  syncSubtitle: {
-    color: "#9CA3AF",
-    fontSize: 14,
-    marginTop: 8,
-    textAlign: "center",
-  },
-});

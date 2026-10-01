@@ -1,6 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Google from "expo-auth-session/providers/google";
+import { makeRedirectUri } from "expo-auth-session";
 import Constants from "expo-constants";
+import { useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import {
   createUserWithEmailAndPassword,
@@ -37,20 +39,30 @@ import { ForgotPasswordModal } from "../components/ForgotPasswordModal";
 import { EmailVerificationPrompt } from "../components/EmailVerificationPrompt";
 import { EmailConfirmationModal } from "../components/EmailConfirmationModal";
 import { sendVerificationEmail } from "../utils/verificationService";
+import { userApi } from "../services/api";
 import {
   validateEmail,
   validatePasswordStrength,
   sanitizeEmail,
   getEmailValidationMessage,
-  getPasswordStrengthMessage,
-  isEmailVerified,
 } from "../utils/emailPasswordValidation";
 
 WebBrowser.maybeCompleteAuthSession();
+
 const ANDROID_CLIENT_ID =
   "89046456850-s6069mv6aljj1cs3knio49fmtt6b4v6e.apps.googleusercontent.com";
+const WEB_CLIENT_ID =
+  "89046456850-3sfgpbt5fg60uv1735p3lnedo5pvq8sd.apps.googleusercontent.com";
+
+// For native Android builds the redirect URI must be the reverse-client-id scheme.
+// In Expo Go (development) the proxy URL is used automatically by expo-auth-session.
+const ANDROID_REDIRECT_URI = makeRedirectUri({
+  scheme: "com.googleusercontent.apps.89046456850-s6069mv6aljj1cs3knio49fmtt6b4v6e",
+  path: "oauth2redirect/google",
+});
 
 export default function LoginScreen() {
+  const router = useRouter();
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const {
     user,
@@ -71,6 +83,9 @@ export default function LoginScreen() {
   const [pendingSignupEmail, setPendingSignupEmail] = useState("");
   const [pendingSignupPassword, setPendingSignupPassword] = useState("");
   const [verificationUser, setVerificationUser] = useState<any>(null);
+  const [verificationOrigin, setVerificationOrigin] = useState<
+    "signup" | "signin" | null
+  >(null);
   const [passwordStrength, setPasswordStrength] = useState(0);
   const [emailValidationWarning, setEmailValidationWarning] = useState<
     string | null
@@ -83,9 +98,10 @@ export default function LoginScreen() {
   const eyeProgress = useSharedValue(0);
 
   const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId:
-      "89046456850-3sfgpbt5fg60uv1735p3lnedo5pvq8sd.apps.googleusercontent.com",
+    webClientId: WEB_CLIENT_ID,
     androidClientId: ANDROID_CLIENT_ID,
+    redirectUri: ANDROID_REDIRECT_URI,
+    prompt: "select_account",
   });
 
   // Animated style for eye icon rotation
@@ -205,22 +221,31 @@ export default function LoginScreen() {
       const sanitizedEmail = sanitizeEmail(email);
 
       // Sign in with email/password
-      const userCredential = await signInWithEmailAndPassword(
+      await signInWithEmailAndPassword(
         auth,
         sanitizedEmail,
         password
       );
 
-      // Check if email is verified (not required for V1.1.0, but warn user)
-      if (!userCredential.user.emailVerified) {
-        console.warn(
-          "⚠️ User logged in but email not yet verified:",
-          sanitizedEmail
-        );
-        setEmailValidationWarning(
-          "⚠️ Your email is not verified. Check your inbox for verification link."
-        );
-        // Don't block login, but show warning
+      const currentUser = auth.currentUser;
+      if (currentUser && !currentUser.emailVerified) {
+        await currentUser.reload();
+
+        if (!auth.currentUser?.emailVerified) {
+          console.warn(
+            "⚠️ User signed in but email not yet verified:",
+            sanitizedEmail
+          );
+          setAwaitingEmailVerification(true, auth.currentUser?.uid);
+          setVerificationUser(auth.currentUser);
+          setVerificationOrigin("signin");
+          setShowEmailVerification(true);
+          setError(
+            "Please verify your email before continuing. Check your inbox for the verification link.",
+          );
+          setLoading(false);
+          return;
+        }
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -271,7 +296,7 @@ export default function LoginScreen() {
       setError(null);
 
       // Mark that we're awaiting email verification (prevents navigation)
-      setAwaitingEmailVerification(true);
+      setVerificationOrigin("signup");
 
       // Create new account with email/password
       const userCredential = await createUserWithEmailAndPassword(
@@ -279,6 +304,9 @@ export default function LoginScreen() {
         pendingSignupEmail,
         pendingSignupPassword
       );
+
+      // Persist verification pending state so app restart doesn't bypass it
+      await setAwaitingEmailVerification(true, userCredential.user.uid);
 
       // Send verification email
       try {
@@ -288,6 +316,7 @@ export default function LoginScreen() {
         // Show verification prompt
         setVerificationUser(userCredential.user);
         console.log("🔐 Showing EmailVerificationPrompt for:", pendingSignupEmail);
+        setVerificationOrigin("signup");
         setShowEmailVerification(true);
         setError(null);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -300,6 +329,7 @@ export default function LoginScreen() {
         // User can resend from the prompt
         setVerificationUser(userCredential.user);
         console.log("🔐 Showing EmailVerificationPrompt (resend will be available)");
+        setVerificationOrigin("signup");
         setShowEmailVerification(true);
         setError("Verification email may not have been sent. Click Resend.");
       }
@@ -330,22 +360,48 @@ export default function LoginScreen() {
 
   /* GOOGLE SIGN-IN */
   useEffect(() => {
-    if (response?.type === "success") {
+    if (!response) return;
+
+    if (response.type === "error") {
+      const msg = response.error?.message ?? "Unknown OAuth error";
+      console.error("Google OAuth error:", response.error);
+      // Common cause: redirect URI not registered in Google Cloud Console
+      setError(`Google Sign-In error: ${msg}`);
+      return;
+    }
+
+    if (response.type === "cancel") return;
+
+    if (response.type === "success") {
       const idToken = response.authentication?.idToken;
 
       if (!idToken) {
-        console.warn("Google Sign-In failed: no idToken");
+        console.warn("Google Sign-In failed: no idToken in response", response);
+        setError("Google Sign-In failed — no token received. Please try again.");
         return;
       }
 
       setLoading(true);
       const credential = GoogleAuthProvider.credential(idToken);
 
-      signInWithCredential(auth, credential).catch((err) => {
-        console.error("Google Sign-In error", err);
-        setError("Google Sign-In failed");
-        setLoading(false);
-      });
+      signInWithCredential(auth, credential)
+        .then(async () => {
+          // Check if this is a brand-new Google user (no display name on backend yet)
+          try {
+            const profile = await userApi.getProfile();
+            if (!profile.displayName) {
+              router.replace("/onboarding");
+            }
+            // Returning user: auth guard handles routing to (tabs)
+          } catch {
+            // Profile fetch failed — auth guard will handle routing
+          }
+        })
+        .catch((err) => {
+          console.error("Google Sign-In credential error:", err);
+          setError("Google Sign-In failed. Please try again.");
+          setLoading(false);
+        });
     }
   }, [response]);
 
@@ -791,13 +847,10 @@ export default function LoginScreen() {
               />
             </View>
 
-            {/* Google - COMING SOON (V1.2.0) */}
+            {/* Google Sign-In */}
             <Pressable
-              disabled={true}
-              onPress={() => {
-                // Disabled: Coming in V1.2.0
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-              }}
+              disabled={!request || loading}
+              onPress={() => promptAsync()}
               style={{
                 backgroundColor: colors.surface,
                 borderWidth: 1,
@@ -808,44 +861,24 @@ export default function LoginScreen() {
                 marginBottom: spacing.lg,
                 flexDirection: "row",
                 justifyContent: "center",
-                opacity: 0.5,
+                opacity: !request || loading ? 0.6 : 1,
               }}
             >
               <Ionicons
                 name="logo-google"
                 size={20}
-                color={colors.textSecondary}
+                color={colors.textPrimary}
                 style={{ marginRight: spacing.sm }}
               />
-              <View style={{ flex: 1 }}>
-                <Text
-                  style={{
-                    color: colors.textSecondary,
-                    fontWeight: "600",
-                    fontSize: 16,
-                  }}
-                >
-                  Continue with Google
-                </Text>
-              </View>
-              <View
+              <Text
                 style={{
-                  backgroundColor: colors.accentLight,
-                  paddingHorizontal: spacing.sm,
-                  paddingVertical: 2,
-                  borderRadius: radius.md,
+                  color: colors.textPrimary,
+                  fontWeight: "600",
+                  fontSize: 16,
                 }}
               >
-                <Text
-                  style={{
-                    color: colors.accent,
-                    fontSize: 10,
-                    fontWeight: "700",
-                  }}
-                >
-                  Coming Soon
-                </Text>
-              </View>
+                Continue with Google
+              </Text>
             </Pressable>
 
             {/* Toggle - Sign Up / Login Prompt */}
@@ -942,7 +975,32 @@ export default function LoginScreen() {
         onVerified={() => {
           setShowEmailVerification(false);
           setVerificationUser(null);
-          setAwaitingEmailVerification(false);
+          if (verificationOrigin === "signup") {
+            userApi
+              .getProfile()
+              .then((profile) => {
+                const hasCompletedOnboarding = Boolean(
+                  profile.displayName && profile.fitnessGoal,
+                );
+
+                if (hasCompletedOnboarding) {
+                  setAwaitingEmailVerification(false);
+                  router.replace("/(tabs)");
+                } else {
+                  router.replace("/onboarding");
+                }
+              })
+              .catch((error) => {
+                console.warn(
+                  "Could not inspect profile after verification:",
+                  error,
+                );
+                router.replace("/onboarding");
+              });
+          } else {
+            setAwaitingEmailVerification(false);
+          }
+          setVerificationOrigin(null);
         }}
         onResendSuccess={() => {
           // Email resent successfully
@@ -952,3 +1010,11 @@ export default function LoginScreen() {
     </KeyboardAvoidingView>
   );
 }
+
+
+
+
+
+
+
+

@@ -1,17 +1,10 @@
 import { getWeekStart, formatDate } from "./weekUtils";
-import {
-  collection,
-  getDocs,
-  query,
-  where,
-} from "firebase/firestore";
-import { firestoreDb } from "../firebase/config";
+import { workoutApi } from "../services/api";
 
 /* 🔹 Week range */
 export function getCurrentWeekRange() {
   const weekStart = getWeekStart(new Date());
   const weekEnd = new Date(weekStart);
-
   weekEnd.setDate(weekStart.getDate() + 6);
   weekEnd.setHours(23, 59, 59, 999);
 
@@ -26,63 +19,45 @@ export function getCurrentWeekRange() {
 /* 🔹 Weekly stats */
 export async function getWeeklyWorkoutStats() {
   const { weekStartStr, weekEndStr } = getCurrentWeekRange();
+  const result = await workoutApi.list({
+    startDate: weekStartStr,
+    endDate: weekEndStr,
+    limit: 1000,
+  });
+  const workouts = result.workouts ?? [];
 
-  const q = query(
-    collection(firestoreDb, "workouts"),
-    where("date", ">=", weekStartStr),
-    where("date", "<=", weekEndStr)
-  );
-
-  const snapshot = await getDocs(q);
-
-  let workouts = snapshot.size;
   let sets = 0;
   let reps = 0;
   let volume = 0;
 
-  snapshot.forEach((doc) => {
-    const data = doc.data();
+  for (const workout of workouts) {
+    for (const set of workout.sets) {
+      sets++;
+      reps += set.reps;
+      volume += set.reps * set.weight;
+    }
+  }
 
-    if (!Array.isArray(data.sets)) return;
-
-    data.sets.forEach((set: any) => {
-      sets += 1;
-      reps += set.reps || 0;
-      volume += (set.reps || 0) * (set.weight || 0);
-    });
-  });
-
-  return { workouts, sets, reps, volume };
+  return { workouts: workouts.length, sets, reps, volume };
 }
 
 export async function getWorkoutStreak(): Promise<number> {
-  const snapshot = await getDocs(collection(firestoreDb, "workouts"));
+  const allWorkouts = await workoutApi.listAll();
+  if (allWorkouts.length === 0) return 0;
 
-  if (snapshot.empty) return 0;
-
-  // Collect unique weekStart dates
   const weekSet = new Set<string>();
-
-  snapshot.forEach((doc) => {
-    const data = doc.data();
-    if (!data.date) return;
-
-    const weekStart = getWeekStart(new Date(data.date));
+  for (const workout of allWorkouts) {
+    const weekStart = getWeekStart(new Date(workout.date));
     weekSet.add(formatDate(weekStart));
-  });
+  }
 
-  // Sort weeks descending (latest first)
-  const weeks = Array.from(weekSet).sort((a, b) =>
-    a > b ? -1 : 1
-  );
-
+  const weeks = Array.from(weekSet).sort((a, b) => (a > b ? -1 : 1));
   let streak = 0;
   let currentWeek = formatDate(getWeekStart(new Date()));
 
   for (const week of weeks) {
     if (week === currentWeek) {
       streak++;
-      // move to previous week
       const d = new Date(currentWeek);
       d.setDate(d.getDate() - 7);
       currentWeek = formatDate(d);
@@ -94,42 +69,21 @@ export async function getWorkoutStreak(): Promise<number> {
   return streak;
 }
 
-
 export async function getWeeklyWorkoutTrends() {
-  const snapshot = await getDocs(collection(firestoreDb, "workouts"));
+  const allWorkouts = await workoutApi.listAll();
 
-  const map: Record<
-    string,
-    { workouts: number; volume: number }
-  > = {};
+  const map: Record<string, { workouts: number; volume: number }> = {};
 
-  snapshot.forEach((doc) => {
-    const data = doc.data();
-    if (!data.date || !Array.isArray(data.sets)) return;
-
-    const weekStart = formatDate(
-      getWeekStart(new Date(data.date))
-    );
-
-    if (!map[weekStart]) {
-      map[weekStart] = { workouts: 0, volume: 0 };
+  for (const workout of allWorkouts) {
+    const weekStart = formatDate(getWeekStart(new Date(workout.date)));
+    if (!map[weekStart]) map[weekStart] = { workouts: 0, volume: 0 };
+    map[weekStart].workouts++;
+    for (const set of workout.sets) {
+      map[weekStart].volume += set.reps * set.weight;
     }
-
-    map[weekStart].workouts += 1;
-
-    data.sets.forEach((set: any) => {
-      map[weekStart].volume +=
-        (set.reps || 0) * (set.weight || 0);
-    });
-  });
+  }
 
   return Object.entries(map)
-    .map(([week, stats]) => ({
-      week,
-      workouts: stats.workouts,
-      volume: stats.volume,
-    }))
+    .map(([week, stats]) => ({ week, workouts: stats.workouts, volume: stats.volume }))
     .sort((a, b) => (a.week > b.week ? 1 : -1));
 }
-
-

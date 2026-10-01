@@ -1,5 +1,4 @@
-import { Workout, WorkoutSet } from "../db/workouts";
-import { BodyWeight } from "../db/weights";
+import { Workout, WorkoutSet, BodyWeight } from "../services/api";
 
 /* =========================
    TYPES

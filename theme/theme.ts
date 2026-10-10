@@ -69,6 +69,15 @@ const premiumColors = {
   // Premium extras
   shimmer: "rgba(255, 255, 255, 0.6)",
   overlay: "rgba(0, 0, 0, 0.4)",
+
+  // Training category colours (plan day/stat accents). 6-digit hex so a
+  // 2-digit alpha suffix can be appended.
+  categoryPush: "#7C3AED",
+  categoryPull: "#2563EB",
+  categoryLegs: "#D97706",
+  categoryShoulders: "#0891B2",
+  categoryCore: "#059669",
+  categoryNeutral: "#6B7280",
 };
 
 // Keep dark colors for future use (can enable later)
@@ -117,6 +126,13 @@ const darkColors = {
 
   shimmer: "rgba(255, 255, 255, 0.1)",
   overlay: "rgba(0, 0, 0, 0.7)",
+
+  categoryPush: "#A78BFA",
+  categoryPull: "#60A5FA",
+  categoryLegs: "#FBBF24",
+  categoryShoulders: "#22D3EE",
+  categoryCore: "#34D399",
+  categoryNeutral: "#9CA3AF",
 };
 
 // Legacy mappings for backward compatibility

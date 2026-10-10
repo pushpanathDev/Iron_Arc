@@ -1,11 +1,13 @@
-import { generateInsights, Insight } from "../insights/insightEngine";
+import { calculateStreak, generateInsights, Insight } from "../insights/insightEngine";
 import type { Workout, BodyWeight } from "../services/api";
 
 /* ─── Helpers ──────────────────────────────── */
 function daysAgoDate(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() - n);
-  return d.toISOString().split("T")[0];
+  return [d.getFullYear(), d.getMonth() + 1, d.getDate()]
+    .map((value, index) => index === 0 ? String(value) : String(value).padStart(2, "0"))
+    .join("-");
 }
 
 function makeWorkout(
@@ -104,6 +106,37 @@ describe("generateInsights", () => {
 
   it("does not crash with a single workout", () => {
     expect(() => generateInsights([makeWorkout()], [])).not.toThrow();
+  });
+});
+
+describe("calculateStreak", () => {
+  it("keeps yesterday's consecutive streak alive when today is empty", () => {
+    expect(calculateStreak([1, 2, 3].map((daysAgo) => makeWorkout({ daysAgo })))).toBe(3);
+  });
+
+  it("breaks after a missing calendar day", () => {
+    expect(calculateStreak([0, 2].map((daysAgo) => makeWorkout({ daysAgo })))).toBe(1);
+  });
+
+  it("counts multiple workouts on the same day once", () => {
+    expect(
+      calculateStreak([
+        makeWorkout({ daysAgo: 0 }),
+        makeWorkout({ daysAgo: 0 }),
+        makeWorkout({ daysAgo: 1 }),
+      ]),
+    ).toBe(2);
+  });
+
+  it("handles consecutive dates across a month boundary", () => {
+    const now = new Date(2025, 2, 1, 12, 0, 0);
+    const workouts = [
+      makeWorkout({ date: "2025-03-01" }),
+      makeWorkout({ date: "2025-02-28" }),
+      makeWorkout({ date: "2025-02-27" }),
+    ];
+
+    expect(calculateStreak(workouts, now)).toBe(3);
   });
 });
 

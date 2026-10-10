@@ -1,4 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as Google from "expo-auth-session/providers/google";
+import { makeRedirectUri } from "expo-auth-session";
 import Constants from "expo-constants";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -7,6 +9,7 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -16,12 +19,19 @@ import {
   View,
 } from "react-native";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
+import { EmailAuthProvider, GoogleAuthProvider, reauthenticateWithCredential } from "firebase/auth";
+import * as WebBrowser from "expo-web-browser";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
 import { useAuth } from "../../auth/AuthContext";
+import { auth } from "../../firebase/config";
 import { SyncBadge } from "../../components/SyncBadge";
 import { ProfileCompletionPrompt } from "../../components/ProfileCompletionPrompt";
 import { EmailVerificationPrompt } from "../../components/EmailVerificationPrompt";
+import { ProfileStatus } from "../../components/ProfileStatus";
 import { useQueryClient } from "@tanstack/react-query";
 import { useProfile, useUpdateProfile } from "../../hooks/useProfile";
+import { userApi } from "../../services/api";
 import { useUnitPreference } from "../../hooks/useUnitPreference";
 import { useLatestWeight } from "../../hooks/useWeights";
 import {
@@ -38,13 +48,21 @@ import { formatAccountDate, getAvatarUrl } from "../../utils/avatar";
 import { exportToCSV, exportToPDF } from "../../utils/exportData";
 import { createPageLogger } from "../../utils/logger";
 import { verificationMessages } from "../../constants/verificationMessages";
-import {
-  cancelTestNotification,
-  scheduleTestNotificationEvery10Minutes,
-} from "../../notifications/notificationService";
+import { clearVerificationSent } from "../../utils/verificationService";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const log = createPageLogger("Profile");
+
+WebBrowser.maybeCompleteAuthSession();
+
+const ANDROID_CLIENT_ID =
+  "89046456850-s6069mv6aljj1cs3knio49fmtt6b4v6e.apps.googleusercontent.com";
+const WEB_CLIENT_ID =
+  "89046456850-3sfgpbt5fg60uv1735p3lnedo5pvq8sd.apps.googleusercontent.com";
+const ANDROID_REDIRECT_URI = makeRedirectUri({
+  scheme: "com.googleusercontent.apps.89046456850-s6069mv6aljj1cs3knio49fmtt6b4v6e",
+  path: "oauth2redirect/google",
+});
 
 export default function ProfileScreen() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
@@ -53,10 +71,22 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
 
   const queryClient = useQueryClient();
-  const { data: profile, isLoading, refetch: refetchProfile } = useProfile();
+  const {
+    data: profile,
+    isLoading,
+    isError,
+    error,
+    refetch: refetchProfile,
+  } = useProfile();
   const updateProfile = useUpdateProfile();
   const { data: latestWeightEntry } = useLatestWeight();
   const { unit: weightUnit, setUnit: setWeightUnit } = useUnitPreference();
+  const [, googleResponse, promptGoogleReauthentication] =
+    Google.useAuthRequest({
+      webClientId: WEB_CLIENT_ID,
+      androidClientId: ANDROID_CLIENT_ID,
+      redirectUri: ANDROID_REDIRECT_URI,
+    });
 
   const latestWeight = latestWeightEntry?.weight ?? null;
   const isAdmin = profile?.isAdmin ?? false;
@@ -75,8 +105,130 @@ export default function ProfileScreen() {
   const [verificationDaysLeft, setVerificationDaysLeft] = useState<number | null>(null);
   const [showVerificationPrompt, setShowVerificationPrompt] = useState(false);
   const [dismissVerificationBanner, setDismissVerificationBanner] = useState(false);
+  const [showDeleteReauthentication, setShowDeleteReauthentication] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [waitingForGoogleReauthentication, setWaitingForGoogleReauthentication] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   const verificationGraceDays = 7;
+
+  const clearLocalAccountData = async () => {
+    const uid = user?.uid;
+
+    queryClient.cancelQueries();
+    queryClient.clear();
+
+    try {
+      await logout();
+    } finally {
+      await AsyncStorage.clear();
+      if (uid) {
+        await Promise.allSettled([
+          SecureStore.deleteItemAsync(`evs_${uid}`),
+          clearVerificationSent(uid),
+        ]);
+      }
+    }
+  };
+
+  const deleteAccount = async () => {
+    setIsDeletingAccount(true);
+    setDeleteError(null);
+
+    try {
+      await userApi.deleteAccount();
+      await clearLocalAccountData();
+      router.replace("/login");
+    } catch (error: any) {
+      if (error?.code === "REAUTHENTICATION_REQUIRED") {
+        const providerId = user?.providerData[0]?.providerId;
+        if (providerId === "google.com") {
+          setWaitingForGoogleReauthentication(true);
+          await promptGoogleReauthentication();
+        } else {
+          setShowDeleteReauthentication(true);
+        }
+      } else {
+        log.error(`Account deletion failed: ${error}`);
+        Alert.alert("Could not delete account", error?.message || "Please try again.");
+      }
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
+
+  const deleteAccountRef = useRef(deleteAccount);
+  deleteAccountRef.current = deleteAccount;
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Delete account?",
+      "This permanently deletes your profile, workouts, plans, weights, and achievements.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete account", style: "destructive", onPress: deleteAccount },
+      ],
+    );
+  };
+
+  const handleEmailReauthentication = async () => {
+    if (!auth.currentUser?.email || !deletePassword) {
+      setDeleteError("Enter your password to continue.");
+      return;
+    }
+
+    setIsDeletingAccount(true);
+    setDeleteError(null);
+    try {
+      const credential = EmailAuthProvider.credential(
+        auth.currentUser.email,
+        deletePassword,
+      );
+      await reauthenticateWithCredential(auth.currentUser, credential);
+      setShowDeleteReauthentication(false);
+      setDeletePassword("");
+      await deleteAccount();
+    } catch (error: any) {
+      setDeleteError(error?.message || "Reauthentication failed.");
+      setIsDeletingAccount(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!waitingForGoogleReauthentication || !googleResponse) return;
+
+    const completeGoogleReauthentication = async () => {
+      if (googleResponse.type !== "success") {
+        setWaitingForGoogleReauthentication(false);
+        setIsDeletingAccount(false);
+        return;
+      }
+
+      const idToken = googleResponse.authentication?.idToken;
+      if (!idToken || !auth.currentUser) {
+        setDeleteError("Google reauthentication did not return a valid credential.");
+        setWaitingForGoogleReauthentication(false);
+        setIsDeletingAccount(false);
+        return;
+      }
+
+      try {
+        await reauthenticateWithCredential(
+          auth.currentUser,
+          GoogleAuthProvider.credential(idToken),
+        );
+        setWaitingForGoogleReauthentication(false);
+        await deleteAccountRef.current();
+      } catch (error: any) {
+        setDeleteError(error?.message || "Google reauthentication failed.");
+        setWaitingForGoogleReauthentication(false);
+        setIsDeletingAccount(false);
+      }
+    };
+
+    completeGoogleReauthentication();
+  }, [googleResponse, waitingForGoogleReauthentication]);
 
   // Initialize form when profile loads
   useEffect(() => {
@@ -329,6 +481,30 @@ export default function ProfileScreen() {
     );
   }
 
+  if (!profile && isError) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.background, padding: spacing.md, paddingTop: insets.top + spacing.md }}>
+        <ProfileStatus
+          title="Profile unavailable"
+          message={error instanceof Error ? error.message : "Can't load your profile right now."}
+          onRetry={() => void refetchProfile()}
+        />
+      </View>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.background, padding: spacing.md, paddingTop: insets.top + spacing.md }}>
+        <ProfileStatus
+          title="Profile not available"
+          message="Your account profile has not been created yet."
+          onRetry={() => void refetchProfile()}
+        />
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.background }}
@@ -351,6 +527,14 @@ export default function ProfileScreen() {
           />
         }
       >
+      {isError && (
+        <ProfileStatus
+          compact
+          title="Showing cached profile"
+          message="The server is unavailable. Changes may not sync until you reconnect."
+          onRetry={() => void refetchProfile()}
+        />
+      )}
       {/* HEADER */}
       <Animated.View entering={FadeInDown.duration(400)}>
         <View
@@ -1108,92 +1292,6 @@ export default function ProfileScreen() {
         </View>
       </Animated.View>
 
-      {__DEV__ && (
-        <Animated.View
-          entering={FadeInUp.delay(425).duration(400)}
-          style={{
-            backgroundColor: colors.surface,
-            borderRadius: radius.xl,
-            padding: spacing.lg,
-            marginBottom: spacing.md,
-            borderWidth: 1,
-            borderColor: colors.cardBorder,
-            ...shadows.sm,
-          }}
-        >
-          <Text
-            style={{
-              ...typography.label,
-              color: colors.textMuted,
-              marginBottom: spacing.lg,
-            }}
-          >
-            DEV: NOTIFICATIONS
-          </Text>
-
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            <Pressable
-              onPress={async () => {
-                await scheduleTestNotificationEvery10Minutes();
-                Alert.alert(
-                  "Test Scheduled",
-                  "A test notification will fire every 10 minutes. Close the app and wait.",
-                );
-              }}
-              style={{
-                flex: 1,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: colors.surfaceElevated,
-                padding: spacing.md,
-                borderRadius: radius.lg,
-                borderWidth: 1,
-                borderColor: colors.cardBorder,
-              }}
-            >
-              <Ionicons
-                name="time-outline"
-                size={18}
-                color={colors.textPrimary}
-                style={{ marginRight: spacing.xs }}
-              />
-              <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
-                Start 10-Min Test
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={async () => {
-                await cancelTestNotification();
-                Alert.alert("Test Cancelled", "Test notifications stopped.");
-              }}
-              style={{
-                flex: 1,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: colors.surfaceElevated,
-                padding: spacing.md,
-                borderRadius: radius.lg,
-                borderWidth: 1,
-                borderColor: colors.cardBorder,
-              }}
-            >
-              <Ionicons
-                name="close-circle-outline"
-                size={18}
-                color={colors.textPrimary}
-                style={{ marginRight: spacing.xs }}
-              />
-              <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
-                Stop Test
-              </Text>
-            </Pressable>
-          </View>
-        </Animated.View>
-      )}
-
       {/* AI WORKOUT PLAN */}
       <Animated.View
         entering={FadeInUp.delay(430).duration(400)}
@@ -1236,6 +1334,50 @@ export default function ProfileScreen() {
         </Pressable>
       </Animated.View>
 
+      {/* ACHIEVEMENTS */}
+      <Animated.View
+        entering={FadeInUp.delay(435).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+          marginBottom: spacing.md,
+        }}
+      >
+        <Pressable
+          onPress={() => router.push("/achievements")}
+          accessibilityRole="button"
+          accessibilityLabel="Achievements"
+          style={{ flexDirection: "row", alignItems: "center", padding: spacing.lg }}
+        >
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: radius.md,
+              backgroundColor: colors.accentLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: spacing.sm,
+            }}
+          >
+            <Ionicons name="trophy" size={20} color={colors.accent} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
+              Achievements
+            </Text>
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              Badges and progress
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </Pressable>
+      </Animated.View>
+
       {/* NOTIFICATION SETTINGS */}
       <Animated.View
         entering={FadeInUp.delay(440).duration(400)}
@@ -1271,7 +1413,7 @@ export default function ProfileScreen() {
               Notification Settings
             </Text>
             <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-              Reminders, achievements, weekly summary
+              Daily workout reminder
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
@@ -1554,6 +1696,58 @@ export default function ProfileScreen() {
         </Animated.View>
       )}
 
+      {/* DELETE ACCOUNT SECTION */}
+      <Animated.View
+        entering={FadeInUp.delay(520).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: colors.error + "55",
+          ...shadows.sm,
+          marginBottom: spacing.md,
+        }}
+      >
+        <Pressable
+          onPress={handleDeleteAccount}
+          disabled={isDeletingAccount}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            padding: spacing.lg,
+            opacity: isDeletingAccount ? 0.6 : 1,
+          }}
+        >
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: radius.md,
+              backgroundColor: colors.errorLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: spacing.sm,
+            }}
+          >
+            <Ionicons name="trash-outline" size={20} color={colors.error} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ ...typography.bodyMedium, color: colors.error }}>
+              Delete Account
+            </Text>
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              Permanently remove your account and data
+            </Text>
+          </View>
+          {isDeletingAccount ? (
+            <ActivityIndicator size="small" color={colors.error} />
+          ) : (
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          )}
+        </Pressable>
+      </Animated.View>
+
       {/* LOGOUT SECTION */}
       <Animated.View
         entering={FadeInUp.delay(550).duration(400)}
@@ -1665,6 +1859,100 @@ export default function ProfileScreen() {
           await loadVerificationStatus();
         }}
       />
+
+      <Modal
+        visible={showDeleteReauthentication}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDeleteReauthentication(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            padding: spacing.lg,
+            backgroundColor: "rgba(0, 0, 0, 0.55)",
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: colors.surface,
+              borderRadius: radius.lg,
+              padding: spacing.lg,
+            }}
+          >
+            <Text style={{ ...typography.h2, color: colors.textPrimary }}>
+              Confirm your password
+            </Text>
+            <Text
+              style={{
+                ...typography.body,
+                color: colors.textSecondary,
+                marginTop: spacing.xs,
+                marginBottom: spacing.md,
+              }}
+            >
+              For your security, sign in again before deleting this account.
+            </Text>
+            <TextInput
+              value={deletePassword}
+              onChangeText={setDeletePassword}
+              placeholder="Password"
+              placeholderTextColor={colors.textMuted}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={{
+                color: colors.textPrimary,
+                borderWidth: 1,
+                borderColor: colors.cardBorder,
+                borderRadius: radius.md,
+                paddingHorizontal: spacing.md,
+                paddingVertical: spacing.sm,
+                marginBottom: spacing.xs,
+              }}
+            />
+            {deleteError && (
+              <Text style={{ ...typography.caption, color: colors.error, marginBottom: spacing.sm }}>
+                {deleteError}
+              </Text>
+            )}
+            <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm }}>
+              <Pressable
+                onPress={() => {
+                  setShowDeleteReauthentication(false);
+                  setDeletePassword("");
+                  setDeleteError(null);
+                }}
+                disabled={isDeletingAccount}
+                style={{ padding: spacing.sm }}
+              >
+                <Text style={{ ...typography.bodyMedium, color: colors.textSecondary }}>
+                  Cancel
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={handleEmailReauthentication}
+                disabled={isDeletingAccount}
+                style={{
+                  paddingHorizontal: spacing.md,
+                  paddingVertical: spacing.sm,
+                  borderRadius: radius.md,
+                  backgroundColor: colors.error,
+                }}
+              >
+                {isDeletingAccount ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={{ ...typography.bodyMedium, color: "#fff" }}>
+                    Continue
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }

@@ -14,7 +14,7 @@
 
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Modal,
   Platform,
@@ -51,37 +51,51 @@ export function ProfileCompletionPrompt({
   const [weight, setWeight] = useState(currentWeight?.toString() || "");
   const [age, setAge] = useState(currentAge?.toString() || "");
   const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Re-seed from the latest profile whenever the prompt opens or the profile
+  // loads/changes. useState only reads its initial value on first mount, and
+  // the prompt is often mounted before the profile query has resolved.
+  useEffect(() => {
+    if (!visible) return;
+    setWeight(currentWeight != null ? String(currentWeight) : "");
+    setAge(currentAge != null ? String(currentAge) : "");
+    setError(null);
+  }, [visible, currentWeight, currentAge]);
 
   const handleSave = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setError(null);
+
+    const weightNum = allowWeightEdit && weight.trim() ? parseFloat(weight) : null;
+    const ageNum = age.trim() ? parseInt(age, 10) : null;
+
+    if (allowWeightEdit && (weightNum === null || isNaN(weightNum) || weightNum < 30 || weightNum > 300)) {
+      setError("Please enter a weight between 30 and 300 kg");
+      return;
+    }
+
+    if (ageNum === null || isNaN(ageNum) || ageNum < 13 || ageNum > 120) {
+      setError("Please enter an age between 13 and 120");
+      return;
+    }
+
     setIsSaving(true);
-
     try {
-      const weightNum = allowWeightEdit && weight ? parseFloat(weight) : null;
-      const ageNum = age ? parseInt(age, 10) : null;
-
-      // Validate ranges
-      if (allowWeightEdit && weightNum !== null && (weightNum < 30 || weightNum > 300)) {
-        alert("Please enter a weight between 30 and 300 kg");
-        return;
-      }
-
-      if (ageNum !== null && (ageNum < 13 || ageNum > 120)) {
-        alert("Please enter an age between 13 and 120");
-        return;
-      }
-
+      // Unchanged values are still submitted — saving never requires an edit.
       await onSave(weightNum, ageNum);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (error) {
-      console.error("Error saving profile:", error);
+    } catch (err) {
+      console.error("Error saving profile:", err);
+      setError("Couldn't save your profile. Please try again.");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setIsSaving(false);
     }
   };
 
-  const isFormValid = allowWeightEdit ? weight || age : !!age;
+  // Enabled whenever the required fields have a value (pre-filled values count).
+  const isFormValid = Boolean(age.trim()) && (!allowWeightEdit || Boolean(weight.trim()));
 
   return (
     <Modal
@@ -263,6 +277,12 @@ export function ProfileCompletionPrompt({
               </View>
             </ScrollView>
 
+            {error && (
+              <Text style={[styles.helperText, { color: colors.error, marginBottom: 8 }]}>
+                {error}
+              </Text>
+            )}
+
             {/* Action Buttons */}
             <View style={styles.buttonContainer}>
               <Pressable
@@ -289,7 +309,7 @@ export function ProfileCompletionPrompt({
 
               <Pressable
                 onPress={handleSave}
-                disabled={!isFormValid || isSaving}
+                disabled={!isFormValid || isSaving || isLoading}
                 style={[
                   styles.button,
                   {

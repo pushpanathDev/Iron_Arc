@@ -11,6 +11,7 @@
 
 import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
 import { OnboardingProfileSetup } from "../components/OnboardingProfileSetup";
 import { OnboardingInfo } from "../components/OnboardingInfo";
@@ -21,7 +22,8 @@ import { useToast } from "../context/ToastContext";
 type OnboardingStep = "intro" | "info" | "profile";
 
 export default function OnboardingScreen() {
-  const { user, setAwaitingEmailVerification } = useAuth();
+  const { user, retryBootstrap, setAwaitingEmailVerification } = useAuth();
+  const queryClient = useQueryClient();
   const router = useRouter();
   const { showToast } = useToast();
   const [step, setStep] = useState<OnboardingStep>("intro");
@@ -60,12 +62,15 @@ export default function OnboardingScreen() {
           profileData.weight = weightKg;
         }
 
-        await userApi.updateProfile(profileData);
+        const updatedProfile = await userApi.updateProfile(profileData);
+        queryClient.setQueryData(["profile"], updatedProfile);
+        await queryClient.invalidateQueries({ queryKey: ["profile"] });
+        await queryClient.invalidateQueries({ queryKey: ["weights"] });
         console.log("✅ Profile setup complete:", profileData);
 
         setAwaitingEmailVerification(false);
-        // Navigate to main app
-        router.replace("/(tabs)");
+        await retryBootstrap();
+        router.replace("/");
       } catch (error) {
         console.error("Failed to save profile:", error);
         showToast({
@@ -73,11 +78,9 @@ export default function OnboardingScreen() {
           type: "warning",
           duration: 5000,
         });
-        setAwaitingEmailVerification(false);
-        router.replace("/(tabs)");
       }
     },
-    [user, router, setAwaitingEmailVerification],
+    [user, queryClient, retryBootstrap, router, setAwaitingEmailVerification, showToast],
   );
 
   // Render current step

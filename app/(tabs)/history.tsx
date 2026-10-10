@@ -24,8 +24,9 @@ import { WorkoutCalendar } from "../../components/ui/WorkoutCalendar";
 import { WorkoutDaySummary } from "../../components/ui/WorkoutDaySummary";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAllWorkouts } from "../../hooks/useWorkouts";
+import { ACHIEVEMENTS_KEY, useAchievementUnlockHandler } from "../../hooks/useAchievements";
 import { useUnitPreference } from "../../hooks/useUnitPreference";
-import { Workout, workoutApi } from "../../services/api";
+import { ApiError, Workout, workoutApi } from "../../services/api";
 import { useTheme } from "../../theme/theme";
 import { createPageLogger } from "../../utils/logger";
 import { displayWeight, weightLabel } from "../../utils/unitConversion";
@@ -45,14 +46,25 @@ export default function History() {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
 
-  const { data: workouts = [], isLoading, refetch } = useAllWorkouts();
+  const { data: rawWorkouts, isLoading, refetch } = useAllWorkouts();
   const queryClient = useQueryClient();
+  const handleUnlocks = useAchievementUnlockHandler();
   const { unit } = useUnitPreference();
+
+  // Workouts awaiting their deferred server delete. They are hidden rather
+  // than removed from the cache, so a refetch during the undo window cannot
+  // bring them back, and each has its own timer.
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(() => new Set());
+  const deleteTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const workouts = useMemo(
+    () => (rawWorkouts ?? []).filter((w) => !pendingDeleteIds.has(w.id)),
+    [rawWorkouts, pendingDeleteIds],
+  );
 
   const [deletedWorkout, setDeletedWorkout] = useState<Workout | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
 
   // Calendar state
   const [viewMode, setViewMode] = useState<ViewMode>("calendar");
@@ -60,8 +72,6 @@ export default function History() {
     formatDate(new Date()),
   );
   const [currentMonth, setCurrentMonth] = useState(new Date());
-
-  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Calculate total stats
   const totalSets = workouts.reduce((acc, w) => acc + (w.sets?.length || 0), 0);
@@ -126,8 +136,43 @@ export default function History() {
   /* =========================
      DELETE + UNDO
      ========================= */
+  const setPending = (id: string, pending: boolean) => {
+    setPendingDeleteIds((prev) => {
+      const next = new Set(prev);
+      if (pending) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const commitDelete = async (workout: Workout) => {
+    deleteTimers.current.delete(workout.id);
+    let newlyUnlocked: string[] = [];
+    try {
+      ({ newlyUnlocked } = await workoutApi.delete(workout.id));
+      log.info(`Deleted workout ${workout.id}`);
+    } catch (error) {
+      // 404 means it is already gone on the server — treat as deleted.
+      if (!(error instanceof ApiError && error.status === 404)) {
+        setPending(workout.id, false); // un-hide the row
+        setDeletedWorkout((current) => (current?.id === workout.id ? null : current));
+        setSyncMessage("Failed to delete workout");
+        log.error("Delete failed", error instanceof Error ? error.message : String(error));
+        return;
+      }
+    }
+
+    queryClient.setQueryData<Workout[]>(["workouts", "all"], (old) =>
+      old ? old.filter((w) => w.id !== workout.id) : old,
+    );
+    setPending(workout.id, false);
+    setDeletedWorkout((current) => (current?.id === workout.id ? null : current));
+    queryClient.invalidateQueries({ queryKey: ["workouts"] });
+    void handleUnlocks(newlyUnlocked); // also refreshes ["achievements"]
+  };
+
   const deleteWorkout = async (workout: Workout) => {
-    if (refreshing || isDeleting) {
+    if (refreshing) {
       setSyncMessage("Please wait...");
       return;
     }
@@ -137,50 +182,49 @@ export default function History() {
       return;
     }
 
-    setIsDeleting(true);
+    // Repeat taps on a row that is already being deleted are ignored.
+    if (deleteTimers.current.has(workout.id)) return;
+
+    // Stop in-flight refetches from overwriting the list mid-delete.
+    await queryClient.cancelQueries({ queryKey: ["workouts"] });
+
+    setPending(workout.id, true);
     setDeletedWorkout(workout);
 
-    // Optimistically remove from cache immediately so the UI updates
-    queryClient.setQueryData<Workout[]>(["workouts", "all"], (old) =>
-      old ? old.filter((w) => w.id !== workout.id) : [],
+    // Each workout gets its own timer; deleting another never cancels this one.
+    deleteTimers.current.set(
+      workout.id,
+      setTimeout(() => void commitDelete(workout), 4500),
     );
-    setIsDeleting(false);
-
-    // Defer the actual API delete — fires only if undo is not tapped
-    if (undoTimer.current) clearTimeout(undoTimer.current);
-    undoTimer.current = setTimeout(async () => {
-      try {
-        await workoutApi.delete(workout.id);
-        queryClient.invalidateQueries({ queryKey: ["workouts"] });
-        log.info(`Deleted workout ${workout.id}`);
-      } catch (error) {
-        // Restore the item in the cache on failure
-        queryClient.setQueryData<Workout[]>(["workouts", "all"], (old) =>
-          old ? [...old, workout].sort(
-            (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-          ) : [workout],
-        );
-        setSyncMessage("Failed to delete workout");
-        log.error("Delete failed", error);
-      }
-      setDeletedWorkout(null);
-    }, 4500);
   };
 
   const undoDelete = () => {
     if (!deletedWorkout) return;
-    if (undoTimer.current) clearTimeout(undoTimer.current);
-    // Restore the item to the cache — real undo
-    queryClient.setQueryData<Workout[]>(["workouts", "all"], (old) =>
-      old
-        ? [...old, deletedWorkout].sort(
-            (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-          )
-        : [deletedWorkout],
-    );
+    const timer = deleteTimers.current.get(deletedWorkout.id);
+    if (timer) clearTimeout(timer);
+    deleteTimers.current.delete(deletedWorkout.id);
+    setPending(deletedWorkout.id, false);
     setDeletedWorkout(null);
     log.info(`Undo: restored workout ${deletedWorkout.id}`);
   };
+
+  // Leaving the screen with deletes pending: send them now instead of dropping them.
+  useEffect(() => {
+    const timers = deleteTimers.current;
+    return () => {
+      timers.forEach((timer, id) => {
+        clearTimeout(timer);
+        workoutApi
+          .delete(id)
+          .catch(() => {})
+          .finally(() => {
+            queryClient.invalidateQueries({ queryKey: ["workouts"] });
+            queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
+          });
+      });
+      timers.clear();
+    };
+  }, [queryClient]);
 
   // Group workouts by date
   const groupedWorkouts = workouts.reduce(
@@ -537,7 +581,7 @@ export default function History() {
                       })
                     }
                     index={index}
-                    disabled={refreshing || isDeleting}
+                    disabled={refreshing}
                     weightUnit={unit}
                   />
                 ))}
@@ -600,7 +644,7 @@ export default function History() {
                     })
                   }
                   index={index}
-                  disabled={refreshing || isDeleting}
+                  disabled={refreshing}
                   weightUnit={unit}
                 />
               ))}

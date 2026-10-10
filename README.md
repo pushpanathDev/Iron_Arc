@@ -142,6 +142,10 @@ The app communicates with the [Iron Arc Backend](https://github.com/pushpanathDe
 - Recalibrate weekly plans based on performance
 - Substitute exercises (e.g., for injuries or equipment constraints)
 
+### Local Notification Limitation
+
+Local notifications are planned and scheduled up to 14 days ahead. If the app is not opened again after that window, no new reminders are added until the next app launch or foreground refresh.
+
 ## See [services/backendApi.ts](services/backendApi.ts) for implementation details.
 
 ## 📚 Documentation

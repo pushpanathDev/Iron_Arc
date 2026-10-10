@@ -1,7 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { onAuthStateChanged, signOut, User } from "firebase/auth";
+import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
+import NetInfo from "@react-native-community/netinfo";
 import { AppState } from "react-native";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   clearEmailVerificationStart,
   getEmailVerificationStart,
@@ -9,12 +11,32 @@ import {
 } from "../db/syncMeta";
 import { syncVerificationStatus } from "../utils/verificationService";
 import { auth } from "../firebase/config";
+import {
+  isNetworkApiError,
+  User as ApiUser,
+  userApi,
+} from "../services/api";
+import { cancelAllScheduledNotifications } from "../notifications/notificationService";
 
 const VERIFICATION_PENDING_KEY = "@awaiting_email_verification_uid";
 
+export type AuthStatus =
+  | "loading"
+  | "signedOut"
+  | "unverified"
+  | "bootstrapping"
+  | "needsOnboarding"
+  | "ready"
+  | "bootstrapError"
+  | "backendUnreachable";
+
 type AuthContextType = {
-  user: User | null;
+  user: FirebaseUser | null;
+  profile: ApiUser | null;
   loading: boolean;
+  status: AuthStatus;
+  bootstrapError: string | null;
+  retryBootstrap: () => Promise<void>;
   logout: () => Promise<void>;
   /** Always false — kept for backwards compatibility while screens migrate */
   isSyncing: boolean;
@@ -27,7 +49,11 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
+  profile: null,
   loading: true,
+  status: "loading",
+  bootstrapError: null,
+  retryBootstrap: async () => {},
   logout: async () => {},
   isSyncing: false,
   syncError: null,
@@ -36,8 +62,14 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const queryClient = useQueryClient();
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [profile, setProfile] = useState<ApiUser | null>(
+    () => queryClient.getQueryData<ApiUser>(["profile"]) ?? null,
+  );
   const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<AuthStatus>("loading");
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [awaitingEmailVerification, setAwaitingEmailVerificationState] = useState(false);
 
   // Persisted setter — keeps AsyncStorage in sync
@@ -54,9 +86,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const bootstrapUser = useCallback(async (firebaseUser: FirebaseUser) => {
+    setStatus("bootstrapping");
+    setBootstrapError(null);
+
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await userApi.sync();
+        const nextProfile = await userApi.getProfile();
+        queryClient.setQueryData(["profile"], nextProfile);
+        setProfile(nextProfile);
+        setStatus(nextProfile.displayName && nextProfile.fitnessGoal ? "ready" : "needsOnboarding");
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!isNetworkApiError(error) || attempt === 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
+      }
+    }
+
+    if (auth.currentUser?.uid !== firebaseUser.uid) return;
+    const message = isNetworkApiError(lastError)
+      ? "Can't reach the server. Check your connection and try again."
+      : lastError instanceof Error
+        ? lastError.message
+        : "Could not load your account.";
+    setBootstrapError(message);
+    setStatus(isNetworkApiError(lastError) ? "backendUnreachable" : "bootstrapError");
+    setProfile(queryClient.getQueryData<ApiUser>(["profile"]) ?? null);
+  }, [queryClient]);
+
+  const retryBootstrap = useCallback(async () => {
+    if (auth.currentUser?.emailVerified) {
+      await bootstrapUser(auth.currentUser);
+    }
+  }, [bootstrapUser]);
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        setUser(firebaseUser);
+        setLoading(false);
         try {
           await firebaseUser.reload();
         } catch {
@@ -76,7 +147,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await clearEmailVerificationStart(firebaseUser.uid);
             // Clear persisted verification flag since they are now verified
             await setAwaitingEmailVerification(false);
+            await bootstrapUser(firebaseUser);
           } else {
+            setStatus("unverified");
             const existingStart = await getEmailVerificationStart(firebaseUser.uid);
             if (!existingStart) {
               await setEmailVerificationStart(firebaseUser.uid, Date.now());
@@ -98,30 +171,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // User signed out — clear persisted verification state
         await AsyncStorage.removeItem(VERIFICATION_PENDING_KEY).catch(() => {});
         setAwaitingEmailVerificationState(false);
+        setUser(null);
+        setProfile(null);
+        setStatus("signedOut");
       }
 
-      setUser(firebaseUser);
-      setLoading(false);
     });
 
     return unsub;
-  }, []);
+  }, [bootstrapUser]);
 
   // Re-check email verification when app comes back to foreground
   useEffect(() => {
     const subscription = AppState.addEventListener("change", async (state) => {
       if (state !== "active" || !auth.currentUser) return;
       try {
-        await syncVerificationStatus(auth.currentUser);
+        const currentUser = auth.currentUser;
+        const verified = await syncVerificationStatus(currentUser);
+        if (verified && status === "backendUnreachable") {
+          await bootstrapUser(currentUser);
+        }
       } catch {
         // Non-critical
       }
     });
 
     return () => subscription.remove();
-  }, []);
+  }, [bootstrapUser, status]);
+
+  useEffect(() => {
+    return NetInfo.addEventListener((state) => {
+      if (state.isConnected && auth.currentUser?.emailVerified && status === "backendUnreachable") {
+        void bootstrapUser(auth.currentUser);
+      }
+    });
+  }, [bootstrapUser, status]);
 
   const logout = async () => {
+    await cancelAllScheduledNotifications();
     await signOut(auth);
     setUser(null);
   };
@@ -130,7 +217,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         user,
+        profile,
         loading,
+        status,
+        bootstrapError,
+        retryBootstrap,
         logout,
         isSyncing: false,
         syncError: null,

@@ -22,13 +22,13 @@ import { RestTimer } from "../components/RestTimer";
 import { z } from "zod";
 import { useAuth } from "../auth/AuthContext";
 import { ExerciseCategory } from "../data/exercises";
-import { workoutApi, userApi } from "../services/api";
+import { workoutApi } from "../services/api";
 import { useWorkout, useCreateWorkout, useUpdateWorkout } from "../hooks/useWorkouts";
-import { useProfile } from "../hooks/useProfile";
+import { useProfile, useUpdateProfile } from "../hooks/useProfile";
 import { useUnitPreference } from "../hooks/useUnitPreference";
 import { useToast } from "../context/ToastContext";
 import { useTheme } from "../theme/theme";
-import { formatDate } from "../utils/weekUtils";
+import { formatDate, parseLocalDate } from "../utils/weekUtils";
 import { displayWeight, toKg, weightLabel, weightStep } from "../utils/unitConversion";
 
 const setSchema = z.object({
@@ -168,8 +168,9 @@ export default function AddWorkout() {
 
   // Fetch existing workout when in edit mode
   const { data: existingWorkout } = useWorkout(isEdit ? String(id) : "");
-  const { data: profile } = useProfile();
-  const { unit } = useUnitPreference();
+  const { data: profile, isFetching: isProfileFetching } = useProfile();
+  const updateProfile = useUpdateProfile();
+  const { unit, loaded: unitLoaded } = useUnitPreference();
   const step = weightStep(unit);
 
   const createWorkout = useCreateWorkout();
@@ -184,7 +185,11 @@ export default function AddWorkout() {
   const [exercise, setExercise] = useState<string | null>(null);
   const [workoutDate, setWorkoutDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [saving, setSaving] = useState(false);
+  // Save is "in progress" from the first tap until the screen navigates away:
+  // the mutation's own pending state, plus the post-success delay before back().
+  const submitLockRef = useRef(false);
+  const [leaving, setLeaving] = useState(false);
+  const saving = createWorkout.isPending || updateWorkout.isPending || leaving;
   const [message, setMessage] = useState<string | null>(null);
   const [populated, setPopulated] = useState(false);
   const [showRestTimer, setShowRestTimer] = useState(false);
@@ -194,11 +199,15 @@ export default function AddWorkout() {
      POPULATE FORM (EDIT MODE)
      ========================= */
   useEffect(() => {
+    // Wait until the unit preference has been read from storage; otherwise
+    // sets would fill in as kg under an lbs label and be divided by 2.2 on save.
+    if (!unitLoaded) return;
     if (isEdit && existingWorkout && !populated) {
       setCategory((existingWorkout.category as ExerciseCategory) ?? null);
       setExercise(existingWorkout.exercise);
       setNotes(existingWorkout.notes ?? "");
-      setWorkoutDate(new Date(existingWorkout.date));
+      // Local-date parse: new Date("YYYY-MM-DD") is UTC and shifts the day.
+      setWorkoutDate(parseLocalDate(existingWorkout.date));
       setSets(
         existingWorkout.sets.map((s) => ({
           reps: String(s.reps),
@@ -207,19 +216,20 @@ export default function AddWorkout() {
       );
       setPopulated(true);
     }
-  }, [isEdit, existingWorkout, populated]);
+  }, [isEdit, existingWorkout, populated, unitLoaded, unit]);
 
   /* =========================
      PROFILE COMPLETION CHECK (NEW WORKOUT)
      ========================= */
   useEffect(() => {
-    if (!isEdit && profile && !profileCheckDoneRef.current) {
+    // Wait for any in-flight refetch so a stale persisted profile doesn't trigger the prompt.
+    if (!isEdit && profile && !isProfileFetching && !profileCheckDoneRef.current) {
       profileCheckDoneRef.current = true;
       if (!profile.weight && !profile.age) {
         setShowProfileCompletion(true);
       }
     }
-  }, [isEdit, profile]);
+  }, [isEdit, profile, isProfileFetching]);
 
   /* =========================
      SAVE & HELPER FUNCTIONS
@@ -282,7 +292,10 @@ export default function AddWorkout() {
     }
     setValidationErrors({});
 
-    setSaving(true);
+    // State updates are async, so a second tap in the same frame would get
+    // past `isSaving`; the ref blocks it synchronously.
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
 
     const parsedSets = sets.map((s) => ({
       reps: Number(s.reps),
@@ -311,12 +324,14 @@ export default function AddWorkout() {
         });
       }
 
+      // Keep the button disabled until the screen has navigated away; the
+      // lock is never released on success because the screen unmounts.
+      setLeaving(true);
       setMessage(isEdit ? "Workout updated ✓" : "Workout saved ✓");
       setTimeout(() => router.back(), 600);
     } catch (e) {
       console.error("Error saving workout:", e);
-    } finally {
-      setSaving(false);
+      submitLockRef.current = false; // allow a manual retry after a failure
     }
   };
 
@@ -324,22 +339,19 @@ export default function AddWorkout() {
     weight: number | null,
     age: number | null
   ) => {
-    try {
-      const updates: any = {};
-      if (weight !== null && weight > 0) updates.weight = weight;
-      if (age !== null && age > 0) updates.age = age;
+    const updates: { weight?: number; age?: number } = {};
+    if (weight !== null && weight > 0) updates.weight = weight;
+    if (age !== null && age > 0) updates.age = age;
 
-      if (Object.keys(updates).length > 0) {
-        await userApi.updateProfile(updates);
-      }
-
-      setShowProfileCompletion(false);
-      setMessage("Profile updated ✓");
-      setTimeout(() => setMessage(null), 1500);
-    } catch (error) {
-      console.error("Error saving profile:", error);
-      setMessage(`Failed to save profile: ${error instanceof Error ? error.message : "Unknown error"}`);
+    // Goes through the mutation hook so the cached ["profile"] is updated;
+    // errors propagate to the prompt, which shows them inline.
+    if (Object.keys(updates).length > 0) {
+      await updateProfile.mutateAsync(updates);
     }
+
+    setShowProfileCompletion(false);
+    setMessage("Profile updated ✓");
+    setTimeout(() => setMessage(null), 1500);
   };
 
   /* =========================
@@ -908,7 +920,7 @@ export default function AddWorkout() {
         onSave={handleProfileCompletion}
         currentWeight={profile?.weight}
         currentAge={profile?.age}
-        isLoading={saving}
+        isLoading={updateProfile.isPending}
       />
 
       {/* Rest Timer */}

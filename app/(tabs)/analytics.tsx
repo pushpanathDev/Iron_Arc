@@ -24,13 +24,10 @@ import { useTheme } from "../../theme/theme";
 import { useProfile } from "../../hooks/useProfile";
 import { useAllWeights } from "../../hooks/useWeights";
 import { useAllWorkouts } from "../../hooks/useWorkouts";
-import { BodyWeight } from "../../services/api";
 import {
+  calculateAnalyticsStats,
   generateInsights,
-  Insight,
-  InsightPriority,
 } from "../../insights/insightEngine";
-import { formatDate } from "../../utils/weekUtils";
 
 export default function Analytics() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
@@ -40,15 +37,12 @@ export default function Analytics() {
   const { data: rawWeights = [], refetch: refetchWeights } = useAllWeights();
   const { data: profile } = useProfile();
 
-  // Sort weights ascending for charts
-  const weights = [...rawWeights].sort((a, b) => a.date.localeCompare(b.date));
-
   const [refreshing, setRefreshing] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState<"week" | "month" | "all">("week");
   const [selectedWeightIndex, setSelectedWeightIndex] = useState<number | null>(null);
 
   const weeklyGoal = profile?.weeklyGoal ?? 1;
-  const insights = useMemo(() => generateInsights(workouts, weights), [workouts, weights]);
+  const insights = useMemo(() => generateInsights(workouts, rawWeights), [workouts, rawWeights]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -59,150 +53,12 @@ export default function Analytics() {
     }
   }, [refetchWorkouts, refetchWeights]);
 
-  /* =========================
-     PERSONAL RECORDS
-     ========================= */
-  const personalRecords = useMemo(() => {
-    const prMap = new Map<string, { weight: number; reps: number; date: string }>();
-    workouts.forEach((w) => {
-      const best = w.sets.reduce(
-        (max, s) => (s.weight > max.weight ? s : max),
-        { weight: 0, reps: 0 } as { weight: number; reps: number },
-      );
-      const existing = prMap.get(w.exercise);
-      if (!existing || best.weight > existing.weight) {
-        prMap.set(w.exercise, { weight: best.weight, reps: best.reps, date: w.date });
-      }
-    });
-    return Array.from(prMap.entries())
-      .sort((a, b) => b[1].weight - a[1].weight)
-      .slice(0, 5)
-      .map(([exercise, pr]) => ({ exercise, ...pr }));
-  }, [workouts]);
+  const stats = useMemo(
+    () => calculateAnalyticsStats(workouts, rawWeights, selectedPeriod, weeklyGoal),
+    [workouts, rawWeights, selectedPeriod, weeklyGoal],
+  );
 
-  /* =========================
-     MUSCLE HEATMAP
-     ========================= */
-  const muscleHeatmap = useMemo(() => {
-    const now = new Date();
-    const cutoff = new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000);
-    const countMap = new Map<string, number>();
-    workouts.forEach((w) => {
-      if (new Date(w.date) >= cutoff && w.category) {
-        countMap.set(w.category, (countMap.get(w.category) || 0) + 1);
-      }
-    });
-    const maxCount = Math.max(1, ...Array.from(countMap.values()));
-    return Array.from(countMap.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([muscle, count]) => ({ muscle, count, intensity: count / maxCount }));
-  }, [workouts]);
-
-  /* =========================
-     COMPUTED STATS
-     ========================= */
-  const stats = useMemo(() => {
-    const now = new Date();
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-
-    const filterByPeriod = (dateStr: string) => {
-      const d = new Date(dateStr);
-      if (selectedPeriod === "week") return d >= weekAgo;
-      if (selectedPeriod === "month") return d >= monthAgo;
-      return true;
-    };
-
-    const filteredWorkouts = workouts.filter((w) => filterByPeriod(w.date));
-    const filteredWeights = weights.filter((w) => filterByPeriod(w.date));
-
-    // Workout stats
-    const totalWorkouts = filteredWorkouts.length;
-    const totalSets = filteredWorkouts.reduce(
-      (sum, w) => sum + w.sets.length,
-      0,
-    );
-    const totalReps = filteredWorkouts.reduce(
-      (sum, w) => sum + w.sets.reduce((s, set) => s + set.reps, 0),
-      0,
-    );
-    const totalVolume = filteredWorkouts.reduce(
-      (sum, w) => sum + w.sets.reduce((s, set) => s + set.reps * set.weight, 0),
-      0,
-    );
-
-    // Weight stats
-    const weightValues = filteredWeights.map((w) => w.weight);
-    const latestWeight = weightValues[weightValues.length - 1] || 0;
-    const firstWeight = weightValues[0] || 0;
-    const weightDelta = latestWeight - firstWeight;
-    const avgWeight = weightValues.length
-      ? weightValues.reduce((s, v) => s + v, 0) / weightValues.length
-      : 0;
-
-    // Weekly distribution (last 7 days)
-    const weeklyData: number[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      const dateStr = formatDate(d);
-      const count = workouts.filter((w) => w.date === dateStr).length;
-      weeklyData.push(count);
-    }
-
-    // Category breakdown
-    const categoryMap = new Map<string, number>();
-    filteredWorkouts.forEach((w) => {
-      const cat = w.category || "Other";
-      categoryMap.set(cat, (categoryMap.get(cat) || 0) + 1);
-    });
-    const categories = Array.from(categoryMap.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5);
-
-    // Streak calculation
-    let streak = 0;
-    const sortedDates = [...new Set(workouts.map((w) => w.date))]
-      .sort()
-      .reverse();
-    const today = formatDate(now);
-    const yesterday = formatDate(new Date(now.getTime() - 24 * 60 * 60 * 1000));
-
-    // Today's workouts count (for daily goal)
-    const todayWorkouts = workouts.filter((w) => w.date === today).length;
-
-    if (sortedDates[0] === today || sortedDates[0] === yesterday) {
-      streak = 1;
-      for (let i = 1; i < sortedDates.length; i++) {
-        const curr = new Date(sortedDates[i - 1]);
-        const prev = new Date(sortedDates[i]);
-        const diffDays = Math.floor(
-          (curr.getTime() - prev.getTime()) / (24 * 60 * 60 * 1000),
-        );
-        if (diffDays === 1) {
-          streak++;
-        } else {
-          break;
-        }
-      }
-    }
-
-    return {
-      totalWorkouts,
-      todayWorkouts,
-      totalSets,
-      totalReps,
-      totalVolume,
-      latestWeight,
-      weightDelta,
-      avgWeight,
-      weightValues,
-      weightSeries: filteredWeights,
-      weeklyData,
-      categories,
-      streak,
-      goalProgress: Math.min((todayWorkouts / weeklyGoal) * 100, 100),
-    };
-  }, [workouts, weights, selectedPeriod, weeklyGoal]);
+  const { personalRecords, muscleHeatmap } = stats;
 
   useEffect(() => {
     if (stats.weightValues.length > 0) {

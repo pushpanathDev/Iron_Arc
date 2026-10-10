@@ -27,11 +27,21 @@ export interface User {
   updatedAt: string;
 }
 
-export interface ApiAchievement {
-  id: string;
-  userId: string;
-  badgeKey: string;
-  unlockedAt: string;
+export type AchievementTier = "bronze" | "silver" | "gold";
+
+/** A catalog badge merged with the user's progress (GET /api/achievements). */
+export interface Achievement {
+  key: string;
+  title: string;
+  description: string;
+  tier: AchievementTier;
+  category: string;
+  targetValue: number;
+  triggerEvents: string[];
+  /** Current value toward targetValue (equals targetValue once unlocked). */
+  progress: number;
+  /** ISO timestamp, or null while locked. */
+  unlockedAt: string | null;
 }
 
 export interface WorkoutSet {
@@ -72,6 +82,30 @@ export interface CustomExercise {
   createdAt: string;
 }
 
+/** GET /api/workouts/stats — server aggregates over the full history. */
+export interface WorkoutStats {
+  /** Distinct calendar dates with at least one workout. */
+  totalWorkouts: number;
+  currentStreak: number;
+  longestStreak: number;
+  /** Total reps × weight, in kg. */
+  totalVolume: number;
+  personalRecords: { exerciseName: string; maxWeight: number; date: string }[];
+  distinctExercises: number;
+  /** Canonical groups trained: Chest, Back, Shoulders, Arms, Legs, Core. */
+  muscleGroupsCovered: string[];
+}
+
+/** GET /api/weights/stats — weights in kg, dates as YYYY-MM-DD. */
+export interface WeightStats {
+  latestWeight: number | null;
+  latestDate: string | null;
+  firstWeight: number | null;
+  firstDate: string | null;
+  totalEntries: number;
+  distinctDays: number;
+}
+
 export interface PaginatedResponse<T> {
   success: boolean;
   total: number;
@@ -108,36 +142,73 @@ async function getIdToken(): Promise<string> {
   return await user.getIdToken(false);
 }
 
-class ApiError extends Error {
+export type ApiErrorKind = "network" | "timeout" | "http";
+
+export class ApiError extends Error {
   status: number;
+  code?: string;
+  kind: ApiErrorKind;
   errors?: { field: string; message: string }[];
 
   constructor(
     message: string,
     status: number,
-    errors?: { field: string; message: string }[]
+    code?: string,
+    errors?: { field: string; message: string }[],
+    kind: ApiErrorKind = "http",
   ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
+    this.kind = kind;
     this.errors = errors;
   }
 }
 
-async function request<T>(
+export function isNetworkApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError && (error.kind === "network" || error.kind === "timeout");
+}
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 12_000;
+const FIRST_REQUEST_TIMEOUT_MS = 20_000;
+let hasCompletedRequest = false;
+
+/** Performs the request and returns the full JSON envelope ({ success, data, ... }). */
+async function requestEnvelope(
   endpoint: string,
-  options: RequestInit = {}
-): Promise<T> {
+  options: RequestInit = {},
+  timeoutMs = hasCompletedRequest ? DEFAULT_REQUEST_TIMEOUT_MS : FIRST_REQUEST_TIMEOUT_MS,
+): Promise<any> {
   const token = await getIdToken();
 
-  const res = await fetch(`${BASE_URL}${endpoint}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...options.headers,
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}${endpoint}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        ...options.headers,
+      },
+    });
+    hasCompletedRequest = true;
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === "AbortError";
+    throw new ApiError(
+      timedOut ? "The server took too long to respond." : "Unable to reach the server.",
+      0,
+      undefined,
+      undefined,
+      timedOut ? "timeout" : "network",
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
 
   let data: any;
   try {
@@ -150,16 +221,74 @@ async function request<T>(
     throw new ApiError(
       data.message || `Request failed (${res.status})`,
       res.status,
+      data.code,
       data.errors
     );
   }
 
+  return data;
+}
+
+async function request<T>(
+  endpoint: string,
+  options: RequestInit = {},
+  timeoutMs?: number,
+): Promise<T> {
+  const data = await requestEnvelope(endpoint, options, timeoutMs);
   return data.data !== undefined ? data.data : data;
+}
+
+/** Result of a save that can unlock achievements. */
+export interface WithUnlocks<T> {
+  data: T;
+  /** Badge keys earned by this request (empty when none). */
+  newlyUnlocked: string[];
+}
+
+async function requestWithUnlocks<T>(
+  endpoint: string,
+  options: RequestInit = {},
+  timeoutMs?: number,
+): Promise<WithUnlocks<T>> {
+  const body = await requestEnvelope(endpoint, options, timeoutMs);
+  return {
+    data: (body.data !== undefined ? body.data : body) as T,
+    newlyUnlocked: Array.isArray(body.newlyUnlocked) ? body.newlyUnlocked : [],
+  };
+}
+
+// ─── Pagination ────────────────────────────────────────────────────────
+
+const LIST_ALL_PAGE_SIZE = 500;
+
+/**
+ * Fetch every row of a paginated list: page 1 first, then any remaining
+ * pages in parallel. The server caps a page at 1000 rows, so a single
+ * request can never return a user's whole history.
+ */
+async function fetchAllPages<T>(
+  endpoint: string,
+  field: "workouts" | "weights",
+): Promise<T[]> {
+  const pageUrl = (page: number) => `${endpoint}?page=${page}&limit=${LIST_ALL_PAGE_SIZE}`;
+
+  const first = await request<PaginatedResponse<T>>(pageUrl(1));
+  const totalPages = first.totalPages ?? 1;
+  if (totalPages <= 1) return first[field] ?? [];
+
+  const rest = await Promise.all(
+    Array.from({ length: totalPages - 1 }, (_, i) =>
+      request<PaginatedResponse<T>>(pageUrl(i + 2)),
+    ),
+  );
+  return [first, ...rest].flatMap((page) => page[field] ?? []);
 }
 
 // ─── User / Profile ────────────────────────────────────────────────────
 
 export const userApi = {
+  sync: () => request<User>("/api/user/sync", { method: "POST" }),
+
   getProfile: () => request<User>("/api/user/profile"),
 
   updateProfile: (data: Partial<Pick<User, "displayName" | "avatarUrl" | "height" | "weight" | "age" | "fitnessGoal" | "weeklyGoal">>) =>
@@ -181,12 +310,12 @@ export const workoutApi = {
     category: string;
     notes?: string;
     sets: { reps: number; weight?: number }[];
-  }): Promise<Workout> => {
-    const w = await request<Workout>("/api/workouts", {
+  }): Promise<WithUnlocks<Workout>> => {
+    const res = await requestWithUnlocks<Workout>("/api/workouts", {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return normalizeWorkout(w);
+    return { ...res, data: normalizeWorkout(res.data) };
   },
 
   list: async (params?: {
@@ -226,32 +355,34 @@ export const workoutApi = {
       notes: string | null;
       sets: { reps: number; weight?: number }[];
     }>
-  ): Promise<Workout> => {
-    const w = await request<Workout>(`/api/workouts/${id}`, {
+  ): Promise<WithUnlocks<Workout>> => {
+    const res = await requestWithUnlocks<Workout>(`/api/workouts/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return normalizeWorkout(w);
+    return { ...res, data: normalizeWorkout(res.data) };
   },
 
   delete: (id: string) =>
-    request<{ message: string }>(`/api/workouts/${id}`, { method: "DELETE" }),
+    requestWithUnlocks<{ message: string }>(`/api/workouts/${id}`, { method: "DELETE" }),
 
   listAll: async (): Promise<Workout[]> => {
-    const result = await request<PaginatedResponse<Workout>>("/api/workouts?limit=1000");
-    return (result.workouts ?? []).map(normalizeWorkout);
+    const rows = await fetchAllPages<Workout>("/api/workouts", "workouts");
+    return rows.map(normalizeWorkout);
   },
+
+  stats: () => request<WorkoutStats>("/api/workouts/stats"),
 };
 
 // ─── Body Weights ──────────────────────────────────────────────────────
 
 export const weightApi = {
-  log: async (data: { date: string; weight: number; weekStart?: string }): Promise<BodyWeight> => {
-    const w = await request<BodyWeight>("/api/weights", {
+  log: async (data: { date: string; weight: number; weekStart?: string }): Promise<WithUnlocks<BodyWeight>> => {
+    const res = await requestWithUnlocks<BodyWeight>("/api/weights", {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return normalizeWeight(w);
+    return { ...res, data: normalizeWeight(res.data) };
   },
 
   list: async (params?: { page?: number; limit?: number; startDate?: string; endDate?: string }): Promise<PaginatedResponse<BodyWeight>> => {
@@ -276,12 +407,14 @@ export const weightApi = {
   },
 
   delete: (id: string) =>
-    request<{ message: string }>(`/api/weights/${id}`, { method: "DELETE" }),
+    requestWithUnlocks<{ message: string }>(`/api/weights/${id}`, { method: "DELETE" }),
 
   listAll: async (): Promise<BodyWeight[]> => {
-    const result = await request<PaginatedResponse<BodyWeight>>("/api/weights?limit=1000");
-    return (result.weights ?? []).map(normalizeWeight);
+    const rows = await fetchAllPages<BodyWeight>("/api/weights", "weights");
+    return rows.map(normalizeWeight);
   },
+
+  stats: () => request<WeightStats>("/api/weights/stats"),
 };
 
 // ─── Custom Exercises ──────────────────────────────────────────────────
@@ -360,6 +493,10 @@ export const planApi = {
     }),
 };
 
+// AI-backed endpoints: the server calls Groq with up to 3 attempts × 30 s,
+// so the default 12 s client timeout aborts requests the server completes.
+const AI_REQUEST_TIMEOUT_MS = 120_000;
+
 // Full multi-plan API
 export const plansApi = {
   list: () =>
@@ -369,19 +506,27 @@ export const plansApi = {
     request<Plan>(`/api/plans/${id}`),
 
   generate: (criteria?: PlanCriteriaPayload) =>
-    request<Plan>("/api/plans/generate", {
-      method: "POST",
-      body: criteria ? JSON.stringify({ criteria }) : undefined,
-    }),
+    requestWithUnlocks<Plan>(
+      "/api/plans/generate",
+      {
+        method: "POST",
+        body: criteria ? JSON.stringify({ criteria }) : undefined,
+      },
+      AI_REQUEST_TIMEOUT_MS,
+    ),
 
   recalibrate: (planId: string) =>
-    request<Plan>(`/api/plans/${planId}/recalibrate`, { method: "POST" }),
+    request<Plan>(`/api/plans/${planId}/recalibrate`, { method: "POST" }, AI_REQUEST_TIMEOUT_MS),
 
   substitute: (planId: string, exerciseId: string, reason?: string) =>
-    request<Plan>(`/api/plans/${planId}/substitute`, {
-      method: "POST",
-      body: JSON.stringify({ exerciseId, reason: reason || "user_request" }),
-    }),
+    request<Plan>(
+      `/api/plans/${planId}/substitute`,
+      {
+        method: "POST",
+        body: JSON.stringify({ exerciseId, reason: reason || "user_request" }),
+      },
+      AI_REQUEST_TIMEOUT_MS,
+    ),
 
   rename: (planId: string, name: string) =>
     request<Plan>(`/api/plans/${planId}/name`, {
@@ -396,28 +541,21 @@ export const plansApi = {
     request<void>(`/api/plans/${planId}`, { method: "DELETE" }),
 
   chat: (planId: string, message: string) =>
-    request<PlanChatResponse>(`/api/plans/${planId}/chat`, {
-      method: "POST",
-      body: JSON.stringify({ message }),
-    }),
+    request<PlanChatResponse>(
+      `/api/plans/${planId}/chat`,
+      {
+        method: "POST",
+        body: JSON.stringify({ message }),
+      },
+      AI_REQUEST_TIMEOUT_MS,
+    ),
 };
 
 // ─── Achievements ──────────────────────────────────────────────────────
 
 export const achievementApi = {
-  list: () => request<ApiAchievement[]>("/api/achievements"),
-
-  unlock: (badgeKey: string) =>
-    request<ApiAchievement>("/api/achievements/unlock", {
-      method: "POST",
-      body: JSON.stringify({ badgeKey }),
-    }),
-
-  sync: (badgeKeys: string[]) =>
-    request<{ created: number; total: number }>("/api/achievements/sync", {
-      method: "POST",
-      body: JSON.stringify({ badgeKeys }),
-    }),
+  // Read-only: the client never submits badge keys; the server decides.
+  list: () => request<Achievement[]>("/api/achievements"),
 };
 
 // ─── Health Check ──────────────────────────────────────────────────────
@@ -427,4 +565,3 @@ export async function checkHealth() {
   return res.json();
 }
 
-export { ApiError };

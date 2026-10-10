@@ -1,11 +1,31 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { workoutApi, Workout, PaginatedResponse } from "../services/api";
+import { workoutApi, Workout } from "../services/api";
 import { useToast } from "../context/ToastContext";
+import { useAuth } from "../auth/AuthContext";
+import { ACHIEVEMENTS_KEY, useAchievementUnlockHandler } from "./useAchievements";
 
 export function useAllWorkouts() {
+  const { user } = useAuth();
+
   return useQuery({
     queryKey: ["workouts", "all"],
     queryFn: () => workoutApi.listAll(),
+    enabled: !!user,
+  });
+}
+
+/**
+ * Server-side aggregates (streaks, PRs, volume, coverage) over the full
+ * history. Keyed under ["workouts"], so every workout mutation's
+ * invalidation refreshes it.
+ */
+export function useWorkoutStats() {
+  const { user } = useAuth();
+
+  return useQuery({
+    queryKey: ["workouts", "stats"],
+    queryFn: () => workoutApi.stats(),
+    enabled: !!user,
   });
 }
 
@@ -16,23 +36,29 @@ export function useWorkouts(params?: {
   startDate?: string;
   endDate?: string;
 }) {
+  const { user } = useAuth();
+
   return useQuery({
     queryKey: ["workouts", params],
     queryFn: () => workoutApi.list(params),
+    enabled: !!user,
   });
 }
 
 export function useWorkout(id: string) {
+  const { user } = useAuth();
+
   return useQuery({
     queryKey: ["workout", id],
     queryFn: () => workoutApi.getById(id),
-    enabled: !!id,
+    enabled: !!id && !!user,
   });
 }
 
 export function useCreateWorkout() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const handleUnlocks = useAchievementUnlockHandler();
 
   return useMutation({
     mutationFn: workoutApi.create,
@@ -73,6 +99,10 @@ export function useCreateWorkout() {
         queryClient.setQueryData(["workouts", "all"], context.previousAll);
       }
       showToast({ message: "Failed to save workout. Please try again.", type: "error" });
+      queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
+    },
+    onSuccess: (result) => {
+      void handleUnlocks(result.newlyUnlocked);
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["workouts"] });
@@ -83,6 +113,7 @@ export function useCreateWorkout() {
 export function useUpdateWorkout() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const handleUnlocks = useAchievementUnlockHandler();
 
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: Parameters<typeof workoutApi.update>[1] }) =>
@@ -121,6 +152,10 @@ export function useUpdateWorkout() {
         queryClient.setQueryData(["workout", variables.id], context.previousOne);
       }
       showToast({ message: "Failed to update workout. Changes reverted.", type: "error" });
+      queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
+    },
+    onSuccess: (result) => {
+      void handleUnlocks(result.newlyUnlocked);
     },
     onSettled: (_data, _err, variables) => {
       queryClient.invalidateQueries({ queryKey: ["workouts"] });
@@ -132,6 +167,7 @@ export function useUpdateWorkout() {
 export function useDeleteWorkout() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const handleUnlocks = useAchievementUnlockHandler();
 
   return useMutation({
     mutationFn: workoutApi.delete,
@@ -154,6 +190,10 @@ export function useDeleteWorkout() {
         queryClient.setQueryData(["workouts", "all"], context.previousAll);
       }
       showToast({ message: "Failed to delete workout. Please try again.", type: "error" });
+      queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
+    },
+    onSuccess: (result) => {
+      void handleUnlocks(result.newlyUnlocked);
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["workouts"] });

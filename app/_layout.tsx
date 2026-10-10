@@ -15,8 +15,8 @@ import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persi
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { SplashScreen, Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useState } from "react";
-import { AppState, Platform } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Animated as NativeAnimated, AppState, Platform, Pressable, Text, View } from "react-native";
 import type { AppStateStatus } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
@@ -28,7 +28,10 @@ import { BatteryOptimizationPrompt } from "../components/BatteryOptimizationProm
 import { ThemeProvider as AppThemeProvider } from "../context/ThemeContext";
 import { ToastProvider } from "../context/ToastContext";
 import { useAppReady } from "../hooks/useAppReady";
+import { useProfile } from "../hooks/useProfile";
+import { useNotificationScheduling } from "../hooks/useNotificationScheduling";
 import { initNotifications } from "../notifications/notificationService";
+import { isNetworkApiError } from "../services/api";
 
 // Ensures Expo Router always starts at (tabs) even after dev reload state restore
 export const unstable_settings = {
@@ -54,11 +57,15 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 1000 * 60 * 5,
       gcTime: 1000 * 60 * 30,
-      retry: 2,
-      refetchOnWindowFocus: false,
+      retry: (failureCount, error) => isNetworkApiError(error) && failureCount < 2,
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 5000),
+      refetchOnWindowFocus: "always",
+      refetchOnReconnect: "always",
     },
     mutations: {
-      retry: 3,
+      // Never auto-retry writes: a request that timed out on the client may
+      // already have succeeded on the server, so a retry creates duplicates.
+      retry: 0,
     },
   },
 });
@@ -90,14 +97,22 @@ SplashScreen.preventAutoHideAsync();
 function RootNavigator({ dbReady }: { dbReady: boolean }) {
   const {
     user,
+    profile,
     loading: authLoading,
+    status,
+    bootstrapError,
+    retryBootstrap,
     awaitingEmailVerification,
   } = useAuth();
   const router = useRouter();
   const segments = useSegments();
+  const { data: cachedProfile } = useProfile();
+  const availableProfile = profile ?? cachedProfile;
+  useNotificationScheduling();
 
   // Track splash visibility (starts true, set false after animation completes)
   const [splashVisible, setSplashVisible] = useState(true);
+  const [navigatorMounted, setNavigatorMounted] = useState(false);
   const [forceSplashHoldUntil, setForceSplashHoldUntil] = useState<
     number | null
   >(null);
@@ -149,6 +164,12 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
     setSplashVisible(false);
   }, []);
 
+  useEffect(() => {
+    if (!splashVisible && !authLoading) {
+      setNavigatorMounted(true);
+    }
+  }, [splashVisible, authLoading]);
+
   /**
    * Auth-based navigation.
    * Only runs after splash is dismissed to prevent visual jank.
@@ -156,10 +177,10 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
    */
   useEffect(() => {
     // Don't navigate while splash is visible or auth is loading
-    if (splashVisible || authLoading) return;
+    if (!navigatorMounted || splashVisible || authLoading) return;
 
     // Don't navigate away from login if awaiting email verification
-    if (awaitingEmailVerification) return;
+    if (awaitingEmailVerification || status === "bootstrapping" || status === "loading") return;
 
     const currentSegment = segments[0] as string;
     const isProtectedRoute =
@@ -169,27 +190,30 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
       currentSegment === "admin-catalog" ||
       currentSegment === "ai-plan" ||
       currentSegment === "notification-settings" ||
-      currentSegment === "plan-detail";
+      currentSegment === "plan-detail" ||
+      currentSegment === "achievements";
     const isLoginRoute = currentSegment === "login";
     const isOnboardingRoute = currentSegment === "onboarding";
 
     const handleNavigation = async () => {
       if (!user && isProtectedRoute) {
         router.replace("/login");
+      } else if (user && status === "needsOnboarding" && !isOnboardingRoute) {
+        router.replace("/onboarding");
       } else if (user && isLoginRoute) {
-        router.replace("/(tabs)");
+        router.replace("/");
       } else if (
         user &&
         !isProtectedRoute &&
         !isOnboardingRoute &&
         !isLoginRoute
       ) {
-        router.replace("/(tabs)");
+        router.replace("/");
       }
     };
 
     handleNavigation();
-  }, [user, authLoading, segments, splashVisible, router, awaitingEmailVerification]);
+  }, [user, authLoading, navigatorMounted, segments, splashVisible, router, awaitingEmailVerification, status]);
 
   // Render animated splash overlay when visible
   // The splash handles its own exit animation based on isReady
@@ -202,38 +226,217 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
     );
   }
 
-  // Don't render navigation until auth state is known
-  if (authLoading) return null;
-
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        animation: "slide_from_right",
-        animationDuration: 280,
-        gestureEnabled: true,
-        gestureDirection: "horizontal",
-        fullScreenGestureEnabled: true,
-      }}
-    >
-      <Stack.Screen name="(tabs)" options={{ animation: "fade" }} />
-      <Stack.Screen name="login" options={{ animation: "fade" }} />
-      <Stack.Screen name="onboarding" options={{ animation: "fade" }} />
-      <Stack.Screen
-        name="add-workout"
-        options={{ presentation: "modal", animation: "slide_from_bottom" }}
-      />
-      <Stack.Screen
-        name="modal"
-        options={{ presentation: "modal", animation: "slide_from_bottom" }}
-      />
-      <Stack.Screen name="admin-catalog" />
-      <Stack.Screen name="ai-plan" />
-      <Stack.Screen name="notification-settings" />
-      <Stack.Screen name="plan-detail" />
-    </Stack>
+    <View style={{ flex: 1 }}>
+      {status === "backendUnreachable" && <OfflineBanner />}
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          animation: "slide_from_right",
+          animationDuration: 280,
+          gestureEnabled: true,
+          gestureDirection: "horizontal",
+          fullScreenGestureEnabled: true,
+        }}
+      >
+        <Stack.Screen name="(tabs)" options={{ animation: "fade" }} />
+        <Stack.Screen name="login" options={{ animation: "fade" }} />
+        <Stack.Screen name="onboarding" options={{ animation: "fade" }} />
+        <Stack.Screen
+          name="add-workout"
+          options={{ presentation: "modal", animation: "slide_from_bottom" }}
+        />
+        <Stack.Screen
+          name="modal"
+          options={{ presentation: "modal", animation: "slide_from_bottom" }}
+        />
+        <Stack.Screen name="admin-catalog" />
+        <Stack.Screen name="ai-plan" />
+        <Stack.Screen name="notification-settings" />
+        <Stack.Screen name="plan-detail" />
+        <Stack.Screen name="achievements" />
+      </Stack>
+      {(authLoading || status === "loading" || status === "bootstrapping") && (
+        <View style={stateOverlayStyle}>
+          <BootstrapState />
+        </View>
+      )}
+      {!authLoading &&
+        (status === "backendUnreachable" || status === "bootstrapError") &&
+        !availableProfile && (
+          <View style={stateOverlayStyle}>
+            <BackendUnavailableState
+              title={status === "backendUnreachable" ? "Can't reach the server" : "Couldn't load your account"}
+              message={bootstrapError}
+              onRetry={retryBootstrap}
+            />
+          </View>
+        )}
+    </View>
   );
 }
+
+function BootstrapState() {
+  const [loaderMessage, setLoaderMessage] = useState("Waking up the server...");
+  const pulse = useRef(new NativeAnimated.Value(0)).current;
+
+  useEffect(() => {
+    const firstNoticeTimer = setTimeout(
+      () => setLoaderMessage("The first launch can take up to a minute while the server wakes up."),
+      10_000,
+    );
+    const stillTryingTimer = setTimeout(
+      () => setLoaderMessage("Still trying..."),
+      25_000,
+    );
+    const animation = NativeAnimated.loop(
+      NativeAnimated.sequence([
+        NativeAnimated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        NativeAnimated.timing(pulse, { toValue: 0, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    animation.start();
+    return () => {
+      clearTimeout(firstNoticeTimer);
+      clearTimeout(stillTryingTimer);
+      animation.stop();
+    };
+  }, [pulse]);
+
+  return (
+    <View style={stateContainerStyle}>
+      <View style={loaderStyle}>
+        <ActivityIndicator size="large" color="#10B981" />
+        <NativeAnimated.View
+          style={{
+            ...loaderPulseStyle,
+            opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }),
+            transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.15] }) }],
+          }}
+        />
+      </View>
+      <Text style={stateTitleStyle}>Getting your account ready</Text>
+      <Text style={stateMessageStyle}>{loaderMessage}</Text>
+    </View>
+  );
+}
+
+function BackendUnavailableState({
+  title,
+  message,
+  onRetry,
+}: {
+  title: string;
+  message: string | null;
+  onRetry: () => Promise<void>;
+}) {
+  const [retrying, setRetrying] = useState(false);
+
+  const retry = async () => {
+    setRetrying(true);
+    try {
+      await onRetry();
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <View style={stateContainerStyle}>
+      <Text style={stateTitleStyle}>{title}</Text>
+      <Text style={stateMessageStyle}>
+        {message || "Check your connection and try again."}
+      </Text>
+      <Pressable onPress={retry} disabled={retrying} style={retryButtonStyle}>
+        <Text style={retryButtonTextStyle}>{retrying ? "Retrying..." : "Retry"}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function OfflineBanner() {
+  return (
+    <View style={offlineBannerStyle}>
+      <Text style={offlineBannerTextStyle}>Offline: showing cached data</Text>
+    </View>
+  );
+}
+
+const stateContainerStyle = {
+  flex: 1,
+  justifyContent: "center" as const,
+  alignItems: "center" as const,
+  padding: 24,
+  backgroundColor: "#0B1220",
+};
+
+const stateOverlayStyle = {
+  ...stateContainerStyle,
+  position: "absolute" as const,
+  top: 0,
+  right: 0,
+  bottom: 0,
+  left: 0,
+  zIndex: 10,
+};
+
+const stateTitleStyle = {
+  color: "#FFFFFF",
+  fontSize: 22,
+  fontWeight: "700" as const,
+  textAlign: "center" as const,
+};
+
+const loaderStyle = {
+  width: 76,
+  height: 76,
+  justifyContent: "center" as const,
+  alignItems: "center" as const,
+  marginBottom: 24,
+};
+
+const loaderPulseStyle = {
+  position: "absolute" as const,
+  width: 68,
+  height: 68,
+  borderRadius: 34,
+  borderWidth: 2,
+  borderColor: "#10B981",
+};
+
+const stateMessageStyle = {
+  color: "#B8C2D1",
+  fontSize: 15,
+  textAlign: "center" as const,
+  marginTop: 10,
+  maxWidth: 340,
+};
+
+const retryButtonStyle = {
+  marginTop: 22,
+  paddingHorizontal: 24,
+  paddingVertical: 12,
+  borderRadius: 8,
+  backgroundColor: "#10B981",
+};
+
+const retryButtonTextStyle = {
+  color: "#FFFFFF",
+  fontSize: 16,
+  fontWeight: "700" as const,
+};
+
+const offlineBannerStyle = {
+  backgroundColor: "#7C2D12",
+  paddingVertical: 8,
+  paddingHorizontal: 16,
+};
+
+const offlineBannerTextStyle = {
+  color: "#FFEDD5",
+  textAlign: "center" as const,
+  fontSize: 13,
+};
 
 /**
  * Root Layout
@@ -273,7 +476,7 @@ export default function RootLayout() {
       try {
         console.log("[RootLayout] Starting app initialization...");
 
-        // Initialize background notifications (Notifee + expo-notifications)
+        // Initialize local Expo notifications
         console.log("[RootLayout] Initializing notifications...");
         await initNotifications();
         console.log(`[RootLayout] ✓ initNotifications complete (${Date.now() - initStartTime}ms)`);

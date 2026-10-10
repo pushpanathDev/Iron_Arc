@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { plansApi, PlanCriteriaPayload, ChatMessage } from "../services/api";
+import { ACHIEVEMENTS_KEY, useAchievementUnlockHandler } from "./useAchievements";
 
 const PLANS_KEY = ["plans"] as const;
 
@@ -24,12 +25,18 @@ export function usePlan(planId: string | undefined) {
 /* ── Generate new plan ───────────────────────────────────────────────── */
 export function useGeneratePlan() {
   const queryClient = useQueryClient();
+  const handleUnlocks = useAchievementUnlockHandler();
 
   return useMutation({
     mutationFn: (criteria?: PlanCriteriaPayload) => plansApi.generate(criteria),
-    onSuccess: () => {
+    retry: 0, // AI calls are expensive and rate-limited; never repeat automatically
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: PLANS_KEY });
       queryClient.invalidateQueries({ queryKey: ["profile"] });
+      void handleUnlocks(result.newlyUnlocked);
+    },
+    onError: () => {
+      queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
     },
   });
 }
@@ -40,6 +47,8 @@ export function useRecalibratePlan() {
 
   return useMutation({
     mutationFn: (planId: string) => plansApi.recalibrate(planId),
+    retry: 0, // AI call — never repeat automatically
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: PLANS_KEY });
       queryClient.invalidateQueries({ queryKey: ["profile"] });
@@ -61,6 +70,8 @@ export function useSubstituteExercise() {
       exerciseId: string;
       reason?: string;
     }) => plansApi.substitute(planId, exerciseId, reason),
+    retry: 0, // AI call — never repeat automatically
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY }),
     onSuccess: (updatedPlan, vars) => {
       // Update the cached plan with the server's fresh planData
       queryClient.setQueryData(["plans", vars.planId], updatedPlan);
@@ -76,6 +87,7 @@ export function useRenamePlan() {
   return useMutation({
     mutationFn: ({ planId, name }: { planId: string; name: string }) =>
       plansApi.rename(planId, name),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: PLANS_KEY });
     },
@@ -88,6 +100,7 @@ export function useActivatePlan() {
 
   return useMutation({
     mutationFn: (planId: string) => plansApi.activate(planId),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: PLANS_KEY });
       queryClient.invalidateQueries({ queryKey: ["profile"] });
@@ -101,6 +114,7 @@ export function useDeletePlan() {
 
   return useMutation({
     mutationFn: (planId: string) => plansApi.delete(planId),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: PLANS_KEY });
       queryClient.invalidateQueries({ queryKey: ["profile"] });
@@ -114,6 +128,8 @@ export function usePlanChat(planId: string | undefined) {
 
   const mutation = useMutation({
     mutationFn: (message: string) => plansApi.chat(planId!, message),
+    retry: 0, // AI call — a retry would append the message to the chat twice
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY }),
     onSuccess: (response) => {
       // Update the plan cache with the new planData and chatHistory
       queryClient.setQueryData(["plans", planId], (old: any) => {

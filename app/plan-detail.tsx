@@ -78,15 +78,15 @@ function getPlanDataForDisplay(planData: any): any {
 /* ─────────────────────────────────────────────────────────────
    Muscle group accent colour
 ───────────────────────────────────────────────────────────── */
-function getMuscleAccent(muscles: string[] = []): string {
+function getMuscleAccent(muscles: string[] = [], colors: any): string {
   const all = muscles.join(" ").toLowerCase();
-  if (all.includes("chest") || all.includes("push") || all.includes("tricep")) return "#7C3AED";
-  if (all.includes("back") || all.includes("pull") || all.includes("lat") || all.includes("bicep")) return "#2563EB";
-  if (all.includes("leg") || all.includes("quad") || all.includes("hamstring") || all.includes("glute") || all.includes("calf")) return "#D97706";
-  if (all.includes("shoulder") || all.includes("delt")) return "#0891B2";
-  if (all.includes("core") || all.includes("ab")) return "#059669";
-  if (all.includes("full") || all.includes("compound")) return "#7C3AED";
-  return "#6B7280";
+  if (all.includes("chest") || all.includes("push") || all.includes("tricep")) return colors.categoryPush;
+  if (all.includes("back") || all.includes("pull") || all.includes("lat") || all.includes("bicep")) return colors.categoryPull;
+  if (all.includes("leg") || all.includes("quad") || all.includes("hamstring") || all.includes("glute") || all.includes("calf")) return colors.categoryLegs;
+  if (all.includes("shoulder") || all.includes("delt")) return colors.categoryShoulders;
+  if (all.includes("core") || all.includes("ab")) return colors.categoryCore;
+  if (all.includes("full") || all.includes("compound")) return colors.categoryPush;
+  return colors.categoryNeutral;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -236,8 +236,8 @@ function ExerciseCard({
           {/* Progression note */}
           {note && (
             <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 4, marginTop: spacing.xs }}>
-              <Ionicons name="trending-up-outline" size={12} color="#10B981" style={{ marginTop: 2 }} />
-              <Text style={{ ...typography.caption, color: "#10B981", flex: 1, lineHeight: 17, fontSize: 12 }}>
+              <Ionicons name="trending-up-outline" size={12} color={colors.success} style={{ marginTop: 2 }} />
+              <Text style={{ ...typography.caption, color: colors.success, flex: 1, lineHeight: 17, fontSize: 12 }}>
                 {note}
               </Text>
             </View>
@@ -274,7 +274,7 @@ function DayCard({
   const isRest = day.sessionType === "rest";
   const dayLabel = day.name ?? day.day ?? `Day ${index + 1}`;
   const exercises = day.exercises ?? [];
-  const accent = getMuscleAccent(day.targetMuscles);
+  const accent = getMuscleAccent(day.targetMuscles, colors);
   const totalSets = exercises.reduce((s, e) => s + (typeof e.sets === "number" ? e.sets : 0), 0);
 
   return (
@@ -463,12 +463,12 @@ function ChatBubble({
               width: 24,
               height: 24,
               borderRadius: radius.full,
-              backgroundColor: "#7C3AED",
+              backgroundColor: colors.accent,
               justifyContent: "center",
               alignItems: "center",
             }}
           >
-            <Ionicons name="barbell" size={12} color="#fff" />
+            <Ionicons name="barbell" size={12} color={colors.textOnAccent} />
           </View>
           <Text style={{ ...typography.caption, color: colors.textMuted, fontWeight: "600" }}>
             AI Trainer
@@ -479,7 +479,7 @@ function ChatBubble({
       <View
         style={{
           maxWidth: "80%",
-          backgroundColor: isUser ? "#7C3AED" : colors.surface,
+          backgroundColor: isUser ? colors.accent : colors.surface,
           borderRadius: radius.xl,
           borderBottomRightRadius: isUser ? 4 : radius.xl,
           borderBottomLeftRadius: isUser ? radius.xl : 4,
@@ -492,7 +492,7 @@ function ChatBubble({
         <Text
           style={{
             ...typography.body,
-            color: isUser ? "#fff" : colors.textPrimary,
+            color: isUser ? colors.textOnAccent : colors.textPrimary,
             lineHeight: 21,
           }}
         >
@@ -507,12 +507,12 @@ function ChatBubble({
               marginTop: 6,
               gap: 4,
               borderTopWidth: 1,
-              borderTopColor: "rgba(124,58,237,0.2)",
+              borderTopColor: colors.divider,
               paddingTop: 6,
             }}
           >
-            <Ionicons name="checkmark-circle" size={13} color="#10B981" />
-            <Text style={{ ...typography.caption, color: "#10B981", fontWeight: "700" }}>
+            <Ionicons name="checkmark-circle" size={13} color={colors.success} />
+            <Text style={{ ...typography.caption, color: colors.success, fontWeight: "700" }}>
               Plan updated
             </Text>
           </View>
@@ -535,13 +535,13 @@ function ThinkingBubble({ colors, spacing, radius, typography }: any) {
   return (
     <View style={{ alignItems: "flex-start", marginBottom: spacing.sm, paddingHorizontal: spacing.md }}>
       <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4, gap: 6 }}>
-        <View style={{ width: 24, height: 24, borderRadius: radius.full, backgroundColor: "#7C3AED", justifyContent: "center", alignItems: "center" }}>
-          <Ionicons name="barbell" size={12} color="#fff" />
+        <View style={{ width: 24, height: 24, borderRadius: radius.full, backgroundColor: colors.accent, justifyContent: "center", alignItems: "center" }}>
+          <Ionicons name="barbell" size={12} color={colors.textOnAccent} />
         </View>
         <Text style={{ ...typography.caption, color: colors.textMuted, fontWeight: "600" }}>AI Trainer</Text>
       </View>
       <View style={{ backgroundColor: colors.surface, borderRadius: radius.xl, borderBottomLeftRadius: 4, paddingHorizontal: spacing.md, paddingVertical: spacing.sm + 2, borderWidth: 1, borderColor: colors.cardBorder, flexDirection: "row", alignItems: "center", gap: 6 }}>
-        <ActivityIndicator size="small" color="#7C3AED" />
+        <ActivityIndicator size="small" color={colors.accent} />
         <Text style={{ ...typography.body, color: colors.textSecondary }}>Thinking…</Text>
       </View>
     </View>
@@ -692,7 +692,8 @@ export default function PlanDetailScreen() {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* ── Header ── */}
       <LinearGradient
-        colors={["#7C3AED", "#4F46E5"]}
+        // Same background as the tab screens, so the status bar area matches the app.
+        colors={[colors.background, colors.background]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{
@@ -703,32 +704,32 @@ export default function PlanDetailScreen() {
       >
         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}>
           <Pressable onPress={() => router.back()} style={{ marginRight: spacing.md, padding: spacing.xs }}>
-            <Ionicons name="arrow-back" size={22} color="#fff" />
+            <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
           </Pressable>
           <View style={{ flex: 1 }}>
             {plan.isActive && (
-              <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 11, fontWeight: "700", letterSpacing: 0.8, marginBottom: 2 }}>
+              <Text style={{ color: colors.accent, fontSize: 11, fontWeight: "700", letterSpacing: 0.8, marginBottom: 2 }}>
                 ACTIVE PLAN
               </Text>
             )}
-            <Text style={{ color: "#fff", fontSize: 20, fontWeight: "700" }} numberOfLines={1}>
+            <Text style={{ color: colors.textPrimary, fontSize: 20, fontWeight: "700" }} numberOfLines={1}>
               {plan.name}
             </Text>
           </View>
           <Pressable
             onPress={() => { setNewName(plan.name); setShowRenameModal(true); }}
-            style={{ backgroundColor: "rgba(255,255,255,0.2)", borderRadius: radius.full, padding: spacing.sm, marginLeft: spacing.sm }}
+            style={{ backgroundColor: colors.surfaceElevated, borderRadius: radius.full, padding: spacing.sm, marginLeft: spacing.sm }}
           >
-            <Ionicons name="pencil-outline" size={18} color="#fff" />
+            <Ionicons name="pencil-outline" size={18} color={colors.textPrimary} />
           </Pressable>
           <Pressable
             onPress={() => setShowRecalibrateConfirm(true)}
-            style={{ backgroundColor: "rgba(255,255,255,0.2)", borderRadius: radius.full, padding: spacing.sm, marginLeft: spacing.sm }}
+            style={{ backgroundColor: colors.surfaceElevated, borderRadius: radius.full, padding: spacing.sm, marginLeft: spacing.sm }}
           >
             {recalibrate.isPending ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={colors.accent} />
             ) : (
-              <Ionicons name="refresh-outline" size={18} color="#fff" />
+              <Ionicons name="refresh-outline" size={18} color={colors.textPrimary} />
             )}
           </Pressable>
         </View>
@@ -737,7 +738,7 @@ export default function PlanDetailScreen() {
         <View
           style={{
             flexDirection: "row",
-            backgroundColor: "rgba(255,255,255,0.15)",
+            backgroundColor: colors.surfaceElevated,
             borderRadius: radius.xl,
             padding: 3,
           }}
@@ -750,7 +751,7 @@ export default function PlanDetailScreen() {
                 flex: 1,
                 paddingVertical: spacing.sm,
                 borderRadius: radius.lg,
-                backgroundColor: activeTab === tab ? "#fff" : "transparent",
+                backgroundColor: activeTab === tab ? colors.surface : "transparent",
                 alignItems: "center",
                 flexDirection: "row",
                 justifyContent: "center",
@@ -760,13 +761,13 @@ export default function PlanDetailScreen() {
               <Ionicons
                 name={tab === "schedule" ? "calendar-outline" : "chatbubble-ellipses-outline"}
                 size={15}
-                color={activeTab === tab ? "#7C3AED" : "rgba(255,255,255,0.8)"}
+                color={activeTab === tab ? colors.accent : colors.textSecondary}
               />
               <Text
                 style={{
                   fontWeight: "700",
                   fontSize: 14,
-                  color: activeTab === tab ? "#7C3AED" : "rgba(255,255,255,0.8)",
+                  color: activeTab === tab ? colors.accent : colors.textSecondary,
                   textTransform: "capitalize",
                 }}
               >
@@ -775,7 +776,7 @@ export default function PlanDetailScreen() {
               {tab === "chat" && localMessages.length > 0 && (
                 <View
                   style={{
-                    backgroundColor: activeTab === "chat" ? "#7C3AED" : "rgba(255,255,255,0.5)",
+                    backgroundColor: activeTab === "chat" ? colors.accent : colors.textMuted,
                     borderRadius: 10,
                     minWidth: 18,
                     height: 18,
@@ -784,7 +785,7 @@ export default function PlanDetailScreen() {
                     paddingHorizontal: 4,
                   }}
                 >
-                  <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>
+                  <Text style={{ color: colors.textOnAccent, fontSize: 10, fontWeight: "700" }}>
                     {localMessages.length}
                   </Text>
                 </View>
@@ -804,19 +805,19 @@ export default function PlanDetailScreen() {
             <Animated.View
               entering={FadeInDown.duration(300)}
               style={{
-                backgroundColor: "#7C3AED15",
+                backgroundColor: colors.accentDim,
                 borderRadius: radius.xl,
                 padding: spacing.lg,
                 marginBottom: spacing.md,
                 borderWidth: 1,
-                borderColor: "#7C3AED30",
+                borderColor: `${colors.accent}30`,
                 flexDirection: "row",
                 alignItems: "flex-start",
                 gap: spacing.sm,
               }}
             >
-              <Ionicons name="information-circle" size={20} color="#7C3AED" style={{ marginTop: 2 }} />
-              <Text style={{ ...typography.body, color: "#7C3AED", flex: 1, lineHeight: 20 }}>
+              <Ionicons name="information-circle" size={20} color={colors.accent} style={{ marginTop: 2 }} />
+              <Text style={{ ...typography.body, color: colors.accent, flex: 1, lineHeight: 20 }}>
                 {planData.planExplanation}
               </Text>
             </Animated.View>
@@ -836,32 +837,32 @@ export default function PlanDetailScreen() {
             }}
           >
             {/* Top gradient strip */}
-            <View style={{ height: 3, backgroundColor: "#7C3AED" }} />
+            <View style={{ height: 3, backgroundColor: colors.accent }} />
             <View style={{ padding: spacing.md, flexDirection: "row" }}>
               {[
                 {
                   label: "WEEK",
                   value: `${plan.weekNumber}${Array.isArray(planData?.weeks) ? `/${planData.weeks.length}` : ""}`,
                   icon: "calendar-outline" as const,
-                  color: "#7C3AED",
+                  color: colors.categoryPush,
                 },
                 {
                   label: "SESSIONS",
                   value: `${days.filter((d) => d.sessionType !== "rest").length}×`,
                   icon: "barbell-outline" as const,
-                  color: "#2563EB",
+                  color: colors.categoryPull,
                 },
                 {
                   label: "TOTAL SETS",
                   value: String(days.flatMap((d) => d.exercises ?? []).reduce((s, e) => s + (typeof e.sets === "number" ? e.sets : 0), 0)),
                   icon: "layers-outline" as const,
-                  color: "#D97706",
+                  color: colors.categoryLegs,
                 },
                 {
                   label: "EXERCISES",
                   value: String(days.flatMap((d) => d.exercises ?? []).length),
                   icon: "fitness-outline" as const,
-                  color: "#059669",
+                  color: colors.categoryCore,
                 },
               ].map((stat, i) => (
                 <View
@@ -926,15 +927,15 @@ export default function PlanDetailScreen() {
                     width: 72,
                     height: 72,
                     borderRadius: radius.full,
-                    backgroundColor: "#7C3AED15",
+                    backgroundColor: colors.accentDim,
                     justifyContent: "center",
                     alignItems: "center",
                     marginBottom: spacing.lg,
                     borderWidth: 2,
-                    borderColor: "#7C3AED30",
+                    borderColor: `${colors.accent}30`,
                   }}
                 >
-                  <Ionicons name="chatbubble-ellipses-outline" size={32} color="#7C3AED" />
+                  <Ionicons name="chatbubble-ellipses-outline" size={32} color={colors.accent} />
                 </View>
                 <Text style={{ ...typography.h3, color: colors.textPrimary, textAlign: "center", marginBottom: spacing.sm }}>
                   Chat with your AI trainer
@@ -958,13 +959,13 @@ export default function PlanDetailScreen() {
                         paddingHorizontal: spacing.md,
                         paddingVertical: spacing.sm,
                         borderWidth: 1,
-                        borderColor: "#7C3AED30",
+                        borderColor: `${colors.accent}30`,
                         flexDirection: "row",
                         alignItems: "center",
                         gap: spacing.sm,
                       }}
                     >
-                      <Ionicons name="arrow-forward-circle-outline" size={16} color="#7C3AED" />
+                      <Ionicons name="arrow-forward-circle-outline" size={16} color={colors.accent} />
                       <Text style={{ ...typography.body, color: colors.textPrimary, flex: 1 }}>{hint}</Text>
                     </Pressable>
                   ))}
@@ -1016,7 +1017,7 @@ export default function PlanDetailScreen() {
                 color: colors.textPrimary,
                 ...typography.body,
                 borderWidth: 1,
-                borderColor: chatInput.length > 0 ? "#7C3AED60" : colors.cardBorder,
+                borderColor: chatInput.length > 0 ? `${colors.accent}60` : colors.cardBorder,
                 maxHeight: 120,
               }}
               returnKeyType="default"
@@ -1029,7 +1030,7 @@ export default function PlanDetailScreen() {
                 width: 44,
                 height: 44,
                 borderRadius: radius.full,
-                backgroundColor: chatInput.trim() && !chatMutation.isPending ? "#7C3AED" : colors.surfaceElevated,
+                backgroundColor: chatInput.trim() && !chatMutation.isPending ? colors.accent : colors.surfaceElevated,
                 justifyContent: "center",
                 alignItems: "center",
               }}
@@ -1037,7 +1038,7 @@ export default function PlanDetailScreen() {
               <Ionicons
                 name="send"
                 size={18}
-                color={chatInput.trim() && !chatMutation.isPending ? "#fff" : colors.textMuted}
+                color={chatInput.trim() && !chatMutation.isPending ? colors.textOnAccent : colors.textMuted}
               />
             </Pressable>
           </View>
@@ -1047,7 +1048,7 @@ export default function PlanDetailScreen() {
       {/* ── Rename Modal ── */}
       <Modal visible={showRenameModal} transparent animationType="fade" onRequestClose={() => setShowRenameModal(false)}>
         <Pressable
-          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", padding: spacing.lg }}
+          style={{ flex: 1, backgroundColor: colors.overlay, justifyContent: "center", alignItems: "center", padding: spacing.lg }}
           onPress={() => setShowRenameModal(false)}
         >
           <Pressable
@@ -1088,9 +1089,9 @@ export default function PlanDetailScreen() {
                 style={{ flex: 1, paddingVertical: spacing.md, backgroundColor: colors.accent, borderRadius: radius.lg, alignItems: "center", opacity: !newName.trim() ? 0.5 : 1 }}
               >
                 {renameMutation.isPending ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.textOnAccent} />
                 ) : (
-                  <Text style={{ color: "#fff", fontWeight: "700" }}>Save</Text>
+                  <Text style={{ color: colors.textOnAccent, fontWeight: "700" }}>Save</Text>
                 )}
               </Pressable>
             </View>
@@ -1101,16 +1102,16 @@ export default function PlanDetailScreen() {
       {/* ── Recalibrate Confirm Modal ── */}
       <Modal visible={showRecalibrateConfirm} transparent animationType="fade" onRequestClose={() => setShowRecalibrateConfirm(false)}>
         <Pressable
-          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", padding: spacing.lg }}
+          style={{ flex: 1, backgroundColor: colors.overlay, justifyContent: "center", alignItems: "center", padding: spacing.lg }}
           onPress={() => setShowRecalibrateConfirm(false)}
         >
           <Pressable
             style={{ backgroundColor: colors.surface, borderRadius: 20, overflow: "hidden", width: "100%", maxWidth: 400, ...shadows.lg }}
             onPress={() => {}}
           >
-            <View style={{ backgroundColor: "#7C3AED15", alignItems: "center", paddingVertical: spacing.xl, borderBottomWidth: 1, borderBottomColor: colors.cardBorder }}>
-              <View style={{ width: 64, height: 64, borderRadius: radius.full, backgroundColor: "#7C3AED20", justifyContent: "center", alignItems: "center", borderWidth: 2, borderColor: "#7C3AED40" }}>
-                <Ionicons name="refresh-outline" size={30} color="#7C3AED" />
+            <View style={{ backgroundColor: colors.accentDim, alignItems: "center", paddingVertical: spacing.xl, borderBottomWidth: 1, borderBottomColor: colors.cardBorder }}>
+              <View style={{ width: 64, height: 64, borderRadius: radius.full, backgroundColor: colors.accentDim, justifyContent: "center", alignItems: "center", borderWidth: 2, borderColor: `${colors.accent}40` }}>
+                <Ionicons name="refresh-outline" size={30} color={colors.accent} />
               </View>
             </View>
             <View style={{ padding: spacing.xl }}>
@@ -1128,12 +1129,12 @@ export default function PlanDetailScreen() {
               <Pressable
                 onPress={handleRecalibrate}
                 disabled={recalibrate.isPending}
-                style={{ flex: 1, paddingVertical: spacing.md, alignItems: "center", justifyContent: "center", backgroundColor: "#7C3AED12" }}
+                style={{ flex: 1, paddingVertical: spacing.md, alignItems: "center", justifyContent: "center", backgroundColor: colors.accentDim }}
               >
                 {recalibrate.isPending ? (
-                  <ActivityIndicator size="small" color="#7C3AED" />
+                  <ActivityIndicator size="small" color={colors.accent} />
                 ) : (
-                  <Text style={{ ...typography.bodyMedium, color: "#7C3AED", fontWeight: "700" }}>Recalibrate</Text>
+                  <Text style={{ ...typography.bodyMedium, color: colors.accent, fontWeight: "700" }}>Recalibrate</Text>
                 )}
               </Pressable>
             </View>
@@ -1144,7 +1145,7 @@ export default function PlanDetailScreen() {
       {/* ── Swap Exercise Bottom Sheet ── */}
       <Modal visible={substituteTarget !== null} transparent animationType="slide" onRequestClose={() => setSubstituteTarget(null)}>
         <Pressable
-          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}
+          style={{ flex: 1, backgroundColor: colors.overlay, justifyContent: "flex-end" }}
           onPress={() => setSubstituteTarget(null)}
         >
           <Pressable
@@ -1200,11 +1201,11 @@ export default function PlanDetailScreen() {
                 style={{ flex: 1, paddingVertical: spacing.md, backgroundColor: colors.accent, borderRadius: radius.lg, alignItems: "center", flexDirection: "row", justifyContent: "center", gap: spacing.xs, opacity: substituteMutation.isPending ? 0.7 : 1 }}
               >
                 {substituteMutation.isPending ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.textOnAccent} />
                 ) : (
-                  <Ionicons name="swap-horizontal" size={16} color="#fff" />
+                  <Ionicons name="swap-horizontal" size={16} color={colors.textOnAccent} />
                 )}
-                <Text style={{ color: "#fff", fontWeight: "700", fontSize: 15 }}>Swap It</Text>
+                <Text style={{ color: colors.textOnAccent, fontWeight: "700", fontSize: 15 }}>Swap It</Text>
               </Pressable>
             </View>
           </Pressable>

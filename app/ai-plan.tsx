@@ -11,6 +11,7 @@ import { router } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -36,6 +37,7 @@ import {
   PlanCriteria,
   DEFAULT_CRITERIA,
 } from "../components/PlanCriteriaSheet";
+import { PlanProfileForm, isPlanProfileComplete } from "../components/PlanProfileForm";
 
 /* ─────────────────────────────────────────────────────────────
    Helpers
@@ -68,10 +70,11 @@ function getPlanSummary(plan: Plan): { days: number; split: string; intensity: s
   return { days, split, intensity };
 }
 
-const INTENSITY_COLOR: Record<string, string> = {
-  conservative: "#22C55E",
-  moderate: "#F59E0B",
-  aggressive: "#EF4444",
+// Theme token names; resolved against `colors` at render time.
+const INTENSITY_COLOR_TOKEN: Record<string, "success" | "warning" | "error"> = {
+  conservative: "success",
+  moderate: "warning",
+  aggressive: "error",
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -99,7 +102,8 @@ function PlanCard({
   typography: any;
 }) {
   const summary = getPlanSummary(plan);
-  const intensityColor = INTENSITY_COLOR[summary.intensity] ?? colors.accent;
+  const intensityToken = INTENSITY_COLOR_TOKEN[summary.intensity];
+  const intensityColor = intensityToken ? colors[intensityToken] : colors.accent;
 
   return (
     <Animated.View
@@ -129,8 +133,8 @@ function PlanCard({
               gap: spacing.xs,
             }}
           >
-            <Ionicons name="checkmark-circle" size={14} color="#fff" />
-            <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700", letterSpacing: 0.5 }}>
+            <Ionicons name="checkmark-circle" size={14} color={colors.textOnAccent} />
+            <Text style={{ color: colors.textOnAccent, fontSize: 12, fontWeight: "700", letterSpacing: 0.5 }}>
               ACTIVE PLAN
             </Text>
           </View>
@@ -325,22 +329,21 @@ export default function AIPlanScreen() {
 
   const [showCriteriaSheet, setShowCriteriaSheet] = useState(false);
   const [criteria, setCriteria] = useState<PlanCriteria>(DEFAULT_CRITERIA);
-  const [showProfileIncomplete, setShowProfileIncomplete] = useState(false);
-
-  const profileComplete =
-    Boolean(profile?.fitnessGoal) &&
-    Boolean(profile?.age) &&
-    Boolean(profile?.weight);
+  const [showProfileForm, setShowProfileForm] = useState(false);
 
   const handleNewPlan = () => {
-    if (!profileComplete) {
-      showToast({
-        message: "Complete your profile (goal, age, weight) before generating a plan.",
-        type: "warning",
-      });
+    // Ask only for what's missing; complete profiles go straight to criteria.
+    if (!isPlanProfileComplete(profile)) {
+      setShowProfileForm(true);
       return;
     }
     setShowCriteriaSheet(true);
+  };
+
+  const handleProfileFormComplete = () => {
+    setShowProfileForm(false);
+    // iOS drops a Modal presented while another is still dismissing.
+    setTimeout(() => setShowCriteriaSheet(true), Platform.OS === "ios" ? 350 : 0);
   };
 
   const handleGenerate = () => {
@@ -386,7 +389,8 @@ export default function AIPlanScreen() {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* Header */}
       <LinearGradient
-        colors={["#7C3AED", "#4F46E5"]}
+        // Same background as the tab screens, so the status bar area matches the app.
+        colors={[colors.background, colors.background]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{
@@ -397,20 +401,20 @@ export default function AIPlanScreen() {
       >
         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.xs }}>
           <Pressable onPress={() => router.back()} style={{ marginRight: spacing.md, padding: spacing.xs }}>
-            <Ionicons name="arrow-back" size={22} color="#fff" />
+            <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
           </Pressable>
           <View style={{ flex: 1 }}>
-            <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 12, fontWeight: "500" }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "500" }}>
               {/* Powered by Groq AI · Llama 3.3 70B */}
               Powered By AI
             </Text>
-            <Text style={{ color: "#fff", fontSize: 22, fontWeight: "700" }}>
+            <Text style={{ color: colors.textPrimary, fontSize: 22, fontWeight: "700" }}>
               My Plans
             </Text>
           </View>
           <View
             style={{
-              backgroundColor: "rgba(255,255,255,0.2)",
+              backgroundColor: colors.accentDim,
               borderRadius: radius.full,
               width: 36,
               height: 36,
@@ -418,7 +422,7 @@ export default function AIPlanScreen() {
               alignItems: "center",
             }}
           >
-            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 16 }}>
+            <Text style={{ color: colors.accent, fontWeight: "700", fontSize: 16 }}>
               {plans.length}
             </Text>
           </View>
@@ -458,13 +462,13 @@ export default function AIPlanScreen() {
                 width: 80,
                 height: 80,
                 borderRadius: radius.full,
-                backgroundColor: "#7C3AED20",
+                backgroundColor: colors.accentDim,
                 justifyContent: "center",
                 alignItems: "center",
                 marginBottom: spacing.lg,
               }}
             >
-              <Ionicons name="sparkles" size={36} color="#7C3AED" />
+              <Ionicons name="sparkles" size={36} color={colors.accent} />
             </View>
             <Text style={{ ...typography.h2, color: colors.textPrimary, textAlign: "center" }}>
               No Plans Yet
@@ -486,7 +490,7 @@ export default function AIPlanScreen() {
             <Pressable
               onPress={handleNewPlan}
               style={{
-                backgroundColor: "#7C3AED",
+                backgroundColor: colors.accent,
                 borderRadius: radius.xl,
                 paddingVertical: spacing.md,
                 paddingHorizontal: spacing.xl,
@@ -495,8 +499,8 @@ export default function AIPlanScreen() {
                 gap: spacing.sm,
               }}
             >
-              <Ionicons name="sparkles" size={20} color="#fff" />
-              <Text style={{ color: "#fff", fontWeight: "700", fontSize: 16 }}>
+              <Ionicons name="sparkles" size={20} color={colors.textOnAccent} />
+              <Text style={{ color: colors.textOnAccent, fontWeight: "700", fontSize: 16 }}>
                 Generate My First Plan
               </Text>
             </Pressable>
@@ -553,7 +557,7 @@ export default function AIPlanScreen() {
             onPress={handleNewPlan}
             disabled={generatePlan.isPending}
             style={{
-              backgroundColor: "#7C3AED",
+              backgroundColor: colors.accent,
               borderRadius: radius.full,
               paddingVertical: spacing.md,
               paddingHorizontal: spacing.lg,
@@ -561,23 +565,31 @@ export default function AIPlanScreen() {
               alignItems: "center",
               gap: spacing.sm,
               elevation: 6,
-              shadowColor: "#7C3AED",
+              shadowColor: colors.accent,
               shadowOffset: { width: 0, height: 4 },
               shadowOpacity: 0.4,
               shadowRadius: 8,
             }}
           >
             {generatePlan.isPending ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={colors.textOnAccent} />
             ) : (
-              <Ionicons name="add" size={20} color="#fff" />
+              <Ionicons name="add" size={20} color={colors.textOnAccent} />
             )}
-            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 15 }}>
+            <Text style={{ color: colors.textOnAccent, fontWeight: "700", fontSize: 15 }}>
               New Plan
             </Text>
           </Pressable>
         </View>
       )}
+
+      {/* Missing profile fields */}
+      <PlanProfileForm
+        visible={showProfileForm}
+        profile={profile}
+        onClose={() => setShowProfileForm(false)}
+        onComplete={handleProfileFormComplete}
+      />
 
       {/* Criteria sheet */}
       <PlanCriteriaSheet

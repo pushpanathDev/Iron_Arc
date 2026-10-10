@@ -49,6 +49,7 @@ export default function TabLayout() {
             fontSize: 11,
             fontWeight: "500",
           },
+          tabBarHideOnKeyboard: true,
         }}
       >
         {/* Hidden tab — declared first so it doesn't shift visible indices */}

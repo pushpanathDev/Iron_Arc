@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { LinearGradient } from "expo-linear-gradient";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions,
   KeyboardAvoidingView,
@@ -31,13 +31,13 @@ import Svg, {
   LinearGradient as SvgGradient,
 } from "react-native-svg";
 
-import { useAuth } from "../../auth/AuthContext";
 import { useTheme } from "../../theme/theme";
 import { formatDate, getWeekStart } from "../../utils/weekUtils";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { BodyWeight, weightApi } from "../../services/api";
+import { ApiError, BodyWeight, weightApi } from "../../services/api";
 import { useAllWeights, useLogWeight } from "../../hooks/useWeights";
+import { ACHIEVEMENTS_KEY, useAchievementUnlockHandler } from "../../hooks/useAchievements";
 import { useUnitPreference } from "../../hooks/useUnitPreference";
 import { displayWeight, toKg, weightLabel } from "../../utils/unitConversion";
 
@@ -49,6 +49,7 @@ const log = createPageLogger("BodyWeight");
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const SWIPE_THRESHOLD = -60;
 const DELETE_WIDTH = 80;
+const EMPTY_WEIGHT_HISTORY: BodyWeight[] = [];
 
 /* =========================
    LONG PRESS BUTTON (for hold-to-increment)
@@ -156,16 +157,28 @@ function LongPressButton({
 
 export default function BodyWeightScreen() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
-  const { user } = useAuth();
   const insets = useSafeAreaInsets();
 
-  const { data: rawHistory = [], isLoading, refetch } = useAllWeights();
+  const { data: rawHistory = EMPTY_WEIGHT_HISTORY, refetch } = useAllWeights();
   const logWeightMutation = useLogWeight();
   const queryClient = useQueryClient();
+  const handleUnlocks = useAchievementUnlockHandler();
   const { unit } = useUnitPreference();
 
+  // Rows awaiting their deferred server delete. They are hidden from the list
+  // rather than removed from the cache, so a refetch during the undo window
+  // cannot bring them back.
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(() => new Set());
+  const deleteTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
   // Sort history: latest first
-  const history = [...rawHistory].sort((a, b) => b.date.localeCompare(a.date));
+  const history = useMemo(
+    () =>
+      rawHistory
+        .filter((w) => !pendingDeleteIds.has(w.id))
+        .sort((a, b) => b.date.localeCompare(a.date)),
+    [rawHistory, pendingDeleteIds],
+  );
 
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -174,18 +187,21 @@ export default function BodyWeightScreen() {
   const [deletedWeight, setDeletedWeight] = useState<BodyWeight | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const logDate = formatDate(selectedDate);
   const weekStart = getWeekStart(selectedDate);
 
-  // Pre-fill the input with today's entry if it exists
+  // Pre-fill the input with the selected day's entry if it exists.
+  // Stored values are kg; convert to the display unit so re-saving round-trips.
   const existingEntry = history.find((w) => w.date === logDate);
+  const existingWeight = existingEntry?.weight;
+  const isToday = logDate === formatDate(new Date());
   const [weight, setWeight] = useState("");
 
   useEffect(() => {
-    setWeight(existingEntry ? String(existingEntry.weight) : "");
-  }, [logDate, existingEntry?.weight]);
+    const nextWeight =
+      existingWeight === undefined ? "" : String(displayWeight(existingWeight, unit));
+    setWeight((currentWeight) => currentWeight === nextWeight ? currentWeight : nextWeight);
+  }, [logDate, existingWeight, unit]);
 
   /* =========================
      PULL-TO-REFRESH
@@ -234,7 +250,7 @@ export default function BodyWeightScreen() {
         weekStart: formatDate(weekStart),
       });
 
-      setMessage("Weight saved ✓");
+      setMessage(existingEntry ? "Entry updated ✓" : "Weight saved ✓");
       log.success("Weight saved", `${weight}${weightLabel(unit)} on ${logDate}`);
       setTimeout(() => setMessage(null), 1500);
     } catch (error) {
@@ -249,52 +265,92 @@ export default function BodyWeightScreen() {
   /* =========================
      DELETE WITH UNDO
      ========================= */
+  const setPending = (id: string, pending: boolean) => {
+    setPendingDeleteIds((prev) => {
+      const next = new Set(prev);
+      if (pending) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const commitDelete = async (item: BodyWeight) => {
+    deleteTimers.current.delete(item.id);
+    let newlyUnlocked: string[] = [];
+    try {
+      ({ newlyUnlocked } = await weightApi.delete(item.id));
+      log.success("Weight deleted", item.id);
+    } catch (error) {
+      // 404 means the entry is already gone on the server — treat as deleted.
+      if (!(error instanceof ApiError && error.status === 404)) {
+        setPending(item.id, false); // un-hide the row
+        setDeletedWeight((current) => (current?.id === item.id ? null : current));
+        setMessage("Failed to delete");
+        log.error("Delete failed", error instanceof Error ? error.message : String(error));
+        return;
+      }
+    }
+
+    queryClient.setQueryData<BodyWeight[]>(["weights", "all"], (old) =>
+      old ? old.filter((w) => w.id !== item.id) : old,
+    );
+    setPending(item.id, false);
+    setDeletedWeight((current) => (current?.id === item.id ? null : current));
+    // Deleting can change the latest entry and the profile weight.
+    queryClient.invalidateQueries({ queryKey: ["weights"] });
+    queryClient.invalidateQueries({ queryKey: ["profile"] });
+    void handleUnlocks(newlyUnlocked); // also refreshes ["achievements"]
+  };
+
   async function deleteWeight(item: BodyWeight) {
     if (refreshing || isSaving) {
       setMessage("Please wait...");
       return;
     }
+    // Ignore repeat taps on a row that is already being deleted.
+    if (deleteTimers.current.has(item.id)) return;
 
+    // Stop in-flight refetches from overwriting the list mid-delete.
+    await queryClient.cancelQueries({ queryKey: ["weights"] });
+
+    setPending(item.id, true);
     setDeletedWeight(item);
 
-    // Optimistically remove from cache — UI updates immediately
-    queryClient.setQueryData<BodyWeight[]>(["weights", "all"], (old) =>
-      old ? old.filter((w) => w.id !== item.id) : [],
+    // Each row gets its own timer, so deleting another row never cancels this one.
+    deleteTimers.current.set(
+      item.id,
+      setTimeout(() => void commitDelete(item), 5000),
     );
-
-    // Defer the actual API delete — fires only if undo is not tapped
-    if (undoTimer.current) clearTimeout(undoTimer.current);
-    undoTimer.current = setTimeout(async () => {
-      try {
-        await weightApi.delete(item.id);
-        queryClient.invalidateQueries({ queryKey: ["weights"] });
-        log.success("Weight deleted", item.id);
-      } catch (error) {
-        // Restore the item on failure
-        queryClient.setQueryData<BodyWeight[]>(["weights", "all"], (old) =>
-          old
-            ? [...old, item].sort((a, b) => b.date.localeCompare(a.date))
-            : [item],
-        );
-        setMessage("Failed to delete");
-        log.error("Delete failed", error);
-      }
-      setDeletedWeight(null);
-    }, 5000);
   }
 
   const undoDelete = () => {
     if (!deletedWeight) return;
-    if (undoTimer.current) clearTimeout(undoTimer.current);
-    // Restore item to cache — real undo, no API call made
-    queryClient.setQueryData<BodyWeight[]>(["weights", "all"], (old) =>
-      old
-        ? [...old, deletedWeight].sort((a, b) => b.date.localeCompare(a.date))
-        : [deletedWeight],
-    );
+    const timer = deleteTimers.current.get(deletedWeight.id);
+    if (timer) clearTimeout(timer);
+    deleteTimers.current.delete(deletedWeight.id);
+    setPending(deletedWeight.id, false);
     setDeletedWeight(null);
     log.info(`Undo: restored weight entry ${deletedWeight.id}`);
   };
+
+  // Leaving the screen with deletes pending: send them now instead of dropping them.
+  useEffect(() => {
+    const timers = deleteTimers.current;
+    return () => {
+      timers.forEach((timer, id) => {
+        clearTimeout(timer);
+        weightApi
+          .delete(id)
+          .catch(() => {})
+          .finally(() => {
+            queryClient.invalidateQueries({ queryKey: ["weights"] });
+            queryClient.invalidateQueries({ queryKey: ["profile"] });
+            queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
+          });
+      });
+      timers.clear();
+    };
+  }, [queryClient]);
 
   // Calculate stats (server stores kg, convert for display)
   const currentWeightKg = history[0]?.weight || 0;
@@ -519,7 +575,7 @@ export default function BodyWeightScreen() {
             marginBottom: spacing.md,
           }}
         >
-          LOG WEIGHT
+          {existingEntry ? "UPDATE ENTRY" : "LOG WEIGHT"}
         </Text>
 
         {/* Animated Weight Scale */}
@@ -706,7 +762,11 @@ export default function BodyWeightScreen() {
           }}
         >
           <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
-            Save Weight
+            {existingEntry
+              ? isToday
+                ? "Update Today's Entry"
+                : "Update Entry"
+              : "Log Weight"}
           </Text>
         </Pressable>
       </Animated.View>
@@ -985,13 +1045,13 @@ function WeightChart({
   colors: any;
   unit: "kg" | "lbs";
 }) {
-  if (data.length < 2) return null;
-
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
   useEffect(() => {
     setSelectedIndex(data.length - 1);
   }, [data.length]);
+
+  if (data.length < 2) return null;
 
   const weights = data.map((d) => d.weight);
   const minWeight = Math.min(...weights) - 1;

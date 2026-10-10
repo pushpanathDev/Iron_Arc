@@ -29,6 +29,10 @@ export async function recordVerificationSent(userId: string) {
   await SecureStore.setItemAsync(verificationSentKey(userId), String(Date.now()));
 }
 
+export async function clearVerificationSent(userId: string) {
+  await SecureStore.deleteItemAsync(verificationSentKey(userId));
+}
+
 export async function updateVerificationMeta(
   userId: string,
   meta: VerificationMeta,
@@ -65,7 +69,7 @@ export async function syncVerificationStatus(user: User) {
 
   // Clear the resend timestamp once verified
   try {
-    await SecureStore.deleteItemAsync(verificationSentKey(user.uid));
+    await clearVerificationSent(user.uid);
   } catch {
     // Non-critical
   }

@@ -67,6 +67,7 @@ export default function LoginScreen() {
   const {
     user,
     loading: authLoading,
+    retryBootstrap,
     setAwaitingEmailVerification,
     awaitingEmailVerification,
   } = useAuth();
@@ -248,6 +249,8 @@ export default function LoginScreen() {
         }
       }
 
+      await userApi.sync();
+
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -340,7 +343,34 @@ export default function LoginScreen() {
       let userMessage = "Signup failed";
 
       if (err.code === "auth/email-already-in-use") {
-        userMessage = "This email is already registered. Try logging in instead.";
+        try {
+          const existingCredential = await signInWithEmailAndPassword(
+            auth,
+            pendingSignupEmail,
+            pendingSignupPassword,
+          );
+          await existingCredential.user.reload();
+
+          if (!existingCredential.user.emailVerified) {
+            await setAwaitingEmailVerification(true, existingCredential.user.uid);
+            await sendVerificationEmail(existingCredential.user);
+            setVerificationUser(existingCredential.user);
+            setVerificationOrigin("signup");
+            setShowEmailVerification(true);
+            setError("This account already exists and still needs email verification.");
+            return;
+          }
+
+          setAwaitingEmailVerification(false);
+          setError("This account already existed, so you have been signed in.");
+          return;
+        } catch (existingAccountError: any) {
+          userMessage = existingAccountError.code === "auth/wrong-password"
+            ? "This email is already registered. Sign in with the correct password."
+            : "This email is already registered. Try logging in instead.";
+          setIsSignup(false);
+          setShowEmailConfirmation(false);
+        }
       } else if (err.code === "auth/invalid-email") {
         userMessage = "Invalid email address. Please check and try again.";
       } else if (err.code === "auth/weak-password") {
@@ -351,7 +381,9 @@ export default function LoginScreen() {
       }
 
       setError(userMessage);
-      setShowEmailConfirmation(true); // Show confirmation modal again
+      if (err.code !== "auth/email-already-in-use") {
+        setShowEmailConfirmation(true);
+      }
       setAwaitingEmailVerification(false); // Reset flag if signup failed
     } finally {
       setLoading(false);
@@ -386,6 +418,8 @@ export default function LoginScreen() {
 
       signInWithCredential(auth, credential)
         .then(async () => {
+          await userApi.sync();
+
           // Check if this is a brand-new Google user (no display name on backend yet)
           try {
             const profile = await userApi.getProfile();
@@ -972,31 +1006,12 @@ export default function LoginScreen() {
           // New users must verify before continuing
           setError("Please verify your email to continue.");
         }}
-        onVerified={() => {
+        onVerified={async () => {
           setShowEmailVerification(false);
           setVerificationUser(null);
           if (verificationOrigin === "signup") {
-            userApi
-              .getProfile()
-              .then((profile) => {
-                const hasCompletedOnboarding = Boolean(
-                  profile.displayName && profile.fitnessGoal,
-                );
-
-                if (hasCompletedOnboarding) {
-                  setAwaitingEmailVerification(false);
-                  router.replace("/(tabs)");
-                } else {
-                  router.replace("/onboarding");
-                }
-              })
-              .catch((error) => {
-                console.warn(
-                  "Could not inspect profile after verification:",
-                  error,
-                );
-                router.replace("/onboarding");
-              });
+            setAwaitingEmailVerification(false);
+            await retryBootstrap();
           } else {
             setAwaitingEmailVerification(false);
           }

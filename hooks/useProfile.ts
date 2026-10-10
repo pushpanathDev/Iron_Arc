@@ -1,10 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { userApi, User } from "../services/api";
+import { useAuth } from "../auth/AuthContext";
+import { userApi } from "../services/api";
 
 export function useProfile() {
+  const { user } = useAuth();
+
   return useQuery({
     queryKey: ["profile"],
     queryFn: () => userApi.getProfile(),
+    enabled: !!user,
   });
 }
 
@@ -15,6 +19,8 @@ export function useUpdateProfile() {
     mutationFn: userApi.updateProfile,
     onSuccess: (data) => {
       queryClient.setQueryData(["profile"], data);
+      // The backend seeds a body-weight row from profile weight when none exists.
+      queryClient.invalidateQueries({ queryKey: ["weights"] });
     },
   });
 }

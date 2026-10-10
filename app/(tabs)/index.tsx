@@ -22,6 +22,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { useAuth } from "../../auth/AuthContext";
 import { EmailVerificationPrompt } from "../../components/EmailVerificationPrompt";
+import { ProfileStatus } from "../../components/ProfileStatus";
 import { useProfile } from "../../hooks/useProfile";
 import { useUnitPreference } from "../../hooks/useUnitPreference";
 import { useAllWeights } from "../../hooks/useWeights";
@@ -73,7 +74,12 @@ export default function Home() {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
 
-  const { data: profile } = useProfile();
+  const {
+    data: profile,
+    isLoading: profileLoading,
+    isError: profileError,
+    refetch: refetchProfile,
+  } = useProfile();
   const { unit } = useUnitPreference();
   const { data: workouts = [], refetch: refetchWorkouts } = useAllWorkouts();
   const { data: allWeights = [], refetch: refetchWeights } = useAllWeights();
@@ -283,7 +289,12 @@ export default function Home() {
               {getGreeting()}
             </Text>
             <Text style={{ ...typography.h1, color: colors.textPrimary }}>
-              {profile?.displayName || "Athlete"} 💪
+              {profile?.displayName ||
+                (profileLoading
+                  ? "Loading profile..."
+                  : profileError
+                    ? "Profile unavailable"
+                    : user?.email || "Account")} 💪
             </Text>
           </View>
           <Pressable
@@ -302,6 +313,21 @@ export default function Home() {
           </Pressable>
         </View>
       </Animated.View>
+
+      {profileError && (
+        <View style={{ marginHorizontal: spacing.md }}>
+          <ProfileStatus
+            compact
+            title={profile ? "Showing cached profile" : "Profile unavailable"}
+            message={
+              profile
+                ? "The server is unavailable. Changes may not sync until you reconnect."
+                : "Can't load your profile right now."
+            }
+            onRetry={() => void refetchProfile()}
+          />
+        </View>
+      )}
 
       {/* Email Verification Banner */}
       {user &&

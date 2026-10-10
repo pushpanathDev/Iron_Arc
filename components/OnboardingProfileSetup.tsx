@@ -104,10 +104,18 @@ function generateHeightValues(unit: Unit): number[] {
  * Convert cm to feet/inches display
  */
 function cmToFtIn(cm: number): { ft: number; inch: number } {
-  const totalInches = cm / 2.54;
+  const totalInches = Math.round(cm / 2.54);
   const ft = Math.floor(totalInches / 12);
-  const inch = Math.round(totalInches % 12);
+  const inch = totalInches % 12;
   return { ft, inch };
+}
+
+function inchesToFtIn(totalInches: number): { ft: number; inch: number } {
+  const roundedInches = Math.round(totalInches);
+  return {
+    ft: Math.floor(roundedInches / 12),
+    inch: roundedInches % 12,
+  };
 }
 
 /**
@@ -218,17 +226,19 @@ export function OnboardingProfileSetup({
   const toggleProgress = useSharedValue(0);
   const buttonScale = useSharedValue(1);
 
-  // Scroll to the default height (170 cm) on first render
+  // The ruler only renders inside the optional section, so scroll it to the
+  // selected height each time the section opens (it mounts at offset 0).
   useEffect(() => {
+    if (!showPersonalizationSection) return;
     const index = heightValues.indexOf(selectedHeight);
-    if (index !== -1) {
-      setTimeout(() => {
-        flatListRef.current?.scrollTo({ y: index * ITEM_HEIGHT, animated: false });
-      }, 150);
-    }
-    // Only run on mount
+    if (index === -1) return;
+    const timer = setTimeout(() => {
+      flatListRef.current?.scrollTo({ y: index * ITEM_HEIGHT, animated: false });
+    }, 50);
+    return () => clearTimeout(timer);
+    // Only when the section opens — not on every height change while scrolling.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [showPersonalizationSection]);
 
   const handleBack = () => {
     if (onBack) {
@@ -271,8 +281,11 @@ export function OnboardingProfileSetup({
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const offsetY = event.nativeEvent.contentOffset.y;
-      const index = Math.round(offsetY / ITEM_HEIGHT);
-      const newValue = heightValues[Math.min(index, heightValues.length - 1)];
+      const index = Math.max(
+        0,
+        Math.min(Math.round(offsetY / ITEM_HEIGHT), heightValues.length - 1),
+      );
+      const newValue = heightValues[index];
 
       if (newValue !== selectedHeight) {
         setSelectedHeight(newValue);
@@ -285,14 +298,17 @@ export function OnboardingProfileSetup({
   const handleMomentumScrollEnd = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const offsetY = event.nativeEvent.contentOffset.y;
-      const index = Math.round(offsetY / ITEM_HEIGHT);
+      const index = Math.max(
+        0,
+        Math.min(Math.round(offsetY / ITEM_HEIGHT), heightValues.length - 1),
+      );
       // Snap to nearest item for better UX
       flatListRef.current?.scrollTo({
         y: index * ITEM_HEIGHT,
         animated: true,
       });
     },
-    [ITEM_HEIGHT]
+    [ITEM_HEIGHT, heightValues.length]
   );
 
   const handleComplete = async () => {
@@ -367,7 +383,7 @@ export function OnboardingProfileSetup({
     unit === "cm"
       ? `${selectedHeight} cm`
       : (() => {
-          const { ft, inch } = cmToFtIn(selectedHeight);
+          const { ft, inch } = inchesToFtIn(selectedHeight);
           return `${ft}'${inch}"`;
         })();
 
@@ -395,10 +411,11 @@ export function OnboardingProfileSetup({
         style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingBottom: insets.bottom + spacing.xl },
+          { paddingBottom: insets.bottom + spacing.xxl, flexGrow: 1 },
         ]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
+        automaticallyAdjustKeyboardInsets
       >
         {/* Header */}
         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.lg }}>
@@ -418,7 +435,7 @@ export function OnboardingProfileSetup({
         {/* Title */}
         <Animated.View entering={FadeInDown.delay(100)}>
           <Text style={[styles.title, { color: colors.textPrimary }]}>
-            Let's Get to Know You
+            Let&apos;s Get to Know You
           </Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             Complete your profile to personalize your experience
@@ -637,7 +654,7 @@ export function OnboardingProfileSetup({
                   {unit === "cm"
                     ? `${selectedHeight} cm`
                     : (() => {
-                        const { ft, inch } = cmToFtIn(selectedHeight);
+                        const { ft, inch } = inchesToFtIn(selectedHeight);
                         return `${ft}'${inch}"`;
                       })()}
                 </Text>
@@ -648,7 +665,9 @@ export function OnboardingProfileSetup({
                 <ScrollView
                   ref={flatListRef}
                   style={[styles.rulerContainer, { height: 180 }]}
-                  contentContainerStyle={{ paddingVertical: 70 }}
+                  contentContainerStyle={{ paddingVertical: 84 }}
+                  snapToInterval={ITEM_HEIGHT}
+                  decelerationRate="fast"
                   scrollEventThrottle={16}
                   onScroll={handleScroll}
                   onMomentumScrollEnd={handleMomentumScrollEnd}
@@ -803,46 +822,46 @@ export function OnboardingProfileSetup({
         </Animated.View>
 
         <View style={{ height: spacing.xl }} />
-      </ScrollView>
 
-      {/* Complete Button */}
-      <Animated.View
-        entering={FadeInUp.delay(400).duration(400)}
-        style={[
-          styles.buttonContainer,
-          { paddingBottom: insets.bottom + spacing.lg, backgroundColor: colors.background },
-        ]}
-      >
-        <Animated.View style={buttonAnimStyle}>
-          <Pressable
-            onPress={handleComplete}
-            disabled={isLoading}
-            style={[
-              styles.button,
-              {
-                backgroundColor: colors.accent,
-                opacity: isLoading ? 0.7 : 1,
-              },
-            ]}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <>
-                <Text style={[styles.buttonText, { color: "#fff" }]}>
-                  Complete Setup
-                </Text>
-                <Ionicons
-                  name="arrow-forward"
-                  size={18}
-                  color="#fff"
-                  style={{ marginLeft: spacing.xs }}
-                />
-              </>
-            )}
-          </Pressable>
+        <Animated.View
+          entering={FadeInUp.delay(400).duration(400)}
+          style={[
+            styles.buttonContainer,
+            {
+              paddingBottom: insets.bottom + spacing.lg,
+              backgroundColor: "transparent",
+            },
+          ]}
+        >
+          <Animated.View style={buttonAnimStyle}>
+            <Pressable
+              onPress={handleComplete}
+              disabled={isLoading}
+              style={[
+                styles.button,
+                {
+                  backgroundColor: colors.accent,
+                  opacity: isLoading ? 0.7 : 1,
+                },
+              ]}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <>
+                  <Text style={[styles.buttonText, { color: "#fff" }]}>Complete Setup</Text>
+                  <Ionicons
+                    name="arrow-forward"
+                    size={18}
+                    color="#fff"
+                    style={{ marginLeft: spacing.xs }}
+                  />
+                </>
+              )}
+            </Pressable>
+          </Animated.View>
         </Animated.View>
-      </Animated.View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }

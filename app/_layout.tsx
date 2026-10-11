@@ -191,7 +191,8 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
       currentSegment === "ai-plan" ||
       currentSegment === "notification-settings" ||
       currentSegment === "plan-detail" ||
-      currentSegment === "achievements";
+      currentSegment === "achievements" ||
+      (__DEV__ && currentSegment === "dev-components");
     const isLoginRoute = currentSegment === "login";
     const isOnboardingRoute = currentSegment === "onboarding";
 
@@ -255,6 +256,7 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
         <Stack.Screen name="notification-settings" />
         <Stack.Screen name="plan-detail" />
         <Stack.Screen name="achievements" />
+        <Stack.Screen name="dev-components" />
       </Stack>
       {(authLoading || status === "loading" || status === "bootstrapping") && (
         <View style={stateOverlayStyle}>

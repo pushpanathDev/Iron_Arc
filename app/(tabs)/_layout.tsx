@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, Tabs } from "expo-router";
+import { useFocusEffect, useRouter, Tabs } from "expo-router";
 import { useCallback } from "react";
 import { BackHandler } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AppTabBar } from "../../components/ui/AppTabBar";
 import { useTheme } from "../../theme/theme";
 
 // Forces Expo Router to always reset to "index" on reload/state restore.
@@ -12,8 +12,8 @@ export const unstable_settings = {
 };
 
 export default function TabLayout() {
-  const { colors, shadows } = useTheme();
-  const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const router = useRouter();
 
   // Consume hardware back presses at the tab root so the unhandled-action
   // warning doesn't fire in dev when there is nothing to go back to.
@@ -26,29 +26,17 @@ export default function TabLayout() {
 
   return (
     <SafeAreaView
-      style={{ flex: 1, backgroundColor: colors.background }}
+      style={{ flex: 1, backgroundColor: colors.bg }}
       edges={["top"]}
     >
       <Tabs
         initialRouteName="index"
+        tabBar={(props) => (
+          <AppTabBar {...props} onLogPress={() => router.push("/add-workout")} />
+        )}
         screenOptions={{
           headerShown: false,
           animation: "shift",
-          tabBarActiveTintColor: colors.accent,
-          tabBarInactiveTintColor: colors.textMuted,
-          tabBarStyle: {
-            backgroundColor: colors.surface,
-            borderTopColor: colors.cardBorder,
-            borderTopWidth: 1,
-            paddingTop: 8,
-            paddingBottom: Math.max(8, insets.bottom),
-            minHeight: 60 + Math.max(0, insets.bottom),
-            ...shadows.sm,
-          },
-          tabBarLabelStyle: {
-            fontSize: 11,
-            fontWeight: "500",
-          },
           tabBarHideOnKeyboard: true,
         }}
       >

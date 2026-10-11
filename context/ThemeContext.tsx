@@ -57,6 +57,22 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Pins a subtree to one scheme regardless of the user's setting. */
+export function ForcedThemeProvider({
+  resolved,
+  children,
+}: {
+  resolved: ResolvedTheme;
+  children: React.ReactNode;
+}) {
+  const parent = useContext(ThemeContext);
+  return (
+    <ThemeContext.Provider value={{ ...parent, resolved }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+}
+
 export function useThemeContext() {
   return useContext(ThemeContext);
 }

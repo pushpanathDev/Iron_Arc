@@ -42,6 +42,7 @@ import { EmailConfirmationModal } from "../components/EmailConfirmationModal";
 import { sendVerificationEmail } from "../utils/verificationService";
 import { userApi } from "../services/api";
 import { getVersionLabel } from "../utils/appVersion";
+import { Button } from "../components/ui/Button";
 import {
   validateEmail,
   validatePasswordStrength,
@@ -797,27 +798,13 @@ export default function LoginScreen() {
             )}
 
             {/* Login / Signup Button */}
-            <Pressable
+            <Button
+              title={isSignup ? "Sign Up" : "Login"}
               onPress={handleAuth}
-              disabled={loading}
-              style={{
-                backgroundColor: colors.accent,
-                padding: spacing.md,
-                borderRadius: radius.xl,
-                alignItems: "center",
-                marginBottom: spacing.md,
-                opacity: loading ? 0.6 : 1,
-                ...shadows.md,
-              }}
-            >
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={{ color: "#fff", fontWeight: "700", fontSize: 18 }}>
-                  {isSignup ? "Sign Up" : "Login"}
-                </Text>
-              )}
-            </Pressable>
+              loading={loading}
+              fullWidth
+              style={{ marginBottom: spacing.md }}
+            />
 
             {/* Divider */}
             <View

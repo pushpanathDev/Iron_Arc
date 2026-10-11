@@ -38,7 +38,6 @@ import { verificationMessages } from "../../constants/verificationMessages";
 import { useTheme } from "../../theme/theme";
 import { formatDate } from "../../utils/weekUtils";
 
-WebBrowser.maybeCompleteAuthSession();
 
 /* ==============================
    TYPES

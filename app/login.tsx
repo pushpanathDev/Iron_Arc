@@ -1,16 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as Google from "expo-auth-session/providers/google";
-import { makeRedirectUri } from "expo-auth-session";
 import Constants from "expo-constants";
 import { useRouter } from "expo-router";
-import * as WebBrowser from "expo-web-browser";
+import {
+  GoogleSignin,
+  isSuccessResponse,
+  statusCodes,
+} from "@react-native-google-signin/google-signin";
 import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithCredential,
   signInWithEmailAndPassword,
 } from "firebase/auth";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -46,20 +48,6 @@ import {
   sanitizeEmail,
   getEmailValidationMessage,
 } from "../utils/emailPasswordValidation";
-
-WebBrowser.maybeCompleteAuthSession();
-
-const ANDROID_CLIENT_ID =
-  "89046456850-s6069mv6aljj1cs3knio49fmtt6b4v6e.apps.googleusercontent.com";
-const WEB_CLIENT_ID =
-  "89046456850-3sfgpbt5fg60uv1735p3lnedo5pvq8sd.apps.googleusercontent.com";
-
-// For native Android builds the redirect URI must be the reverse-client-id scheme.
-// In Expo Go (development) the proxy URL is used automatically by expo-auth-session.
-const ANDROID_REDIRECT_URI = makeRedirectUri({
-  scheme: "com.googleusercontent.apps.89046456850-s6069mv6aljj1cs3knio49fmtt6b4v6e",
-  path: "oauth2redirect/google",
-});
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -97,13 +85,6 @@ export default function LoginScreen() {
 
   // Animation for password visibility eye icon
   const eyeProgress = useSharedValue(0);
-
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId: WEB_CLIENT_ID,
-    androidClientId: ANDROID_CLIENT_ID,
-    redirectUri: ANDROID_REDIRECT_URI,
-    prompt: "select_account",
-  });
 
   // Animated style for eye icon rotation
   const eyeAnimStyle = useAnimatedStyle(() => ({
@@ -391,53 +372,35 @@ export default function LoginScreen() {
   };
 
   /* GOOGLE SIGN-IN */
-  useEffect(() => {
-    if (!response) return;
-
-    if (response.type === "error") {
-      const msg = response.error?.message ?? "Unknown OAuth error";
-      console.error("Google OAuth error:", response.error);
-      // Common cause: redirect URI not registered in Google Cloud Console
-      setError(`Google Sign-In error: ${msg}`);
-      return;
-    }
-
-    if (response.type === "cancel") return;
-
-    if (response.type === "success") {
-      const idToken = response.authentication?.idToken;
-
-      if (!idToken) {
-        console.warn("Google Sign-In failed: no idToken in response", response);
-        setError("Google Sign-In failed — no token received. Please try again.");
-        return;
-      }
-
+  const handleGoogleSignIn = async () => {
+    try {
       setLoading(true);
-      const credential = GoogleAuthProvider.credential(idToken);
+      setError(null);
+      await GoogleSignin.hasPlayServices();
+      const response = await GoogleSignin.signIn();
 
-      signInWithCredential(auth, credential)
-        .then(async () => {
-          await userApi.sync();
-
-          // Check if this is a brand-new Google user (no display name on backend yet)
-          try {
-            const profile = await userApi.getProfile();
-            if (!profile.displayName) {
-              router.replace("/onboarding");
-            }
-            // Returning user: auth guard handles routing to (tabs)
-          } catch {
-            // Profile fetch failed — auth guard will handle routing
-          }
-        })
-        .catch((err) => {
-          console.error("Google Sign-In credential error:", err);
-          setError("Google Sign-In failed. Please try again.");
+      if (isSuccessResponse(response)) {
+        const idToken = response.data.idToken;
+        if (!idToken) {
+          setError("Google Sign-In failed — no token received. Please try again.");
           setLoading(false);
-        });
+          return;
+        }
+        const credential = GoogleAuthProvider.credential(idToken);
+        await signInWithCredential(auth, credential);
+      }
+    } catch (err: any) {
+      if (err.code === statusCodes.SIGN_IN_CANCELLED) return;
+      if (err.code === "auth/account-exists-with-different-credential") {
+        setError("An account already exists with the same email but different sign-in credentials.");
+      } else {
+        console.error("Google Sign-In error:", err);
+        setError("Google Sign-In failed. Please try again.");
+      }
+    } finally {
+      setLoading(false);
     }
-  }, [response]);
+  };
 
   // Show loading overlay while authenticating or if user exists (about to navigate)
   // Keep LoginScreen visible while awaiting email verification
@@ -883,8 +846,8 @@ export default function LoginScreen() {
 
             {/* Google Sign-In */}
             <Pressable
-              disabled={!request || loading}
-              onPress={() => promptAsync()}
+              disabled={loading}
+              onPress={handleGoogleSignIn}
               style={{
                 backgroundColor: colors.surface,
                 borderWidth: 1,
@@ -895,7 +858,7 @@ export default function LoginScreen() {
                 marginBottom: spacing.lg,
                 flexDirection: "row",
                 justifyContent: "center",
-                opacity: !request || loading ? 0.6 : 1,
+                opacity: loading ? 0.6 : 1,
               }}
             >
               <Ionicons

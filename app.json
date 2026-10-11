@@ -17,13 +17,11 @@
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/android-icon-foreground.png"
       },
-      "permissions": [
-        "POST_NOTIFICATIONS",
-        "VIBRATE"
-      ],
+      "permissions": ["POST_NOTIFICATIONS", "VIBRATE"],
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.pushpanath_mr.GymTracker"
+      "package": "com.pushpanath_mr.GymTracker",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "static",
@@ -50,7 +48,8 @@
           "color": "#4F46E5"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "@react-native-google-signin/google-signin"
     ],
     "experiments": {
       "typedRoutes": true,

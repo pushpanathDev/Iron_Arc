@@ -1,6 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as Google from "expo-auth-session/providers/google";
-import { makeRedirectUri } from "expo-auth-session";
 import Constants from "expo-constants";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -20,7 +18,10 @@ import {
 } from "react-native";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { EmailAuthProvider, GoogleAuthProvider, reauthenticateWithCredential } from "firebase/auth";
-import * as WebBrowser from "expo-web-browser";
+import {
+  GoogleSignin,
+  isSuccessResponse,
+} from "@react-native-google-signin/google-signin";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import { useAuth } from "../../auth/AuthContext";
@@ -53,17 +54,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const log = createPageLogger("Profile");
 
-WebBrowser.maybeCompleteAuthSession();
-
-const ANDROID_CLIENT_ID =
-  "89046456850-s6069mv6aljj1cs3knio49fmtt6b4v6e.apps.googleusercontent.com";
-const WEB_CLIENT_ID =
-  "89046456850-3sfgpbt5fg60uv1735p3lnedo5pvq8sd.apps.googleusercontent.com";
-const ANDROID_REDIRECT_URI = makeRedirectUri({
-  scheme: "com.googleusercontent.apps.89046456850-s6069mv6aljj1cs3knio49fmtt6b4v6e",
-  path: "oauth2redirect/google",
-});
-
 export default function ProfileScreen() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const { preference: themePreference, setPreference: setThemePreference } = useThemeContext();
@@ -81,13 +71,6 @@ export default function ProfileScreen() {
   const updateProfile = useUpdateProfile();
   const { data: latestWeightEntry } = useLatestWeight();
   const { unit: weightUnit, setUnit: setWeightUnit } = useUnitPreference();
-  const [, googleResponse, promptGoogleReauthentication] =
-    Google.useAuthRequest({
-      webClientId: WEB_CLIENT_ID,
-      androidClientId: ANDROID_CLIENT_ID,
-      redirectUri: ANDROID_REDIRECT_URI,
-    });
-
   const latestWeight = latestWeightEntry?.weight ?? null;
   const isAdmin = profile?.isAdmin ?? false;
 
@@ -108,7 +91,6 @@ export default function ProfileScreen() {
   const [showDeleteReauthentication, setShowDeleteReauthentication] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [waitingForGoogleReauthentication, setWaitingForGoogleReauthentication] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   const verificationGraceDays = 7;
@@ -120,6 +102,7 @@ export default function ProfileScreen() {
     queryClient.clear();
 
     try {
+      try { await GoogleSignin.signOut(); } catch {}
       await logout();
     } finally {
       await AsyncStorage.clear();
@@ -144,8 +127,22 @@ export default function ProfileScreen() {
       if (error?.code === "REAUTHENTICATION_REQUIRED") {
         const providerId = user?.providerData[0]?.providerId;
         if (providerId === "google.com") {
-          setWaitingForGoogleReauthentication(true);
-          await promptGoogleReauthentication();
+          try {
+            const response = await GoogleSignin.signIn();
+            if (isSuccessResponse(response)) {
+              const idToken = response.data.idToken;
+              if (idToken && auth.currentUser) {
+                await reauthenticateWithCredential(
+                  auth.currentUser,
+                  GoogleAuthProvider.credential(idToken),
+                );
+                await deleteAccountRef.current();
+                return;
+              }
+            }
+          } catch (reAuthErr: any) {
+            setDeleteError(reAuthErr?.message || "Google reauthentication failed.");
+          }
         } else {
           setShowDeleteReauthentication(true);
         }
@@ -194,41 +191,6 @@ export default function ProfileScreen() {
       setIsDeletingAccount(false);
     }
   };
-
-  useEffect(() => {
-    if (!waitingForGoogleReauthentication || !googleResponse) return;
-
-    const completeGoogleReauthentication = async () => {
-      if (googleResponse.type !== "success") {
-        setWaitingForGoogleReauthentication(false);
-        setIsDeletingAccount(false);
-        return;
-      }
-
-      const idToken = googleResponse.authentication?.idToken;
-      if (!idToken || !auth.currentUser) {
-        setDeleteError("Google reauthentication did not return a valid credential.");
-        setWaitingForGoogleReauthentication(false);
-        setIsDeletingAccount(false);
-        return;
-      }
-
-      try {
-        await reauthenticateWithCredential(
-          auth.currentUser,
-          GoogleAuthProvider.credential(idToken),
-        );
-        setWaitingForGoogleReauthentication(false);
-        await deleteAccountRef.current();
-      } catch (error: any) {
-        setDeleteError(error?.message || "Google reauthentication failed.");
-        setWaitingForGoogleReauthentication(false);
-        setIsDeletingAccount(false);
-      }
-    };
-
-    completeGoogleReauthentication();
-  }, [googleResponse, waitingForGoogleReauthentication]);
 
   // Initialize form when profile loads
   useEffect(() => {

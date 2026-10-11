@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "89046456850",
+    "project_id": "gymtracker-d2180",
+    "storage_bucket": "gymtracker-d2180.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:89046456850:android:bc10ac746941ba2c56d6cb",
+        "android_client_info": {
+          "package_name": "com.pushpanath_mr.GymTracker"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "89046456850-0ia1vrdcl8j9h8d70pmkoo4p4hf39at0.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.pushpanath_mr.GymTracker",
+            "certificate_hash": "0792621b52e60aa1d9017b0e73aa693ee7fe5a08"
+          }
+        },
+        {
+          "client_id": "89046456850-3sfgpbt5fg60uv1735p3lnedo5pvq8sd.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDvdi6dDqjmGN2d9I4HI0ofE6yBQjzAwvI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "89046456850-3sfgpbt5fg60uv1735p3lnedo5pvq8sd.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

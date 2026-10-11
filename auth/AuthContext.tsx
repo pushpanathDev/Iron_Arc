@@ -13,11 +13,13 @@ import { syncVerificationStatus } from "../utils/verificationService";
 import { auth } from "../firebase/config";
 import {
   ApiError,
+  checkHealth,
   isNetworkApiError,
   User as ApiUser,
   userApi,
 } from "../services/api";
 import { cancelAllScheduledNotifications } from "../notifications/notificationService";
+import { GoogleSignin } from "@react-native-google-signin/google-signin";
 
 const VERIFICATION_PENDING_KEY = "@awaiting_email_verification_uid";
 
@@ -33,8 +35,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
+const LAST_UID_KEY = "@iron_arc_last_uid";
+const QUERY_CACHE_KEY = "IRON_ARC_QUERY_CACHE";
 const AUTH_STEP_TIMEOUT = 8_000;
-const BOOTSTRAP_CAP_MS = 10_000;
+const HEALTH_CHECK_TIMEOUT = 60_000;
+const BOOTSTRAP_STEP_TIMEOUT = 15_000;
+const BOOTSTRAP_CAP_MS = 75_000;
 
 export type AuthStatus =
   | "loading"
@@ -107,17 +113,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setBootstrapError(null);
 
     try {
+      console.log("[Auth] bootstrap: health check (wake-up)…");
+      await withTimeout(checkHealth(), HEALTH_CHECK_TIMEOUT, "health");
+      console.log("[Auth] bootstrap: server awake");
+    } catch (e) {
+      console.warn("[Auth] bootstrap: health check failed:", e);
+    }
+
+    try {
       console.log("[Auth] bootstrap: userApi.sync…");
-      await withTimeout(userApi.sync(), AUTH_STEP_TIMEOUT, "userApi.sync");
+      await withTimeout(userApi.sync(), BOOTSTRAP_STEP_TIMEOUT, "userApi.sync");
       console.log("[Auth] bootstrap: sync done");
 
       console.log("[Auth] bootstrap: userApi.getProfile…");
-      const nextProfile = await withTimeout(userApi.getProfile(), AUTH_STEP_TIMEOUT, "userApi.getProfile");
+      const nextProfile = await withTimeout(userApi.getProfile(), BOOTSTRAP_STEP_TIMEOUT, "userApi.getProfile");
       console.log("[Auth] bootstrap: getProfile done");
 
       if (auth.currentUser?.uid !== firebaseUser.uid) return;
       queryClient.setQueryData(["profile"], nextProfile);
       setProfile(nextProfile);
+      await AsyncStorage.setItem(LAST_UID_KEY, firebaseUser.uid).catch(() => {});
       setStatus(nextProfile.displayName && nextProfile.fitnessGoal ? "ready" : "needsOnboarding");
     } catch (error) {
       if (auth.currentUser?.uid !== firebaseUser.uid) return;
@@ -134,7 +149,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const retryBootstrap = useCallback(async () => {
     if (auth.currentUser?.emailVerified) {
-      await bootstrapUser(auth.currentUser);
+      try {
+        await withTimeout(bootstrapUser(auth.currentUser), BOOTSTRAP_CAP_MS, "bootstrap retry");
+      } catch (e) {
+        console.warn(`[Auth] retry cap reached: ${e}`);
+        if (auth.currentUser) {
+          setBootstrapError("Can't reach the server. Check your connection and try again.");
+          setStatus("backendUnreachable");
+        }
+      }
     }
   }, [bootstrapUser]);
 
@@ -146,7 +169,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // ── No user → straight to login ──
       if (!firebaseUser) {
         console.log(`[Auth] onAuthStateChanged: no user (${ms()})`);
+        queryClient.clear();
+        await AsyncStorage.removeItem(QUERY_CACHE_KEY).catch(() => {});
         await AsyncStorage.removeItem(VERIFICATION_PENDING_KEY).catch(() => {});
+        await AsyncStorage.removeItem(LAST_UID_KEY).catch(() => {});
         setAwaitingEmailVerificationState(false);
         setUser(null);
         setProfile(null);
@@ -182,7 +208,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await clearEmailVerificationStart(firebaseUser.uid).catch(() => {});
       await setAwaitingEmailVerification(false);
 
-      // Check for a cached profile from a previous session
+      // Verify cached profile belongs to this user
+      const lastUid = await AsyncStorage.getItem(LAST_UID_KEY).catch(() => null);
+      if (lastUid !== null && lastUid !== firebaseUser.uid) {
+        console.log(`[Auth] UID changed (${lastUid} → ${firebaseUser.uid}), clearing cache (${ms()})`);
+        queryClient.clear();
+        await AsyncStorage.removeItem(QUERY_CACHE_KEY).catch(() => {});
+        await AsyncStorage.removeItem(LAST_UID_KEY).catch(() => {});
+      }
+
       const cached = queryClient.getQueryData<ApiUser>(["profile"]);
       const onboardingDone = !!(cached?.displayName && cached?.fitnessGoal);
 
@@ -218,6 +252,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (auth.currentUser?.uid === firebaseUser.uid) {
               queryClient.setQueryData(["profile"], fresh);
               setProfile(fresh);
+              await AsyncStorage.setItem(LAST_UID_KEY, firebaseUser.uid).catch(() => {});
               if (!fresh.displayName || !fresh.fitnessGoal) {
                 setStatus("needsOnboarding");
               }
@@ -232,7 +267,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // ── No cached profile: full-screen loader, capped at 10 s ──
+      // ── No cached profile: full-screen loader, capped at 75 s ──
       console.log(`[Auth] no cached profile, bootstrapping with ${BOOTSTRAP_CAP_MS}ms cap (${ms()})`);
       try {
         await withTimeout(bootstrapUser(firebaseUser), BOOTSTRAP_CAP_MS, "bootstrap");
@@ -282,6 +317,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     await cancelAllScheduledNotifications();
+    await AsyncStorage.removeItem(LAST_UID_KEY).catch(() => {});
+    try { await GoogleSignin.signOut(); } catch {}
     await signOut(auth);
     setUser(null);
   };

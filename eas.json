@@ -16,6 +16,9 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://iron-arc-backend-v2.onrender.com"
       }
     },
     "preview-optimized": {
@@ -24,7 +27,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_NO_DEV_CLIENT": "1"
+        "EXPO_NO_DEV_CLIENT": "1",
+        "EXPO_PUBLIC_BACKEND_URL": "https://iron-arc-backend-v2.onrender.com"
       }
     },
     "production": {
@@ -33,7 +37,8 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_NO_DEV_CLIENT": "1"
+        "EXPO_NO_DEV_CLIENT": "1",
+        "EXPO_PUBLIC_BACKEND_URL": "https://iron-arc-backend-v2.onrender.com"
       }
     }
   },

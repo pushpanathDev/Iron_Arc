@@ -12,6 +12,7 @@ import {
 import { syncVerificationStatus } from "../utils/verificationService";
 import { auth } from "../firebase/config";
 import {
+  ApiError,
   isNetworkApiError,
   User as ApiUser,
   userApi,
@@ -19,6 +20,21 @@ import {
 import { cancelAllScheduledNotifications } from "../notifications/notificationService";
 
 const VERIFICATION_PENDING_KEY = "@awaiting_email_verification_uid";
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new ApiError(`${label} timed out after ${ms}ms`, 0, undefined, undefined, "timeout")),
+        ms,
+      ),
+    ),
+  ]);
+}
+
+const AUTH_STEP_TIMEOUT = 8_000;
+const BOOTSTRAP_CAP_MS = 10_000;
 
 export type AuthStatus =
   | "loading"
@@ -90,31 +106,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStatus("bootstrapping");
     setBootstrapError(null);
 
-    let lastError: unknown;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        await userApi.sync();
-        const nextProfile = await userApi.getProfile();
-        queryClient.setQueryData(["profile"], nextProfile);
-        setProfile(nextProfile);
-        setStatus(nextProfile.displayName && nextProfile.fitnessGoal ? "ready" : "needsOnboarding");
-        return;
-      } catch (error) {
-        lastError = error;
-        if (!isNetworkApiError(error) || attempt === 2) break;
-        await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
-      }
-    }
+    try {
+      console.log("[Auth] bootstrap: userApi.sync…");
+      await withTimeout(userApi.sync(), AUTH_STEP_TIMEOUT, "userApi.sync");
+      console.log("[Auth] bootstrap: sync done");
 
-    if (auth.currentUser?.uid !== firebaseUser.uid) return;
-    const message = isNetworkApiError(lastError)
-      ? "Can't reach the server. Check your connection and try again."
-      : lastError instanceof Error
-        ? lastError.message
-        : "Could not load your account.";
-    setBootstrapError(message);
-    setStatus(isNetworkApiError(lastError) ? "backendUnreachable" : "bootstrapError");
-    setProfile(queryClient.getQueryData<ApiUser>(["profile"]) ?? null);
+      console.log("[Auth] bootstrap: userApi.getProfile…");
+      const nextProfile = await withTimeout(userApi.getProfile(), AUTH_STEP_TIMEOUT, "userApi.getProfile");
+      console.log("[Auth] bootstrap: getProfile done");
+
+      if (auth.currentUser?.uid !== firebaseUser.uid) return;
+      queryClient.setQueryData(["profile"], nextProfile);
+      setProfile(nextProfile);
+      setStatus(nextProfile.displayName && nextProfile.fitnessGoal ? "ready" : "needsOnboarding");
+    } catch (error) {
+      if (auth.currentUser?.uid !== firebaseUser.uid) return;
+      const message = isNetworkApiError(error)
+        ? "Can't reach the server. Check your connection and try again."
+        : error instanceof Error
+          ? error.message
+          : "Could not load your account.";
+      setBootstrapError(message);
+      setStatus(isNetworkApiError(error) ? "backendUnreachable" : "bootstrapError");
+      setProfile(queryClient.getQueryData<ApiUser>(["profile"]) ?? null);
+    }
   }, [queryClient]);
 
   const retryBootstrap = useCallback(async () => {
@@ -125,61 +140,113 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        setUser(firebaseUser);
-        setLoading(false);
-        try {
-          await firebaseUser.reload();
-        } catch {
-          // Best-effort reload
-        }
+      const t0 = Date.now();
+      const ms = () => `${Date.now() - t0}ms`;
 
-        // Sync email verification status to Firestore
-        try {
-          await syncVerificationStatus(firebaseUser);
-        } catch {
-          // Non-critical
-        }
-
-        // Track email verification grace period
-        try {
-          if (firebaseUser.emailVerified) {
-            await clearEmailVerificationStart(firebaseUser.uid);
-            // Clear persisted verification flag since they are now verified
-            await setAwaitingEmailVerification(false);
-            await bootstrapUser(firebaseUser);
-          } else {
-            setStatus("unverified");
-            const existingStart = await getEmailVerificationStart(firebaseUser.uid);
-            if (!existingStart) {
-              await setEmailVerificationStart(firebaseUser.uid, Date.now());
-            }
-            // Restore persisted verification pending state on app restart
-            try {
-              const pendingUid = await AsyncStorage.getItem(VERIFICATION_PENDING_KEY);
-              if (pendingUid === firebaseUser.uid) {
-                setAwaitingEmailVerificationState(true);
-              }
-            } catch {
-              // Non-critical
-            }
-          }
-        } catch {
-          // Non-critical
-        }
-      } else {
-        // User signed out — clear persisted verification state
+      // ── No user → straight to login ──
+      if (!firebaseUser) {
+        console.log(`[Auth] onAuthStateChanged: no user (${ms()})`);
         await AsyncStorage.removeItem(VERIFICATION_PENDING_KEY).catch(() => {});
         setAwaitingEmailVerificationState(false);
         setUser(null);
         setProfile(null);
+        setLoading(false);
         setStatus("signedOut");
+        return;
       }
 
+      console.log(`[Auth] onAuthStateChanged: uid=${firebaseUser.uid} verified=${firebaseUser.emailVerified} (${ms()})`);
+      setUser(firebaseUser);
+      setLoading(false);
+
+      // ── Unverified user — no blocking network needed ──
+      if (!firebaseUser.emailVerified) {
+        console.log(`[Auth] user not verified, setting unverified (${ms()})`);
+        setStatus("unverified");
+        try {
+          const existingStart = await getEmailVerificationStart(firebaseUser.uid);
+          if (!existingStart) {
+            await setEmailVerificationStart(firebaseUser.uid, Date.now());
+          }
+        } catch { /* non-critical */ }
+        try {
+          const pendingUid = await AsyncStorage.getItem(VERIFICATION_PENDING_KEY);
+          if (pendingUid === firebaseUser.uid) {
+            setAwaitingEmailVerificationState(true);
+          }
+        } catch { /* non-critical */ }
+        return;
+      }
+
+      // Verified — clear verification bookkeeping
+      await clearEmailVerificationStart(firebaseUser.uid).catch(() => {});
+      await setAwaitingEmailVerification(false);
+
+      // Check for a cached profile from a previous session
+      const cached = queryClient.getQueryData<ApiUser>(["profile"]);
+      const onboardingDone = !!(cached?.displayName && cached?.fitnessGoal);
+
+      if (cached && onboardingDone) {
+        // ── Instant ready: show the app now, sync in the background ──
+        console.log(`[Auth] cached profile found (onboarding complete), instant ready (${ms()})`);
+        setProfile(cached);
+        setStatus("ready");
+
+        void (async () => {
+          try {
+            console.log(`[Auth] bg: reload (${ms()})`);
+            await withTimeout(firebaseUser.reload(), AUTH_STEP_TIMEOUT, "reload");
+            console.log(`[Auth] bg: reload done (${ms()})`);
+          } catch (e) { console.warn("[Auth] bg reload failed:", e); }
+
+          try {
+            console.log(`[Auth] bg: syncVerification (${ms()})`);
+            await withTimeout(syncVerificationStatus(firebaseUser), AUTH_STEP_TIMEOUT, "syncVerification");
+            console.log(`[Auth] bg: syncVerification done (${ms()})`);
+          } catch (e) { console.warn("[Auth] bg syncVerification failed:", e); }
+
+          try {
+            console.log(`[Auth] bg: userApi.sync (${ms()})`);
+            await withTimeout(userApi.sync(), AUTH_STEP_TIMEOUT, "userApi.sync");
+            console.log(`[Auth] bg: userApi.sync done (${ms()})`);
+          } catch (e) { console.warn("[Auth] bg sync failed:", e); }
+
+          try {
+            console.log(`[Auth] bg: userApi.getProfile (${ms()})`);
+            const fresh = await withTimeout(userApi.getProfile(), AUTH_STEP_TIMEOUT, "userApi.getProfile");
+            console.log(`[Auth] bg: getProfile done (${ms()})`);
+            if (auth.currentUser?.uid === firebaseUser.uid) {
+              queryClient.setQueryData(["profile"], fresh);
+              setProfile(fresh);
+              if (!fresh.displayName || !fresh.fitnessGoal) {
+                setStatus("needsOnboarding");
+              }
+            }
+          } catch (e) {
+            console.warn("[Auth] bg getProfile failed:", e);
+            if (auth.currentUser?.uid === firebaseUser.uid) {
+              setStatus("backendUnreachable");
+            }
+          }
+        })();
+        return;
+      }
+
+      // ── No cached profile: full-screen loader, capped at 10 s ──
+      console.log(`[Auth] no cached profile, bootstrapping with ${BOOTSTRAP_CAP_MS}ms cap (${ms()})`);
+      try {
+        await withTimeout(bootstrapUser(firebaseUser), BOOTSTRAP_CAP_MS, "bootstrap");
+      } catch (e) {
+        console.warn(`[Auth] bootstrap cap reached: ${e}`);
+        if (auth.currentUser?.uid === firebaseUser.uid) {
+          setBootstrapError("Can't reach the server. Check your connection and try again.");
+          setStatus("backendUnreachable");
+        }
+      }
     });
 
     return unsub;
-  }, [bootstrapUser]);
+  }, [bootstrapUser, queryClient]);
 
   // Re-check email verification when app comes back to foreground
   useEffect(() => {
@@ -187,7 +254,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (state !== "active" || !auth.currentUser) return;
       try {
         const currentUser = auth.currentUser;
-        const verified = await syncVerificationStatus(currentUser);
+        console.log("[Auth] app foregrounded, syncing verification…");
+        const verified = await withTimeout(
+          syncVerificationStatus(currentUser),
+          AUTH_STEP_TIMEOUT,
+          "foreground syncVerification",
+        );
+        console.log(`[Auth] foreground sync done, verified=${verified}`);
         if (verified && status === "backendUnreachable") {
           await bootstrapUser(currentUser);
         }

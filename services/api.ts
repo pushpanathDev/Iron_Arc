@@ -2,7 +2,7 @@ import { auth } from "../firebase/config";
 
 const DEFAULT_BASE_URL = __DEV__
   ? "http://10.0.2.2:3000"
-  : "https://iron-arc-backend.onrender.com";
+  : "https://iron-arc-backend-v2.onrender.com";
 
 const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL || DEFAULT_BASE_URL;
 

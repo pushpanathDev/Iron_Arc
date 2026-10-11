@@ -1,11 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import {
-  GoogleSignin,
-  isSuccessResponse,
-  statusCodes,
-} from "@react-native-google-signin/google-signin";
-import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithCredential,
@@ -43,6 +38,7 @@ import { sendVerificationEmail } from "../utils/verificationService";
 import { userApi } from "../services/api";
 import { getVersionLabel } from "../utils/appVersion";
 import { Button } from "../components/ui/Button";
+import { getGoogleSignin, isGoogleSignInAvailable } from "../utils/googleSignin";
 import {
   validateEmail,
   validatePasswordStrength,
@@ -61,6 +57,7 @@ export default function LoginScreen() {
     awaitingEmailVerification,
   } = useAuth();
   const insets = useSafeAreaInsets();
+  const googleAvailable = isGoogleSignInAvailable();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -374,6 +371,12 @@ export default function LoginScreen() {
 
   /* GOOGLE SIGN-IN */
   const handleGoogleSignIn = async () => {
+    const google = getGoogleSignin();
+    if (!google) {
+      setError("Google sign-in isn't available in this preview.");
+      return;
+    }
+    const { GoogleSignin, isSuccessResponse, statusCodes } = google;
     try {
       setLoading(true);
       setError(null);
@@ -806,6 +809,8 @@ export default function LoginScreen() {
               style={{ marginBottom: spacing.md }}
             />
 
+            {googleAvailable ? (
+            <>
             {/* Divider */}
             <View
               style={{
@@ -864,6 +869,19 @@ export default function LoginScreen() {
                 Continue with Google
               </Text>
             </Pressable>
+            </>
+            ) : (
+              <Text
+                style={{
+                  ...typography.caption,
+                  color: colors.textMuted,
+                  textAlign: "center",
+                  marginBottom: spacing.lg,
+                }}
+              >
+                Google sign-in isn&apos;t available in this preview.
+              </Text>
+            )}
 
             {/* Toggle - Sign Up / Login Prompt */}
             <Pressable onPress={() => setIsSignup(!isSignup)}>

@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import Constants from "expo-constants";
+import Constants, { ExecutionEnvironment } from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Alert, Linking, Platform } from "react-native";
@@ -17,7 +17,9 @@ export {
 } from "./notificationPlanner";
 export type { NotificationState, PlannedNotification } from "./notificationPlanner";
 
-const IS_EXPO_GO = Constants.appOwnership === "expo";
+const IS_EXPO_GO =
+  Constants.executionEnvironment === ExecutionEnvironment.StoreClient ||
+  Constants.appOwnership === "expo";
 const PREFS_KEY = "@notification_preferences";
 const BATTERY_GUIDE_KEY = "@battery_optimization_prompted";
 const ANDROID_REMINDER_CHANNEL_ID = "workout-reminders";
@@ -25,15 +27,19 @@ const ANDROID_PROGRESS_CHANNEL_ID = "progress-reminders";
 
 let lastNotificationState: NotificationState | null = null;
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+try {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+} catch (error) {
+  console.warn("[Notifications] setNotificationHandler failed:", error);
+}
 
 export async function initNotifications(): Promise<void> {
   if (IS_EXPO_GO) return;
@@ -92,7 +98,7 @@ async function setupAndroidNotificationChannels(): Promise<void> {
 }
 
 export async function promptBatteryOptimizationDisableOnce(): Promise<void> {
-  if (Platform.OS !== "android") return;
+  if (Platform.OS !== "android" || IS_EXPO_GO) return;
   if ((await Notifications.getPermissionsAsync()).status !== "granted") return;
   if ((await AsyncStorage.getItem(BATTERY_GUIDE_KEY)) === "1") return;
 
@@ -142,35 +148,46 @@ export async function refreshNotificationSchedule(
   const prefs = await getNotificationPreferences();
   const planned = planNotifications(state, now, prefs);
 
-  if (IS_EXPO_GO || (await Notifications.getPermissionsAsync()).status !== "granted") {
-    return planned;
-  }
+  if (IS_EXPO_GO) return planned;
 
-  await cancelAllScheduledNotifications();
-  for (const notification of planned) {
-    await Notifications.scheduleNotificationAsync({
-      identifier: notification.id,
-      content: {
-        title: notification.title,
-        body: notification.body,
-        data: notification.data,
-        sound: notification.priority <= 2,
-        ...(Platform.OS === "android"
-          ? { channelId: notification.priority <= 2 ? ANDROID_REMINDER_CHANNEL_ID : ANDROID_PROGRESS_CHANNEL_ID }
-          : {}),
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DATE,
-        date: notification.date,
-      },
-    });
+  try {
+    if ((await Notifications.getPermissionsAsync()).status !== "granted") {
+      return planned;
+    }
+
+    await cancelAllScheduledNotifications();
+    for (const notification of planned) {
+      await Notifications.scheduleNotificationAsync({
+        identifier: notification.id,
+        content: {
+          title: notification.title,
+          body: notification.body,
+          data: notification.data,
+          sound: notification.priority <= 2,
+          ...(Platform.OS === "android"
+            ? { channelId: notification.priority <= 2 ? ANDROID_REMINDER_CHANNEL_ID : ANDROID_PROGRESS_CHANNEL_ID }
+            : {}),
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: notification.date,
+        },
+      });
+    }
+  } catch (error) {
+    console.warn("[Notifications] Scheduling failed:", error);
   }
 
   return planned;
 }
 
 export async function cancelAllScheduledNotifications(): Promise<void> {
-  await Notifications.cancelAllScheduledNotificationsAsync();
+  if (IS_EXPO_GO) return;
+  try {
+    await Notifications.cancelAllScheduledNotificationsAsync();
+  } catch (error) {
+    console.warn("[Notifications] Cancel failed:", error);
+  }
 }
 
 export async function getScheduledNotifications(): Promise<Notifications.NotificationRequest[]> {

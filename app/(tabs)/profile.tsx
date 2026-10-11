@@ -17,10 +17,6 @@ import {
 } from "react-native";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { EmailAuthProvider, GoogleAuthProvider, reauthenticateWithCredential } from "firebase/auth";
-import {
-  GoogleSignin,
-  isSuccessResponse,
-} from "@react-native-google-signin/google-signin";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import { useAuth } from "../../auth/AuthContext";
@@ -47,6 +43,7 @@ import {
 import { formatAccountDate, getAvatarUrl } from "../../utils/avatar";
 import { exportToCSV, exportToPDF } from "../../utils/exportData";
 import { createPageLogger } from "../../utils/logger";
+import { getGoogleSignin } from "../../utils/googleSignin";
 import { verificationMessages } from "../../constants/verificationMessages";
 import { clearVerificationSent } from "../../utils/verificationService";
 import { getVersionLabel } from "../../utils/appVersion";
@@ -102,7 +99,7 @@ export default function ProfileScreen() {
     queryClient.clear();
 
     try {
-      try { await GoogleSignin.signOut(); } catch {}
+      try { await getGoogleSignin()?.GoogleSignin.signOut(); } catch {}
       await logout();
     } finally {
       await AsyncStorage.clear();
@@ -126,7 +123,14 @@ export default function ProfileScreen() {
     } catch (error: any) {
       if (error?.code === "REAUTHENTICATION_REQUIRED") {
         const providerId = user?.providerData[0]?.providerId;
-        if (providerId === "google.com") {
+        const google = getGoogleSignin();
+        if (providerId === "google.com" && !google) {
+          Alert.alert(
+            "Sign in again to delete",
+            "Google sign-in isn't available in this preview. Use the full app to delete this account.",
+          );
+        } else if (providerId === "google.com" && google) {
+          const { GoogleSignin, isSuccessResponse } = google;
           try {
             const response = await GoogleSignin.signIn();
             if (isSuccessResponse(response)) {

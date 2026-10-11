@@ -32,6 +32,9 @@ import { useProfile } from "../hooks/useProfile";
 import { useNotificationScheduling } from "../hooks/useNotificationScheduling";
 import { initNotifications } from "../notifications/notificationService";
 import { isNetworkApiError } from "../services/api";
+import { configureGoogle } from "../utils/googleSignin";
+
+configureGoogle();
 
 // Ensures Expo Router always starts at (tabs) even after dev reload state restore
 export const unstable_settings = {

@@ -12,10 +12,22 @@ export type EmptyStateProps = {
   actionLabel?: string;
   onAction?: () => void;
   actionLoading?: boolean;
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
   style?: StyleProp<ViewStyle>;
 };
 
-export function EmptyState({ icon, title, body, actionLabel, onAction, actionLoading, style }: EmptyStateProps) {
+export function EmptyState({
+  icon,
+  title,
+  body,
+  actionLabel,
+  onAction,
+  actionLoading,
+  secondaryActionLabel,
+  onSecondaryAction,
+  style,
+}: EmptyStateProps) {
   const { colors } = useTheme();
 
   return (
@@ -40,6 +52,9 @@ export function EmptyState({ icon, title, body, actionLabel, onAction, actionLoa
       <Text style={[typography.body, { color: colors.textSecondary, textAlign: "center", maxWidth: 320 }]}>{body}</Text>
       {actionLabel && onAction && (
         <Button title={actionLabel} onPress={onAction} loading={actionLoading} style={{ marginTop: spacing.xs, alignSelf: "center" }} />
+      )}
+      {secondaryActionLabel && onSecondaryAction && (
+        <Button title={secondaryActionLabel} variant="secondary" onPress={onSecondaryAction} style={{ alignSelf: "center" }} />
       )}
     </View>
   );

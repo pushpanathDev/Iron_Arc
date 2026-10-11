@@ -1,4 +1,4 @@
-import { useColorScheme } from "@/hooks/use-color-scheme";
+import { Ionicons } from "@expo/vector-icons";
 import {
   DarkTheme,
   DefaultTheme,
@@ -10,17 +10,18 @@ import {
   focusManager,
   onlineManager,
   QueryClient,
+  useQueryClient,
 } from "@tanstack/react-query";
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { SplashScreen, Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ActivityIndicator, Animated as NativeAnimated, AppState, Platform, Pressable, Text, View } from "react-native";
 import type { AppStateStatus } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import { SafeAreaInsetsContext, SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuth } from "../auth/AuthContext";
 import { AnimatedSplashScreen } from "../components/AnimatedSplashScreen";
@@ -32,6 +33,8 @@ import { useProfile } from "../hooks/useProfile";
 import { useNotificationScheduling } from "../hooks/useNotificationScheduling";
 import { initNotifications } from "../notifications/notificationService";
 import { isNetworkApiError } from "../services/api";
+import { useTheme } from "../theme/theme";
+import { spacing, touchTarget, typography } from "../theme/tokens";
 import { configureGoogle } from "../utils/googleSignin";
 
 configureGoogle();
@@ -112,6 +115,10 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
   const { data: cachedProfile } = useProfile();
   const availableProfile = profile ?? cachedProfile;
   useNotificationScheduling();
+  const { isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+  const client = useQueryClient();
+  const isOnline = useIsOnline();
 
   // Track splash visibility (starts true, set false after animation completes)
   const [splashVisible, setSplashVisible] = useState(true);
@@ -221,18 +228,34 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
 
   // Render animated splash overlay when visible
   // The splash handles its own exit animation based on isReady
+  const retryConnection = useCallback(async () => {
+    await Promise.allSettled([retryBootstrap(), client.refetchQueries({ type: "active" })]);
+  }, [retryBootstrap, client]);
+
   if (splashVisible) {
     return (
-      <AnimatedSplashScreen
-        isAppReady={isReadyForSplash}
-        onAnimationComplete={handleSplashComplete}
-      />
+      <>
+        <StatusBar style="light" />
+        <AnimatedSplashScreen
+          isAppReady={isReadyForSplash}
+          onAnimationComplete={handleSplashComplete}
+        />
+      </>
     );
   }
 
+  const showBootstrapOverlay = authLoading || status === "loading" || status === "bootstrapping";
+  const showUnavailableOverlay =
+    !authLoading && (status === "backendUnreachable" || status === "bootstrapError") && !availableProfile;
+  const showOfflineBanner =
+    !!user && !showBootstrapOverlay && !showUnavailableOverlay && (status === "backendUnreachable" || !isOnline);
+
   return (
     <View style={{ flex: 1 }}>
-      {status === "backendUnreachable" && <OfflineBanner />}
+      {/* The bootstrap overlays have a fixed dark background. */}
+      <StatusBar style={showBootstrapOverlay || showUnavailableOverlay || isDark ? "light" : "dark"} />
+      {showOfflineBanner && <OfflineBanner topInset={insets.top} onRetry={retryConnection} />}
+      <InsetsBelowBanner active={showOfflineBanner}>
       <Stack
         screenOptions={{
           headerShown: false,
@@ -261,14 +284,13 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
         <Stack.Screen name="achievements" />
         <Stack.Screen name="dev-components" />
       </Stack>
-      {(authLoading || status === "loading" || status === "bootstrapping") && (
+      </InsetsBelowBanner>
+      {showBootstrapOverlay && (
         <View style={stateOverlayStyle}>
           <BootstrapState />
         </View>
       )}
-      {!authLoading &&
-        (status === "backendUnreachable" || status === "bootstrapError") &&
-        !availableProfile && (
+      {showUnavailableOverlay && (
           <View style={stateOverlayStyle}>
             <BackendUnavailableState
               title={status === "backendUnreachable" ? "Can't reach the server" : "Couldn't load your account"}
@@ -359,12 +381,92 @@ function BackendUnavailableState({
   );
 }
 
-function OfflineBanner() {
+function useIsOnline() {
+  return useSyncExternalStore(
+    (onChange) => onlineManager.subscribe(onChange),
+    () => onlineManager.isOnline(),
+  );
+}
+
+/** Screens under the banner must not pad for the status bar a second time. */
+function InsetsBelowBanner({ active, children }: { active: boolean; children: ReactNode }) {
+  const insets = useSafeAreaInsets();
+  const value = useMemo(() => (active ? { ...insets, top: 0 } : insets), [active, insets]);
+  return <SafeAreaInsetsContext.Provider value={value}>{children}</SafeAreaInsetsContext.Provider>;
+}
+
+function OfflineBanner({ topInset, onRetry }: { topInset: number; onRetry: () => Promise<void> }) {
+  const { colors } = useTheme();
+  const [retrying, setRetrying] = useState(false);
+
+  const retry = async () => {
+    setRetrying(true);
+    try {
+      await onRetry();
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   return (
-    <View style={offlineBannerStyle}>
-      <Text style={offlineBannerTextStyle}>Offline: showing cached data</Text>
+    <View
+      accessibilityLiveRegion="polite"
+      style={{
+        paddingTop: topInset,
+        backgroundColor: colors.raised,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.md, minHeight: touchTarget }}>
+        <Ionicons name="cloud-offline-outline" size={18} color={colors.textSecondary} />
+        <Text style={[typography.bodySmall, { color: colors.textSecondary, flex: 1 }]}>
+          Offline. Showing saved data.
+        </Text>
+        <Pressable
+          onPress={retry}
+          disabled={retrying}
+          accessibilityRole="button"
+          accessibilityLabel="Retry connection"
+          accessibilityState={{ busy: retrying, disabled: retrying }}
+          style={({ pressed }) => ({
+            minHeight: touchTarget,
+            minWidth: touchTarget,
+            paddingHorizontal: spacing.md,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: pressed ? colors.border : "transparent",
+          })}
+        >
+          {retrying ? (
+            <ActivityIndicator size="small" color={colors.accent} />
+          ) : (
+            <Text style={[typography.bodySmall, { color: colors.accent, fontWeight: "700" }]}>Retry</Text>
+          )}
+        </Pressable>
+      </View>
     </View>
   );
+}
+
+/** React Navigation's theme follows the in-app theme, not only the system setting. */
+function NavigationThemeBridge({ children }: { children: ReactNode }) {
+  const { colors, isDark } = useTheme();
+  const navTheme = useMemo(() => {
+    const base = isDark ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      colors: {
+        ...base.colors,
+        primary: colors.accent,
+        background: colors.bg,
+        card: colors.card,
+        text: colors.text,
+        border: colors.border,
+      },
+    };
+  }, [isDark, colors]);
+  return <ThemeProvider value={navTheme}>{children}</ThemeProvider>;
 }
 
 const stateContainerStyle = {
@@ -431,18 +533,6 @@ const retryButtonTextStyle = {
   fontWeight: "700" as const,
 };
 
-const offlineBannerStyle = {
-  backgroundColor: "#7C2D12",
-  paddingVertical: 8,
-  paddingHorizontal: 16,
-};
-
-const offlineBannerTextStyle = {
-  color: "#FFEDD5",
-  textAlign: "center" as const,
-  fontSize: 13,
-};
-
 /**
  * Root Layout
  * ===========
@@ -461,7 +551,6 @@ const offlineBannerTextStyle = {
  * 6. App interface becomes visible
  */
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
   const [dbReady, setDbReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [nativeSplashHidden, setNativeSplashHidden] = useState(false);
@@ -557,19 +646,16 @@ export default function RootLayout() {
           client={queryClient}
           persistOptions={{ persister: asyncStoragePersister }}
         >
-          <ThemeProvider
-            value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
-          >
-            <AppThemeProvider>
+          <AppThemeProvider>
+            <NavigationThemeBridge>
               <AuthProvider>
                 <ToastProvider>
                   <BatteryOptimizationPrompt />
                   <RootNavigator dbReady={dbReady} />
                 </ToastProvider>
               </AuthProvider>
-            </AppThemeProvider>
-            <StatusBar style="auto" />
-          </ThemeProvider>
+            </NavigationThemeBridge>
+          </AppThemeProvider>
         </PersistQueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

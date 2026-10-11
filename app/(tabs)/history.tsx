@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable,
@@ -8,6 +9,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   FadeInDown,
@@ -20,34 +22,49 @@ import Animated, {
 import { useAuth } from "../../auth/AuthContext";
 import { WorkoutCalendar } from "../../components/ui/WorkoutCalendar";
 import { WorkoutDaySummary } from "../../components/ui/WorkoutDaySummary";
-import { useGlobalSync } from "../../context/SyncContext";
-import {
-  Workout,
-  deleteWorkoutById,
-  getAllWorkouts,
-  insertWorkout,
-} from "../../db/workouts";
+import { useQueryClient } from "@tanstack/react-query";
+import { useAllWorkouts } from "../../hooks/useWorkouts";
+import { ACHIEVEMENTS_KEY, useAchievementUnlockHandler } from "../../hooks/useAchievements";
+import { useUnitPreference } from "../../hooks/useUnitPreference";
+import { ApiError, Workout, workoutApi } from "../../services/api";
 import { useTheme } from "../../theme/theme";
 import { createPageLogger } from "../../utils/logger";
+import { displayWeight, weightLabel } from "../../utils/unitConversion";
 import { formatDate } from "../../utils/weekUtils";
 
 const log = createPageLogger("History");
 
 const SWIPE_THRESHOLD = -60;
 const DELETE_WIDTH = 80;
+const SWIPE_ACTIVE_OFFSET = 12;
+const SWIPE_FAIL_OFFSET_Y = 8;
 
 type ViewMode = "calendar" | "list";
 
 export default function History() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const { user } = useAuth();
-  const { globalSync, refreshVersion, startSync, endSync } = useGlobalSync();
+  const insets = useSafeAreaInsets();
 
-  const [workouts, setWorkouts] = useState<Workout[]>([]);
+  const { data: rawWorkouts, isLoading, refetch } = useAllWorkouts();
+  const queryClient = useQueryClient();
+  const handleUnlocks = useAchievementUnlockHandler();
+  const { unit } = useUnitPreference();
+
+  // Workouts awaiting their deferred server delete. They are hidden rather
+  // than removed from the cache, so a refetch during the undo window cannot
+  // bring them back, and each has its own timer.
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(() => new Set());
+  const deleteTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const workouts = useMemo(
+    () => (rawWorkouts ?? []).filter((w) => !pendingDeleteIds.has(w.id)),
+    [rawWorkouts, pendingDeleteIds],
+  );
+
   const [deletedWorkout, setDeletedWorkout] = useState<Workout | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
 
   // Calendar state
   const [viewMode, setViewMode] = useState<ViewMode>("calendar");
@@ -56,25 +73,14 @@ export default function History() {
   );
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
-  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (!user) return;
-    fetchWorkouts();
-  }, [user]);
-
-  const fetchWorkouts = async () => {
-    const data = await getAllWorkouts(user!.uid);
-    setWorkouts(data);
-  };
-
   // Calculate total stats
   const totalSets = workouts.reduce((acc, w) => acc + (w.sets?.length || 0), 0);
-  const totalVolume = workouts.reduce((acc, w) => {
+  const totalVolumeKg = workouts.reduce((acc, w) => {
     return (
       acc + (w.sets?.reduce((s, set) => s + set.weight * set.reps, 0) || 0)
     );
   }, 0);
+  const totalVolume = displayWeight(totalVolumeKg, unit);
 
   // Get all workout dates for calendar indicators
   const workoutDates = useMemo(() => {
@@ -109,77 +115,116 @@ export default function History() {
   }, []);
 
   /* =========================
-     PULL TO REFRESH (GLOBAL SYNC)
+     PULL TO REFRESH
      ========================= */
   const handleRefresh = async () => {
-    if (!user) return;
     setRefreshing(true);
     setSyncMessage(null);
-
     try {
-      log.info("Pull-to-refresh: triggering global sync...");
-
-      // Trigger global sync - pushes local changes THEN pulls from Firebase
-      await globalSync(user.uid);
-
-      await fetchWorkouts();
-      setSyncMessage("Synced ✓");
-      log.info("History refreshed (global sync)");
+      await refetch();
+      setSyncMessage("Refreshed ✓");
+      log.info("History refreshed");
     } catch (e) {
       log.error(`Refresh failed: ${e}`);
-      setSyncMessage("Sync failed");
+      setSyncMessage("Refresh failed");
     } finally {
       setRefreshing(false);
       setTimeout(() => setSyncMessage(null), 3000);
     }
   };
 
-  // Refresh when global sync happens on another screen
-  useEffect(() => {
-    if (!user || refreshVersion === 0) return;
-    fetchWorkouts();
-  }, [refreshVersion]);
-
   /* =========================
      DELETE + UNDO
      ========================= */
+  const setPending = (id: string, pending: boolean) => {
+    setPendingDeleteIds((prev) => {
+      const next = new Set(prev);
+      if (pending) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const commitDelete = async (workout: Workout) => {
+    deleteTimers.current.delete(workout.id);
+    let newlyUnlocked: string[] = [];
+    try {
+      ({ newlyUnlocked } = await workoutApi.delete(workout.id));
+      log.info(`Deleted workout ${workout.id}`);
+    } catch (error) {
+      // 404 means it is already gone on the server — treat as deleted.
+      if (!(error instanceof ApiError && error.status === 404)) {
+        setPending(workout.id, false); // un-hide the row
+        setDeletedWorkout((current) => (current?.id === workout.id ? null : current));
+        setSyncMessage("Failed to delete workout");
+        log.error("Delete failed", error instanceof Error ? error.message : String(error));
+        return;
+      }
+    }
+
+    queryClient.setQueryData<Workout[]>(["workouts", "all"], (old) =>
+      old ? old.filter((w) => w.id !== workout.id) : old,
+    );
+    setPending(workout.id, false);
+    setDeletedWorkout((current) => (current?.id === workout.id ? null : current));
+    queryClient.invalidateQueries({ queryKey: ["workouts"] });
+    void handleUnlocks(newlyUnlocked); // also refreshes ["achievements"]
+  };
+
   const deleteWorkout = async (workout: Workout) => {
-    // Guard against delete while syncing/refreshing
-    if (refreshing || isDeleting) {
-      setSyncMessage("Please wait until sync completes");
+    if (refreshing) {
+      setSyncMessage("Please wait...");
       return;
     }
 
-    setIsDeleting(true);
-    setDeletedWorkout(workout);
-    setWorkouts((prev) => prev.filter((w) => w.id !== workout.id));
-
-    try {
-      await deleteWorkoutById(workout.id, user!.uid);
-      log.info(`Soft deleted workout ${workout.id}`);
-    } finally {
-      setIsDeleting(false);
+    if (!user) {
+      setSyncMessage("User not authenticated");
+      return;
     }
 
-    undoTimer.current = setTimeout(() => {
-      setDeletedWorkout(null);
-    }, 4000);
+    // Repeat taps on a row that is already being deleted are ignored.
+    if (deleteTimers.current.has(workout.id)) return;
+
+    // Stop in-flight refetches from overwriting the list mid-delete.
+    await queryClient.cancelQueries({ queryKey: ["workouts"] });
+
+    setPending(workout.id, true);
+    setDeletedWorkout(workout);
+
+    // Each workout gets its own timer; deleting another never cancels this one.
+    deleteTimers.current.set(
+      workout.id,
+      setTimeout(() => void commitDelete(workout), 4500),
+    );
   };
 
-  const undoDelete = async () => {
-    if (!deletedWorkout || !user) return;
-
-    if (undoTimer.current) clearTimeout(undoTimer.current);
-
-    await insertWorkout({
-      ...deletedWorkout,
-      isSynced: 0,
-    });
-    await fetchWorkouts();
+  const undoDelete = () => {
+    if (!deletedWorkout) return;
+    const timer = deleteTimers.current.get(deletedWorkout.id);
+    if (timer) clearTimeout(timer);
+    deleteTimers.current.delete(deletedWorkout.id);
+    setPending(deletedWorkout.id, false);
     setDeletedWorkout(null);
-
-    log.info(`Undo delete ${deletedWorkout.id}`);
+    log.info(`Undo: restored workout ${deletedWorkout.id}`);
   };
+
+  // Leaving the screen with deletes pending: send them now instead of dropping them.
+  useEffect(() => {
+    const timers = deleteTimers.current;
+    return () => {
+      timers.forEach((timer, id) => {
+        clearTimeout(timer);
+        workoutApi
+          .delete(id)
+          .catch(() => {})
+          .finally(() => {
+            queryClient.invalidateQueries({ queryKey: ["workouts"] });
+            queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
+          });
+      });
+      timers.clear();
+    };
+  }, [queryClient]);
 
   // Group workouts by date
   const groupedWorkouts = workouts.reduce(
@@ -201,7 +246,7 @@ export default function History() {
       <ScrollView
         contentContainerStyle={{
           padding: spacing.md,
-          paddingBottom: spacing.xxl,
+          paddingBottom: insets.bottom + spacing.xxl,
         }}
         refreshControl={
           <RefreshControl
@@ -384,7 +429,7 @@ export default function History() {
             <Text
               style={{ ...typography.caption, color: colors.textSecondary }}
             >
-              Volume (kg)
+              Volume ({weightLabel(unit)})
             </Text>
           </View>
         </Animated.View>
@@ -500,24 +545,44 @@ export default function History() {
 
             {/* Swipeable workout list for selected date - for delete functionality */}
             {selectedDateWorkouts.length > 0 && (
-              <View style={{ marginTop: spacing.md }}>
-                <Text
-                  style={{
-                    ...typography.label,
-                    color: colors.textSecondary,
-                    marginBottom: spacing.sm,
-                    marginLeft: spacing.xs,
-                  }}
-                >
-                  SWIPE TO DELETE
-                </Text>
+              <View style={{ marginTop: spacing.lg }}>
+                <View style={{ marginBottom: spacing.md }}>
+                  <Text
+                    style={{
+                      ...typography.label,
+                      color: colors.textPrimary,
+                      marginBottom: spacing.sm,
+                      marginLeft: spacing.xs,
+                      fontSize: 14,
+                      fontWeight: "700",
+                    }}
+                  >
+                    WORKOUTS
+                  </Text>
+                  <Text
+                    style={{
+                      ...typography.caption,
+                      color: colors.textSecondary,
+                      marginLeft: spacing.xs,
+                    }}
+                  >
+                    Swipe left to delete or tap to edit
+                  </Text>
+                </View>
                 {selectedDateWorkouts.map((workout, index) => (
                   <SwipeRow
                     key={workout.id}
                     workout={workout}
                     onDelete={() => deleteWorkout(workout)}
+                    onEdit={() =>
+                      router.push({
+                        pathname: "/add-workout",
+                        params: { id: workout.id },
+                      })
+                    }
                     index={index}
-                    disabled={refreshing || isDeleting}
+                    disabled={refreshing}
+                    weightUnit={unit}
                   />
                 ))}
               </View>
@@ -572,8 +637,15 @@ export default function History() {
                   key={workout.id}
                   workout={workout}
                   onDelete={() => deleteWorkout(workout)}
+                  onEdit={() =>
+                    router.push({
+                      pathname: "/add-workout",
+                      params: { id: workout.id },
+                    })
+                  }
                   index={index}
-                  disabled={refreshing || isDeleting}
+                  disabled={refreshing}
+                  weightUnit={unit}
                 />
               ))}
             </Animated.View>
@@ -674,19 +746,27 @@ function formatDateLabel(dateStr: string): string {
 function SwipeRow({
   workout,
   onDelete,
+  onEdit,
   index,
   disabled = false,
+  weightUnit = "kg",
 }: {
   workout: Workout;
   onDelete: () => void;
+  onEdit: () => void;
   index: number;
   disabled?: boolean;
+  weightUnit?: "kg" | "lbs";
 }) {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const translateX = useSharedValue(0);
 
   const pan = Gesture.Pan()
     .enabled(!disabled)
+    // Require a more deliberate horizontal swipe.
+    // If the user is mostly scrolling vertically, fail this gesture so ScrollView wins.
+    .activeOffsetX([-SWIPE_ACTIVE_OFFSET, SWIPE_ACTIVE_OFFSET])
+    .failOffsetY([-SWIPE_FAIL_OFFSET_Y, SWIPE_FAIL_OFFSET_Y])
     .onUpdate((e) => {
       translateX.value = Math.min(0, e.translationX);
     })
@@ -701,16 +781,18 @@ function SwipeRow({
     transform: [{ translateX: translateX.value }],
   }));
 
-  const totalVolume =
+  const totalVolumeKg =
     workout.sets?.reduce((acc, s) => acc + s.weight * s.reps, 0) || 0;
+  const rowVolume = displayWeight(totalVolumeKg, weightUnit);
   const totalReps = workout.sets?.reduce((acc, s) => acc + s.reps, 0) || 0;
 
   return (
     <View
       style={{
-        marginBottom: spacing.sm,
+        marginBottom: spacing.md,
         borderRadius: radius.xl,
         overflow: "hidden",
+        ...shadows.sm,
       }}
     >
       {/* DELETE ACTION */}
@@ -741,10 +823,11 @@ function SwipeRow({
               borderRadius: radius.xl,
               borderWidth: 1,
               borderColor: colors.cardBorder,
-              ...shadows.sm,
+              ...shadows.md,
             },
           ]}
         >
+          <Pressable onPress={onEdit} disabled={disabled}>
           {/* Exercise Name & Category */}
           <View
             style={{
@@ -788,13 +871,40 @@ function SwipeRow({
 
             {/* Quick Stats */}
             <View style={{ alignItems: "flex-end" }}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  paddingVertical: 2,
+                  paddingHorizontal: spacing.xs,
+                  borderRadius: radius.md,
+                  backgroundColor: colors.surfaceElevated,
+                  marginBottom: spacing.xs,
+                }}
+              >
+                <Ionicons
+                  name="create-outline"
+                  size={14}
+                  color={colors.textSecondary}
+                />
+                <Text
+                  style={{
+                    fontSize: 11,
+                    fontWeight: "600",
+                    color: colors.textSecondary,
+                    marginLeft: 4,
+                  }}
+                >
+                  EDIT
+                </Text>
+              </View>
               <Text style={{ ...typography.h3, color: colors.accent }}>
-                {totalVolume.toLocaleString()}
+                {rowVolume.toLocaleString()}
               </Text>
               <Text
                 style={{ ...typography.caption, color: colors.textSecondary }}
               >
-                kg volume
+                {weightLabel(weightUnit)} volume
               </Text>
             </View>
           </View>
@@ -820,11 +930,12 @@ function SwipeRow({
                 <Text
                   style={{ ...typography.caption, color: colors.textPrimary }}
                 >
-                  {set.reps}×{set.weight}kg
+                  {set.reps}×{displayWeight(set.weight, weightUnit)}{weightLabel(weightUnit)}
                 </Text>
               </View>
             ))}
           </View>
+          </Pressable>
         </Animated.View>
       </GestureDetector>
     </View>

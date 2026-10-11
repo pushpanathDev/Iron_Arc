@@ -25,6 +25,16 @@ export function formatDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Parses a YYYY-MM-DD key as a LOCAL calendar date (inverse of formatDate).
+ * `new Date("YYYY-MM-DD")` would be UTC midnight, which is the previous
+ * local day for anyone west of UTC.
+ */
+export function parseLocalDate(dateKey: string): Date {
+  const [year, month, day] = dateKey.split("T")[0].split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
 
 /**
  * Returns true if weekStart is in the future

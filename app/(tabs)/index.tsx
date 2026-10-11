@@ -2,7 +2,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Pressable,
   RefreshControl,
@@ -10,6 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   FadeInDown,
   FadeInUp,
@@ -20,10 +21,20 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useAuth } from "../../auth/AuthContext";
-import { useGlobalSync } from "../../context/SyncContext";
-import { getUserProfile, UserProfile } from "../../db/profiles";
-import { getAllWeights } from "../../db/weights";
-import { getAllWorkouts, Workout } from "../../db/workouts";
+import { EmailVerificationPrompt } from "../../components/EmailVerificationPrompt";
+import { ProfileStatus } from "../../components/ProfileStatus";
+import { useProfile } from "../../hooks/useProfile";
+import { useUnitPreference } from "../../hooks/useUnitPreference";
+import { useAllWeights } from "../../hooks/useWeights";
+import { useAllWorkouts } from "../../hooks/useWorkouts";
+import { Workout } from "../../services/api";
+import { displayWeight, weightLabel } from "../../utils/unitConversion";
+import {
+  clearEmailVerificationStart,
+  getEmailVerificationStart,
+  setEmailVerificationStart,
+} from "../../db/syncMeta";
+import { verificationMessages } from "../../constants/verificationMessages";
 import { useTheme } from "../../theme/theme";
 import { formatDate } from "../../utils/weekUtils";
 
@@ -61,25 +72,123 @@ interface PersonalRecord {
 export default function Home() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const { user } = useAuth();
-  const { globalSync, refreshVersion } = useGlobalSync();
+  const insets = useSafeAreaInsets();
 
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [streak, setStreak] = useState<number>(0);
-  const [recentWorkouts, setRecentWorkouts] = useState<RecentWorkout[]>([]);
-  const [suggestion, setSuggestion] = useState<TrainingSuggestion | null>(null);
-  const [personalRecords, setPersonalRecords] = useState<PersonalRecord[]>([]);
-  const [lastWeight, setLastWeight] = useState<number | null>(null);
+  const {
+    data: profile,
+    isLoading: profileLoading,
+    isError: profileError,
+    refetch: refetchProfile,
+  } = useProfile();
+  const { unit } = useUnitPreference();
+  const { data: workouts = [], refetch: refetchWorkouts } = useAllWorkouts();
+  const { data: allWeights = [], refetch: refetchWeights } = useAllWeights();
+
   const [refreshing, setRefreshing] = useState(false);
+  const [verificationDaysLeft, setVerificationDaysLeft] = useState<number | null>(null);
+  const [showVerificationPrompt, setShowVerificationPrompt] = useState(false);
+  const [dismissVerificationBanner, setDismissVerificationBanner] = useState(false);
+
+  const verificationGraceDays = 7;
+
+  // Derived data from workouts
+  const streak = useMemo(() => {
+    const sortedDates = [...new Set(workouts.map((w) => w.date))].sort().reverse();
+    const today = formatDate(new Date());
+    const yesterday = formatDate(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    let count = 0;
+    if (sortedDates[0] === today || sortedDates[0] === yesterday) {
+      count = 1;
+      for (let i = 1; i < sortedDates.length; i++) {
+        const curr = new Date(sortedDates[i - 1]);
+        const prev = new Date(sortedDates[i]);
+        const diffDays = Math.floor((curr.getTime() - prev.getTime()) / (24 * 60 * 60 * 1000));
+        if (diffDays === 1) count++;
+        else break;
+      }
+    }
+    return count;
+  }, [workouts]);
+
+  const lastWeight = useMemo(() => {
+    if (allWeights.length === 0) return null;
+    return [...allWeights].sort((a, b) => b.date.localeCompare(a.date))[0].weight;
+  }, [allWeights]);
+
+  const recentWorkouts = useMemo((): RecentWorkout[] => {
+    const groupedByDate = workouts.reduce((acc, w) => {
+      if (!acc[w.date]) acc[w.date] = [];
+      acc[w.date].push(w);
+      return acc;
+    }, {} as Record<string, Workout[]>);
+
+    return Object.keys(groupedByDate)
+      .sort((a, b) => b.localeCompare(a))
+      .slice(0, 5)
+      .map((date) => {
+        const dayWorkouts = groupedByDate[date];
+        const exercises = [...new Set(dayWorkouts.map((w) => w.exercise))];
+        const categories = [...new Set(dayWorkouts.map((w) => w.category || "Other"))];
+        const totalSets = dayWorkouts.reduce((sum, w) => sum + w.sets.length, 0);
+        const totalVolume = dayWorkouts.reduce(
+          (sum, w) => sum + w.sets.reduce((s, set) => s + set.reps * set.weight, 0),
+          0,
+        );
+        return { date, exercises, category: categories.length === 1 ? categories[0] : "Mixed", totalSets, totalVolume };
+      });
+  }, [workouts]);
+
+  const suggestion = useMemo((): TrainingSuggestion | null => {
+    const categoryLastTrained: Record<string, string> = {};
+    for (const workout of workouts) {
+      const cat = workout.category || "Other";
+      if (!categoryLastTrained[cat] || workout.date > categoryLastTrained[cat]) {
+        categoryLastTrained[cat] = workout.date;
+      }
+    }
+    const mainCategories = ["Chest", "Back", "Shoulders", "Legs", "Arms", "Abs"];
+    const today = new Date();
+    let best: TrainingSuggestion | null = null;
+    let maxDays = -1;
+    for (const cat of mainCategories) {
+      const lastDate = categoryLastTrained[cat];
+      const daysSince = lastDate
+        ? Math.floor((today.getTime() - new Date(lastDate).getTime()) / (1000 * 60 * 60 * 24))
+        : 999;
+      if (daysSince > maxDays) {
+        maxDays = daysSince;
+        best = {
+          category: cat,
+          daysSinceLastTrained: daysSince,
+          reason: daysSince >= 999 ? "Never trained" : daysSince >= 7 ? "Over a week ago" : daysSince >= 4 ? `${daysSince} days ago` : `${daysSince} days rest`,
+          icon: getCategoryIcon(cat),
+        };
+      }
+    }
+    return best;
+  }, [workouts]);
+
+  const personalRecords = useMemo((): PersonalRecord[] => {
+    const exercisePRs: Record<string, { weight: number; reps: number; date: string }> = {};
+    for (const workout of workouts) {
+      for (const set of workout.sets) {
+        if (!exercisePRs[workout.exercise] || set.weight > exercisePRs[workout.exercise].weight) {
+          exercisePRs[workout.exercise] = { weight: set.weight, reps: set.reps, date: workout.date };
+        }
+      }
+    }
+    return Object.entries(exercisePRs)
+      .map(([exercise, data]) => ({ exercise, ...data, isNew: isRecentDate(data.date, 7) }))
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 3);
+  }, [workouts]);
 
   // Flame animation for streak
   const flameScale = useSharedValue(1);
   useEffect(() => {
     if (streak > 0) {
       flameScale.value = withRepeat(
-        withSequence(
-          withTiming(1.15, { duration: 600 }),
-          withTiming(1, { duration: 600 }),
-        ),
+        withSequence(withTiming(1.15, { duration: 600 }), withTiming(1, { duration: 600 })),
         -1,
         true,
       );
@@ -90,237 +199,46 @@ export default function Home() {
     transform: [{ scale: flameScale.value }],
   }));
 
-  // Auto-refresh on focus
+  const loadVerificationStatus = useCallback(async () => {
+    if (!user) return;
+    try { await user.reload(); } catch {}
+
+    if (user.emailVerified) {
+      setVerificationDaysLeft(null);
+      setDismissVerificationBanner(false);
+      await clearEmailVerificationStart(user.uid);
+      return;
+    }
+
+    let start = await getEmailVerificationStart(user.uid);
+    if (!start) {
+      start = Date.now();
+      await setEmailVerificationStart(user.uid, start);
+    }
+    const elapsedDays = Math.floor((Date.now() - start) / (24 * 60 * 60 * 1000));
+    setVerificationDaysLeft(Math.max(0, verificationGraceDays - elapsedDays));
+  }, [user]);
+
   useFocusEffect(
     useCallback(() => {
-      if (!user) return;
-      loadAllData();
-    }, [user]),
+      loadVerificationStatus();
+    }, [loadVerificationStatus]),
   );
 
-  // Refresh on global sync
   useEffect(() => {
-    if (!user || refreshVersion === 0) return;
-    loadAllData();
-  }, [refreshVersion]);
-
-  /* ==============================
-     DATA LOADING
-     ============================== */
-  const loadAllData = async () => {
-    if (!user) return;
-    await Promise.all([
-      loadProfile(),
-      loadStreak(),
-      loadRecentWorkouts(),
-      loadWeight(),
-    ]);
-  };
-
-  const loadProfile = async () => {
-    if (!user) return;
-    const data = await getUserProfile(user.uid);
-    setProfile(data);
-  };
-
-  const loadStreak = async () => {
-    if (!user) return;
-    try {
-      // Calculate streak from local SQLite data (same as Analytics page)
-      const workouts = await getAllWorkouts(user.uid);
-      const sortedDates = [...new Set(workouts.map((w) => w.date))]
-        .sort()
-        .reverse();
-      const today = formatDate(new Date());
-      const yesterday = formatDate(new Date(Date.now() - 24 * 60 * 60 * 1000));
-
-      let count = 0;
-      if (sortedDates[0] === today || sortedDates[0] === yesterday) {
-        count = 1;
-        for (let i = 1; i < sortedDates.length; i++) {
-          const curr = new Date(sortedDates[i - 1]);
-          const prev = new Date(sortedDates[i]);
-          const diffDays = Math.floor(
-            (curr.getTime() - prev.getTime()) / (24 * 60 * 60 * 1000),
-          );
-          if (diffDays === 1) {
-            count++;
-          } else {
-            break;
-          }
-        }
-      }
-      setStreak(count);
-    } catch (error) {
-      console.log("Error loading streak:", error);
+    if (!user || user.emailVerified) return;
+    if (verificationDaysLeft === 0 && !showVerificationPrompt) {
+      setShowVerificationPrompt(true);
     }
-  };
-
-  const loadWeight = async () => {
-    if (!user) return;
-    try {
-      const weights = await getAllWeights(user.uid);
-      if (weights.length > 0) {
-        // Sort by date descending and get the most recent
-        const sorted = weights.sort((a, b) => b.date.localeCompare(a.date));
-        setLastWeight(sorted[0].weight);
-      }
-    } catch (error) {
-      console.log("Error loading weight:", error);
-    }
-  };
-
-  const loadRecentWorkouts = async () => {
-    if (!user) return;
-    try {
-      const workouts = await getAllWorkouts(user.uid);
-
-      if (workouts.length === 0) {
-        setRecentWorkouts([]);
-        setSuggestion(null);
-        setPersonalRecords([]);
-        return;
-      }
-
-      // Group workouts by date
-      const groupedByDate = workouts.reduce(
-        (acc, w) => {
-          if (!acc[w.date]) acc[w.date] = [];
-          acc[w.date].push(w);
-          return acc;
-        },
-        {} as Record<string, Workout[]>,
-      );
-
-      // Get recent workout sessions (last 5 days with workouts)
-      const sortedDates = Object.keys(groupedByDate).sort((a, b) =>
-        b.localeCompare(a),
-      );
-      const recent: RecentWorkout[] = sortedDates.slice(0, 5).map((date) => {
-        const dayWorkouts = groupedByDate[date];
-        const exercises = [...new Set(dayWorkouts.map((w) => w.exercise))];
-        const categories = [
-          ...new Set(dayWorkouts.map((w) => w.category || "Other")),
-        ];
-        const totalSets = dayWorkouts.reduce(
-          (sum, w) => sum + w.sets.length,
-          0,
-        );
-        const totalVolume = dayWorkouts.reduce(
-          (sum, w) =>
-            sum + w.sets.reduce((s, set) => s + set.reps * set.weight, 0),
-          0,
-        );
-
-        return {
-          date,
-          exercises,
-          category: categories.length === 1 ? categories[0] : "Mixed",
-          totalSets,
-          totalVolume,
-        };
-      });
-      setRecentWorkouts(recent);
-
-      // Calculate training suggestion
-      const categoryLastTrained: Record<string, string> = {};
-      for (const workout of workouts) {
-        const cat = workout.category || "Other";
-        if (
-          !categoryLastTrained[cat] ||
-          workout.date > categoryLastTrained[cat]
-        ) {
-          categoryLastTrained[cat] = workout.date;
-        }
-      }
-
-      const mainCategories = [
-        "Chest",
-        "Back",
-        "Shoulders",
-        "Legs",
-        "Arms",
-        "Abs",
-      ];
-      const today = new Date();
-      let bestSuggestion: TrainingSuggestion | null = null;
-      let maxDays = -1;
-
-      for (const cat of mainCategories) {
-        const lastDate = categoryLastTrained[cat];
-        let daysSince = 999;
-
-        if (lastDate) {
-          const last = new Date(lastDate);
-          daysSince = Math.floor(
-            (today.getTime() - last.getTime()) / (1000 * 60 * 60 * 24),
-          );
-        }
-
-        if (daysSince > maxDays) {
-          maxDays = daysSince;
-          bestSuggestion = {
-            category: cat,
-            daysSinceLastTrained: daysSince,
-            reason:
-              daysSince >= 999
-                ? "Never trained"
-                : daysSince >= 7
-                  ? "Over a week ago"
-                  : daysSince >= 4
-                    ? `${daysSince} days ago`
-                    : `${daysSince} days rest`,
-            icon: getCategoryIcon(cat),
-          };
-        }
-      }
-      setSuggestion(bestSuggestion);
-
-      // Calculate Personal Records (top weight per exercise)
-      const exercisePRs: Record<
-        string,
-        { weight: number; reps: number; date: string }
-      > = {};
-      for (const workout of workouts) {
-        for (const set of workout.sets) {
-          if (
-            !exercisePRs[workout.exercise] ||
-            set.weight > exercisePRs[workout.exercise].weight
-          ) {
-            exercisePRs[workout.exercise] = {
-              weight: set.weight,
-              reps: set.reps,
-              date: workout.date,
-            };
-          }
-        }
-      }
-
-      // Get top 3 PRs by weight, recently achieved
-      const recentPRs = Object.entries(exercisePRs)
-        .map(([exercise, data]) => ({
-          exercise,
-          ...data,
-          isNew: isRecentDate(data.date, 7), // PR in last 7 days
-        }))
-        .sort((a, b) => b.weight - a.weight)
-        .slice(0, 3);
-
-      setPersonalRecords(recentPRs);
-    } catch (error) {
-      console.log("Error loading recent workouts:", error);
-    }
-  };
+  }, [user, verificationDaysLeft, showVerificationPrompt]);
 
   /* ==============================
      PULL-TO-REFRESH
      ============================== */
   const handleRefresh = async () => {
-    if (!user) return;
     setRefreshing(true);
     try {
-      await globalSync(user.uid);
-      await loadAllData();
+      await Promise.all([refetchWorkouts(), refetchWeights(), loadVerificationStatus()]);
     } catch (error) {
       console.log("Refresh error:", error);
     } finally {
@@ -332,17 +250,18 @@ export default function Home() {
      RENDER
      ============================== */
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={{ paddingBottom: spacing.xxl }}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-          tintColor={colors.accent}
-        />
-      }
-    >
+    <>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.background }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xxl }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.accent}
+          />
+        }
+      >
       {/* ========== HEADER ========== */}
       <Animated.View
         entering={FadeInDown.delay(100).duration(500)}
@@ -370,11 +289,16 @@ export default function Home() {
               {getGreeting()}
             </Text>
             <Text style={{ ...typography.h1, color: colors.textPrimary }}>
-              {profile?.displayName || "Athlete"} 💪
+              {profile?.displayName ||
+                (profileLoading
+                  ? "Loading profile..."
+                  : profileError
+                    ? "Profile unavailable"
+                    : user?.email || "Account")} 💪
             </Text>
           </View>
           <Pressable
-            onPress={() => router.push("/profile")}
+            onPress={() => router.navigate("/(tabs)/profile")}
             style={{
               width: 48,
               height: 48,
@@ -388,6 +312,185 @@ export default function Home() {
             <Ionicons name="person" size={24} color="#fff" />
           </Pressable>
         </View>
+      </Animated.View>
+
+      {profileError && (
+        <View style={{ marginHorizontal: spacing.md }}>
+          <ProfileStatus
+            compact
+            title={profile ? "Showing cached profile" : "Profile unavailable"}
+            message={
+              profile
+                ? "The server is unavailable. Changes may not sync until you reconnect."
+                : "Can't load your profile right now."
+            }
+            onRetry={() => void refetchProfile()}
+          />
+        </View>
+      )}
+
+      {/* Email Verification Banner */}
+      {user &&
+        !user.emailVerified &&
+        verificationDaysLeft !== null &&
+        !dismissVerificationBanner && (
+        <Animated.View
+          entering={FadeInDown.delay(120).duration(400)}
+          style={{ marginHorizontal: spacing.md, marginBottom: spacing.md }}
+        >
+          <View
+            style={{
+              backgroundColor:
+                verificationDaysLeft > 0 ? colors.warning + "15" : colors.error + "15",
+              borderRadius: radius.lg,
+              padding: spacing.md,
+              borderLeftWidth: 4,
+              borderLeftColor:
+                verificationDaysLeft > 0 ? colors.warning : colors.error,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+              }}
+            >
+              <View style={{ flex: 1, paddingRight: spacing.sm }}>
+                <Text
+                  style={{
+                    ...typography.caption,
+                    color: verificationDaysLeft > 0 ? colors.warning : colors.error,
+                    marginBottom: spacing.xs,
+                    fontWeight: "600",
+                  }}
+                >
+                  {verificationDaysLeft > 0
+                    ? verificationMessages.bannerTitleSoft(verificationDaysLeft)
+                    : verificationMessages.bannerTitleHard}
+                </Text>
+                <Text style={{ ...typography.body, color: colors.textPrimary }}>
+                  {verificationMessages.bannerBody}
+                </Text>
+                <Pressable
+                  onPress={() => setShowVerificationPrompt(true)}
+                  style={{ marginTop: spacing.sm, alignSelf: "flex-start" }}
+                >
+                  <Text style={{ color: colors.accent, fontWeight: "600" }}>
+                    {verificationMessages.bannerAction}
+                  </Text>
+                </Pressable>
+              </View>
+              <Pressable
+                onPress={() => setDismissVerificationBanner(true)}
+                style={{ paddingLeft: spacing.sm }}
+              >
+                <Ionicons name="close" size={18} color={colors.textMuted} />
+              </Pressable>
+            </View>
+          </View>
+        </Animated.View>
+      )}
+
+      {/* Fitness Goal Missing Nudge */}
+      {profile && !profile.fitnessGoal && (
+        <Animated.View
+          entering={FadeInDown.delay(140).duration(400)}
+          style={{ marginHorizontal: spacing.md, marginBottom: spacing.md }}
+        >
+          <Pressable
+            onPress={() => router.navigate("/(tabs)/profile")}
+            style={{
+              backgroundColor: colors.accentLight,
+              borderRadius: radius.lg,
+              padding: spacing.md,
+              flexDirection: "row",
+              alignItems: "center",
+              borderWidth: 1,
+              borderColor: colors.accent + "30",
+            }}
+          >
+            <Ionicons name="sparkles" size={18} color={colors.accent} style={{ marginRight: spacing.sm }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ ...typography.bodyMedium, color: colors.accent, fontWeight: "600" }}>
+                Set your fitness goal
+              </Text>
+              <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+                Required to generate your AI workout plan
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.accent} />
+          </Pressable>
+        </Animated.View>
+      )}
+
+      {/* ========== AI PLAN CTA CARD ========== */}
+      <Animated.View
+        entering={FadeInDown.delay(145).duration(400)}
+        style={{ marginHorizontal: spacing.md, marginBottom: spacing.md }}
+      >
+        <Pressable
+          onPress={() => router.navigate("/ai-plan")}
+          style={{ borderRadius: radius.xl, overflow: "hidden" }}
+        >
+          <LinearGradient
+            colors={["#7C3AED", "#4F46E5"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={{
+              borderRadius: radius.xl,
+              padding: spacing.lg,
+              flexDirection: "row",
+              alignItems: "center",
+            }}
+          >
+            {/* Icon */}
+            <View
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: radius.full,
+                backgroundColor: "rgba(255,255,255,0.15)",
+                justifyContent: "center",
+                alignItems: "center",
+                marginRight: spacing.md,
+              }}
+            >
+              <Ionicons name="sparkles" size={24} color="#fff" />
+            </View>
+
+            {/* Text */}
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs, marginBottom: 2 }}>
+                <Text style={{ color: "#fff", fontWeight: "700", fontSize: 16 }}>
+                  {profile?.activePlan ? "View My AI Plan" : "Generate AI Plan"}
+                </Text>
+                {!profile?.activePlan && (
+                  <View
+                    style={{
+                      backgroundColor: "rgba(255,255,255,0.25)",
+                      borderRadius: radius.full,
+                      paddingHorizontal: 6,
+                      paddingVertical: 2,
+                    }}
+                  >
+                    <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>
+                      NEW
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>
+                {profile?.activePlan
+                  ? "AI Powered workout plan"
+                  : "Personalised weekly programme"}  
+              </Text>
+              {/* · Groq AI */}
+            </View>
+
+            <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.8)" />
+          </LinearGradient>
+        </Pressable>
       </Animated.View>
 
       {/* ========== STREAK CARD ========== */}
@@ -582,8 +685,8 @@ export default function Home() {
             icon="scale-bathroom"
             iconType="material"
             label="Log Weight"
-            subtitle={lastWeight ? `${lastWeight} kg` : "Not set"}
-            onPress={() => router.push("/body-weight")}
+            subtitle={lastWeight ? `${displayWeight(lastWeight, unit)} ${weightLabel(unit)}` : "Not set"}
+            onPress={() => router.navigate("/(tabs)/body-weight")}
             colors={colors}
             spacing={spacing}
             radius={radius}
@@ -593,7 +696,7 @@ export default function Home() {
             icon="time-outline"
             label="History"
             subtitle="View all"
-            onPress={() => router.push("/history")}
+            onPress={() => router.navigate("/(tabs)/history")}
             colors={colors}
             spacing={spacing}
             radius={radius}
@@ -603,7 +706,7 @@ export default function Home() {
             icon="stats-chart"
             label="Analytics"
             subtitle="Insights"
-            onPress={() => router.push("/analytics")}
+            onPress={() => router.navigate("/(tabs)/analytics")}
             colors={colors}
             spacing={spacing}
             radius={radius}
@@ -629,7 +732,7 @@ export default function Home() {
             <Text style={{ ...typography.label, color: colors.textMuted }}>
               RECENT ACTIVITY
             </Text>
-            <Pressable onPress={() => router.push("/history")}>
+            <Pressable onPress={() => router.navigate("/(tabs)/history")}>
               <Text style={{ ...typography.caption, color: colors.accent }}>
                 See All
               </Text>
@@ -791,7 +894,7 @@ export default function Home() {
                       color: colors.textSecondary,
                     }}
                   >
-                    {pr.reps} reps @ {pr.weight} kg
+                    {pr.reps} reps @ {displayWeight(pr.weight, unit)} {weightLabel(unit)}
                   </Text>
                 </View>
                 {pr.isNew && (
@@ -878,7 +981,22 @@ export default function Home() {
           {getMotivationalQuote()}
         </Text>
       </Animated.View>
-    </ScrollView>
+      </ScrollView>
+
+      <EmailVerificationPrompt
+        visible={showVerificationPrompt}
+        user={user}
+        dismissible={verificationDaysLeft !== 0}
+        onSkip={() => setShowVerificationPrompt(false)}
+        onVerified={async () => {
+          setShowVerificationPrompt(false);
+          if (user) {
+            await clearEmailVerificationStart(user.uid);
+          }
+          await loadVerificationStatus();
+        }}
+      />
+    </>
   );
 }
 

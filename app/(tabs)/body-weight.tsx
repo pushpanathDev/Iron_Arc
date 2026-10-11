@@ -1,9 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { LinearGradient } from "expo-linear-gradient";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -22,33 +24,32 @@ import Animated, {
 import Svg, {
   Circle,
   Defs,
+  G,
   Line,
   Polyline,
   Stop,
   LinearGradient as SvgGradient,
 } from "react-native-svg";
 
-import { useAuth } from "../../auth/AuthContext";
 import { useTheme } from "../../theme/theme";
 import { formatDate, getWeekStart } from "../../utils/weekUtils";
 
-import {
-  BodyWeight,
-  getAllWeights,
-  insertWeight,
-  softDeleteWeight,
-} from "../../db/weights";
+import { useQueryClient } from "@tanstack/react-query";
+import { ApiError, BodyWeight, weightApi } from "../../services/api";
+import { useAllWeights, useLogWeight } from "../../hooks/useWeights";
+import { ACHIEVEMENTS_KEY, useAchievementUnlockHandler } from "../../hooks/useAchievements";
+import { useUnitPreference } from "../../hooks/useUnitPreference";
+import { displayWeight, toKg, weightLabel } from "../../utils/unitConversion";
 
-import { SyncState } from "../../components/SyncBadge";
 import { WeightScale } from "../../components/WeightScale";
-import { useGlobalSync } from "../../context/SyncContext";
 import { createPageLogger } from "../../utils/logger";
 
-import * as Crypto from "expo-crypto";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 const log = createPageLogger("BodyWeight");
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const SWIPE_THRESHOLD = -60;
 const DELETE_WIDTH = 80;
+const EMPTY_WEIGHT_HISTORY: BodyWeight[] = [];
 
 /* =========================
    LONG PRESS BUTTON (for hold-to-increment)
@@ -65,32 +66,90 @@ function LongPressButton({
   onIncrement,
   children,
   style,
-  initialDelay = 400,
+  initialDelay = 300, // Slower start for better control
   repeatInterval = 80,
 }: LongPressButtonProps) {
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPressingRef = useRef(false);
+  const pressCountRef = useRef(0);
+
+  const scheduleNext = useCallback(
+    (delay: number) => {
+      // Guard: ensure only one timer runs at a time
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+
+      timerRef.current = setTimeout(() => {
+        // Guard: check if still pressing before executing
+        if (!isPressingRef.current) {
+          timerRef.current = null;
+          return;
+        }
+
+        onIncrement();
+        pressCountRef.current++;
+
+        // Progressive acceleration: gradually reduce delay
+        // Start at initialDelay, reduce by 3ms per increment, floor at repeatInterval
+        const accelerationFactor = Math.max(
+          0,
+          initialDelay - pressCountRef.current * 3,
+        );
+        const nextDelay = Math.max(repeatInterval, accelerationFactor);
+
+        scheduleNext(nextDelay);
+      }, delay);
+    },
+    [onIncrement, initialDelay, repeatInterval],
+  );
 
   const start = useCallback(() => {
+    // Guard: prevent stacking multiple presses
+    if (isPressingRef.current) {
+      return;
+    }
+
+    isPressingRef.current = true;
+    pressCountRef.current = 0;
+
+    // Call immediately on first press
     onIncrement();
-    timeoutRef.current = setTimeout(() => {
-      intervalRef.current = setInterval(onIncrement, repeatInterval);
-    }, initialDelay);
-  }, [onIncrement, initialDelay, repeatInterval]);
+    pressCountRef.current++;
+
+    // Schedule first repeat after initialDelay
+    scheduleNext(initialDelay);
+  }, [onIncrement, scheduleNext, initialDelay]);
 
   const stop = useCallback(() => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
+    isPressingRef.current = false;
+
+    // Immediately clear any pending timer
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
     }
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
+
+    pressCountRef.current = 0;
+  }, []);
+
+  // Cleanup timer on component unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, []);
 
   return (
-    <Pressable onPressIn={start} onPressOut={stop} style={style}>
+    <Pressable
+      onPressIn={start}
+      onPressOut={stop}
+      onLongPress={() => {}} // Required for proper button feedback on some Android devices
+      style={style}
+    >
       {children}
     </Pressable>
   );
@@ -98,126 +157,106 @@ function LongPressButton({
 
 export default function BodyWeightScreen() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
-  const { user } = useAuth();
-  const { globalSync, refreshVersion, startSync, endSync } = useGlobalSync();
+  const insets = useSafeAreaInsets();
 
-  const [weight, setWeight] = useState("");
-  const [history, setHistory] = useState<BodyWeight[]>([]);
+  const { data: rawHistory = EMPTY_WEIGHT_HISTORY, refetch } = useAllWeights();
+  const logWeightMutation = useLogWeight();
+  const queryClient = useQueryClient();
+  const handleUnlocks = useAchievementUnlockHandler();
+  const { unit } = useUnitPreference();
+
+  // Rows awaiting their deferred server delete. They are hidden from the list
+  // rather than removed from the cache, so a refetch during the undo window
+  // cannot bring them back.
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(() => new Set());
+  const deleteTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  // Sort history: latest first
+  const history = useMemo(
+    () =>
+      rawHistory
+        .filter((w) => !pendingDeleteIds.has(w.id))
+        .sort((a, b) => b.date.localeCompare(a.date)),
+    [rawHistory, pendingDeleteIds],
+  );
+
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [deletedWeight, setDeletedWeight] = useState<BodyWeight | null>(null);
-  const [syncState, setSyncState] = useState<SyncState>("synced");
   const [isSaving, setIsSaving] = useState(false);
-
-  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const logDate = formatDate(selectedDate);
   const weekStart = getWeekStart(selectedDate);
 
-  /* =========================
-     LOAD SQLITE
-     ========================= */
-  const loadWeights = useCallback(async () => {
-    if (!user) return;
-
-    const data = await getAllWeights(user.uid);
-
-    // Latest first
-    const sorted = [...data].sort((a, b) => b.date.localeCompare(a.date));
-
-    setHistory(sorted);
-
-    // Find entry for selected date (allow daily updates)
-    const existingEntry = sorted.find((w) => w.date === logDate);
-    setWeight(existingEntry ? String(existingEntry.weight) : "");
-  }, [user, logDate]);
+  // Pre-fill the input with the selected day's entry if it exists.
+  // Stored values are kg; convert to the display unit so re-saving round-trips.
+  const existingEntry = history.find((w) => w.date === logDate);
+  const existingWeight = existingEntry?.weight;
+  const isToday = logDate === formatDate(new Date());
+  const [weight, setWeight] = useState("");
 
   useEffect(() => {
-    loadWeights();
-  }, [loadWeights]);
+    const nextWeight =
+      existingWeight === undefined ? "" : String(displayWeight(existingWeight, unit));
+    setWeight((currentWeight) => currentWeight === nextWeight ? currentWeight : nextWeight);
+  }, [logDate, existingWeight, unit]);
 
   /* =========================
-     PULL-TO-REFRESH (GLOBAL SYNC)
+     PULL-TO-REFRESH
      ========================= */
   const handleRefresh = async () => {
-    if (!user) return;
-
     setRefreshing(true);
     try {
-      log.info("Pull-to-refresh triggered");
-
-      // Trigger global sync - pushes local changes THEN pulls from Firebase
-      await globalSync(user.uid);
-
-      // Reload data after sync
-      await loadWeights();
-      setMessage("Synced ✓");
-      log.success("Body weight synced via global sync");
+      await refetch();
+      setMessage("Refreshed ✓");
+      log.success("Body weight refreshed");
     } catch (error) {
-      log.error(
-        "Refresh sync failed",
-        error instanceof Error ? error.message : String(error),
-      );
-      setMessage("Sync failed - check your connection");
+      log.error("Refresh failed", error instanceof Error ? error.message : String(error));
+      setMessage("Refresh failed");
     } finally {
       setRefreshing(false);
       setTimeout(() => setMessage(null), 2000);
     }
   };
-
-  // Refresh when global sync happens on another screen
-  useEffect(() => {
-    if (!user || refreshVersion === 0) return;
-    loadWeights();
-  }, [refreshVersion]);
   /* =========================
      SAVE / UPDATE
      ========================= */
   async function saveWeight() {
-    if (!user || !weight) {
+    if (!weight) {
       setMessage("Please enter weight");
       return;
     }
 
-    // Guard against double saves
     if (isSaving || refreshing) {
       setMessage("Please wait...");
       return;
     }
 
     setIsSaving(true);
-    setSyncState("syncing");
 
     try {
-      // Allow multiple entries per week (daily flexibility)
-      // Just add/update entry for this date
-      const newWeight: BodyWeight = {
-        id: `${user.uid}_${logDate}`, // Use date as part of ID
-        userId: user.uid,
-        date: logDate, // Actual date user picked
-        weekStart: formatDate(weekStart), // For grouping in analytics
-        weight: Number(weight),
-        createdAt: Date.now(),
-        isSynced: 0, // Mark as unsynced - will sync on app focus
-      };
+      const weightValue = parseFloat(weight);
+      if (isNaN(weightValue) || weightValue <= 0) {
+        setMessage("Please enter a valid weight");
+        return;
+      }
 
-      await insertWeight(newWeight);
+      const weightInKg = toKg(weightValue, unit);
+      await logWeightMutation.mutateAsync({
+        date: logDate,
+        weight: weightInKg,
+        weekStart: formatDate(weekStart),
+      });
 
-      setMessage("Weight saved ✓ (syncing...)");
-      loadWeights();
-      log.success("Weight saved", `${weight}kg on ${logDate}`);
-      setSyncState("pending");
-
+      setMessage(existingEntry ? "Entry updated ✓" : "Weight saved ✓");
+      log.success("Weight saved", `${weight}${weightLabel(unit)} on ${logDate}`);
       setTimeout(() => setMessage(null), 1500);
     } catch (error) {
-      log.error(
-        "Save failed",
-        error instanceof Error ? error.message : String(error),
-      );
-      setMessage("Failed to save weight");
-      setSyncState("failed");
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      log.error("Save failed", errorMsg);
+      setMessage(`Failed to save weight: ${errorMsg}`);
     } finally {
       setIsSaving(false);
     }
@@ -226,69 +265,100 @@ export default function BodyWeightScreen() {
   /* =========================
      DELETE WITH UNDO
      ========================= */
-  async function deleteWeight(item: BodyWeight) {
-    if (!user) return;
-
-    // Guard against delete while syncing/refreshing
-    if (refreshing || isSaving) {
-      setMessage("Please wait until sync completes");
-      return;
-    }
-
-    // Store for undo
-    setDeletedWeight(item);
-
-    // Remove from UI immediately
-    setHistory((prev) => prev.filter((w) => w.id !== item.id));
-
-    // Soft delete (will be synced later)
-    await softDeleteWeight(item.id);
-    log.success("Weight deleted", item.id);
-
-    // Start undo timer (5 seconds)
-    if (undoTimer.current) clearTimeout(undoTimer.current);
-    undoTimer.current = setTimeout(() => {
-      setDeletedWeight(null);
-    }, 5000);
-  }
-
-  const undoDelete = async () => {
-    if (!deletedWeight || !user) return;
-
-    // Re-insert the weight
-    await insertWeight({
-      ...deletedWeight,
-      isDeleted: 0,
+  const setPending = (id: string, pending: boolean) => {
+    setPendingDeleteIds((prev) => {
+      const next = new Set(prev);
+      if (pending) next.add(id);
+      else next.delete(id);
+      return next;
     });
-
-    setDeletedWeight(null);
-    if (undoTimer.current) clearTimeout(undoTimer.current);
-
-    loadWeights();
-    log.info(`Undo delete ${deletedWeight.id}`);
   };
 
-  /* =========================
-     SAFE UUID
-     ========================= */
-  function generateId() {
+  const commitDelete = async (item: BodyWeight) => {
+    deleteTimers.current.delete(item.id);
+    let newlyUnlocked: string[] = [];
     try {
-      return Crypto.randomUUID();
-    } catch {
-      return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-        const r = (Math.random() * 16) | 0;
-        const v = c === "x" ? r : (r & 0x3) | 0x8;
-        return v.toString(16);
-      });
+      ({ newlyUnlocked } = await weightApi.delete(item.id));
+      log.success("Weight deleted", item.id);
+    } catch (error) {
+      // 404 means the entry is already gone on the server — treat as deleted.
+      if (!(error instanceof ApiError && error.status === 404)) {
+        setPending(item.id, false); // un-hide the row
+        setDeletedWeight((current) => (current?.id === item.id ? null : current));
+        setMessage("Failed to delete");
+        log.error("Delete failed", error instanceof Error ? error.message : String(error));
+        return;
+      }
     }
+
+    queryClient.setQueryData<BodyWeight[]>(["weights", "all"], (old) =>
+      old ? old.filter((w) => w.id !== item.id) : old,
+    );
+    setPending(item.id, false);
+    setDeletedWeight((current) => (current?.id === item.id ? null : current));
+    // Deleting can change the latest entry and the profile weight.
+    queryClient.invalidateQueries({ queryKey: ["weights"] });
+    queryClient.invalidateQueries({ queryKey: ["profile"] });
+    void handleUnlocks(newlyUnlocked); // also refreshes ["achievements"]
+  };
+
+  async function deleteWeight(item: BodyWeight) {
+    if (refreshing || isSaving) {
+      setMessage("Please wait...");
+      return;
+    }
+    // Ignore repeat taps on a row that is already being deleted.
+    if (deleteTimers.current.has(item.id)) return;
+
+    // Stop in-flight refetches from overwriting the list mid-delete.
+    await queryClient.cancelQueries({ queryKey: ["weights"] });
+
+    setPending(item.id, true);
+    setDeletedWeight(item);
+
+    // Each row gets its own timer, so deleting another row never cancels this one.
+    deleteTimers.current.set(
+      item.id,
+      setTimeout(() => void commitDelete(item), 5000),
+    );
   }
 
-  // Calculate stats
-  const currentWeight = history[0]?.weight || 0;
-  const previousWeight = history[1]?.weight || currentWeight;
-  const weightChange = currentWeight - previousWeight;
-  const firstWeight = history[history.length - 1]?.weight || currentWeight;
-  const totalChange = currentWeight - firstWeight;
+  const undoDelete = () => {
+    if (!deletedWeight) return;
+    const timer = deleteTimers.current.get(deletedWeight.id);
+    if (timer) clearTimeout(timer);
+    deleteTimers.current.delete(deletedWeight.id);
+    setPending(deletedWeight.id, false);
+    setDeletedWeight(null);
+    log.info(`Undo: restored weight entry ${deletedWeight.id}`);
+  };
+
+  // Leaving the screen with deletes pending: send them now instead of dropping them.
+  useEffect(() => {
+    const timers = deleteTimers.current;
+    return () => {
+      timers.forEach((timer, id) => {
+        clearTimeout(timer);
+        weightApi
+          .delete(id)
+          .catch(() => {})
+          .finally(() => {
+            queryClient.invalidateQueries({ queryKey: ["weights"] });
+            queryClient.invalidateQueries({ queryKey: ["profile"] });
+            queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
+          });
+      });
+      timers.clear();
+    };
+  }, [queryClient]);
+
+  // Calculate stats (server stores kg, convert for display)
+  const currentWeightKg = history[0]?.weight || 0;
+  const previousWeightKg = history[1]?.weight || currentWeightKg;
+  const firstWeightKg = history[history.length - 1]?.weight || currentWeightKg;
+  const currentWeight = displayWeight(currentWeightKg, unit);
+  const weightChange = displayWeight(currentWeightKg - previousWeightKg, unit);
+  const totalChange = displayWeight(currentWeightKg - firstWeightKg, unit);
 
   // Chart data (last 7 entries)
   const chartData = [...history].reverse().slice(-7);
@@ -299,20 +369,27 @@ export default function BodyWeightScreen() {
      UI
      ========================= */
   return (
-    <ScrollView
+    <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={{
-        padding: spacing.md,
-        paddingBottom: spacing.xxl,
-      }}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-          tintColor={colors.accent}
-        />
-      }
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={insets.top + 12}
     >
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.background }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        contentContainerStyle={{
+          padding: spacing.md,
+          paddingBottom: insets.bottom + spacing.xxl,
+        }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.accent}
+          />
+        }
+      >
       {/* HEADER */}
       <Animated.View entering={FadeInDown.duration(400)}>
         <Text
@@ -374,7 +451,7 @@ export default function BodyWeightScreen() {
                     marginLeft: spacing.xs,
                   }}
                 >
-                  kg
+                  {weightLabel(unit)}
                 </Text>
               </View>
             </View>
@@ -410,7 +487,7 @@ export default function BodyWeightScreen() {
                     marginLeft: 4,
                   }}
                 >
-                  {Math.abs(weightChange).toFixed(1)} kg
+                  {Math.abs(weightChange).toFixed(1)} {weightLabel(unit)}
                 </Text>
               </View>
             )}
@@ -430,7 +507,7 @@ export default function BodyWeightScreen() {
               </Text>
               <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
                 {totalChange > 0 ? "+" : ""}
-                {totalChange.toFixed(1)} kg
+                {totalChange.toFixed(1)} {weightLabel(unit)}
               </Text>
             </View>
             <View>
@@ -473,6 +550,7 @@ export default function BodyWeightScreen() {
             width={chartWidth}
             height={chartHeight}
             colors={colors}
+            unit={unit}
           />
         </Animated.View>
       )}
@@ -497,7 +575,7 @@ export default function BodyWeightScreen() {
             marginBottom: spacing.md,
           }}
         >
-          LOG WEIGHT
+          {existingEntry ? "UPDATE ENTRY" : "LOG WEIGHT"}
         </Text>
 
         {/* Animated Weight Scale */}
@@ -530,8 +608,12 @@ export default function BodyWeightScreen() {
           >
             <LongPressButton
               onIncrement={() => {
-                const current = parseFloat(weight) || 0;
-                if (current > 0.5) setWeight((current - 0.5).toFixed(1));
+                const bwStep = unit === "lbs" ? 1 : 0.5;
+                setWeight((prev) => {
+                  const current = parseFloat(prev) || 0;
+                  const next = Math.max(0, current - bwStep);
+                  return next.toFixed(1);
+                });
               }}
               style={{
                 width: 48,
@@ -563,8 +645,12 @@ export default function BodyWeightScreen() {
             />
             <LongPressButton
               onIncrement={() => {
-                const current = parseFloat(weight) || 0;
-                setWeight((current + 0.5).toFixed(1));
+                const bwStep = unit === "lbs" ? 1 : 0.5;
+                setWeight((prev) => {
+                  const current = parseFloat(prev) || 0;
+                  const next = Math.min(999.9, current + bwStep);
+                  return next.toFixed(1);
+                });
               }}
               style={{
                 width: 48,
@@ -578,7 +664,7 @@ export default function BodyWeightScreen() {
               <Ionicons name="add" size={24} color={colors.accent} />
             </LongPressButton>
             <Text style={{ ...typography.body, color: colors.textSecondary }}>
-              kg
+              {weightLabel(unit)}
             </Text>
           </View>
         </View>
@@ -676,7 +762,11 @@ export default function BodyWeightScreen() {
           }}
         >
           <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
-            Save Weight
+            {existingEntry
+              ? isToday
+                ? "Update Today's Entry"
+                : "Update Entry"
+              : "Log Weight"}
           </Text>
         </Pressable>
       </Animated.View>
@@ -731,6 +821,7 @@ export default function BodyWeightScreen() {
               onDelete={() => deleteWeight(item)}
               index={index}
               disabled={refreshing || isSaving}
+              weightUnit={unit}
             />
           ))
         )}
@@ -772,7 +863,8 @@ export default function BodyWeightScreen() {
           </Pressable>
         </Animated.View>
       )}
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -785,12 +877,14 @@ function WeightSwipeRow({
   onDelete,
   index,
   disabled = false,
+  weightUnit = "kg",
 }: {
   item: BodyWeight;
   prevItem?: BodyWeight;
   onDelete: () => void;
   index: number;
   disabled?: boolean;
+  weightUnit?: "kg" | "lbs";
 }) {
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const translateX = useSharedValue(0);
@@ -892,7 +986,7 @@ function WeightSwipeRow({
           {/* Weight */}
           <View style={{ flex: 1 }}>
             <Text style={{ ...typography.h3, color: colors.textPrimary }}>
-              {item.weight} kg
+              {displayWeight(item.weight, weightUnit)} {weightLabel(weightUnit)}
             </Text>
             {prevItem && (
               <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -921,7 +1015,7 @@ function WeightSwipeRow({
                     marginLeft: 2,
                   }}
                 >
-                  {Math.abs(diff).toFixed(1)} kg
+                  {displayWeight(Math.abs(diff), weightUnit).toFixed(1)} {weightLabel(weightUnit)}
                 </Text>
               </View>
             )}
@@ -943,12 +1037,20 @@ function WeightChart({
   width,
   height,
   colors,
+  unit,
 }: {
   data: BodyWeight[];
   width: number;
   height: number;
   colors: any;
+  unit: "kg" | "lbs";
 }) {
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    setSelectedIndex(data.length - 1);
+  }, [data.length]);
+
   if (data.length < 2) return null;
 
   const weights = data.map((d) => d.weight);
@@ -964,49 +1066,117 @@ function WeightChart({
 
   const polylinePoints = points.map((p) => `${p.x},${p.y}`).join(" ");
 
+  const selected =
+    selectedIndex !== null ? data[selectedIndex] : null;
+  const selectedPoint =
+    selectedIndex !== null ? points[selectedIndex] : null;
+
+  const tooltipWidth = 100;
+  const tooltipX = selectedPoint
+    ? Math.max(
+        4,
+        Math.min(selectedPoint.x - tooltipWidth / 2, width - tooltipWidth - 4),
+      )
+    : 0;
+  const tooltipY = selectedPoint
+    ? Math.max(4, selectedPoint.y - 36)
+    : 0;
+
   return (
-    <Svg width={width} height={height + 20}>
-      <Defs>
-        <SvgGradient id="lineGradient" x1="0" y1="0" x2="1" y2="0">
-          <Stop offset="0" stopColor={colors.accent} stopOpacity="0.3" />
-          <Stop offset="1" stopColor={colors.accent} stopOpacity="1" />
-        </SvgGradient>
-      </Defs>
+    <View style={{ width, height: height + 24 }}>
+      <Svg width={width} height={height + 20}>
+        <Defs>
+          <SvgGradient id="lineGradient" x1="0" y1="0" x2="1" y2="0">
+            <Stop offset="0" stopColor={colors.accent} stopOpacity="0.3" />
+            <Stop offset="1" stopColor={colors.accent} stopOpacity="1" />
+          </SvgGradient>
+        </Defs>
 
-      {/* Grid lines */}
-      {[0, 0.5, 1].map((ratio, i) => (
-        <Line
-          key={i}
-          x1={0}
-          y1={height * ratio}
-          x2={width}
-          y2={height * ratio}
-          stroke={colors.divider}
-          strokeWidth={1}
-          strokeDasharray="4,4"
+        {/* Grid lines */}
+        {[0, 0.5, 1].map((ratio, i) => (
+          <Line
+            key={i}
+            x1={0}
+            y1={height * ratio}
+            x2={width}
+            y2={height * ratio}
+            stroke={colors.divider}
+            strokeWidth={1}
+            strokeDasharray="4,4"
+          />
+        ))}
+
+        {/* Line */}
+        <Polyline
+          points={polylinePoints}
+          fill="none"
+          stroke="url(#lineGradient)"
+          strokeWidth={3}
+          strokeLinecap="round"
+          strokeLinejoin="round"
         />
-      ))}
 
-      {/* Line */}
-      <Polyline
-        points={polylinePoints}
-        fill="none"
-        stroke="url(#lineGradient)"
-        strokeWidth={3}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+        {/* Points */}
+        {points.map((p, i) => {
+          const isSelected = i === selectedIndex;
+          return (
+            <G key={i}>
+              <Circle
+                cx={p.x}
+                cy={p.y}
+                r={isSelected ? 6 : 4}
+                fill={colors.accent}
+                stroke={isSelected ? "#fff" : "transparent"}
+                strokeWidth={isSelected ? 2 : 0}
+              />
+              {/* Touch target */}
+              <Circle
+                cx={p.x}
+                cy={p.y}
+                r={12}
+                fill="transparent"
+                onPress={() => setSelectedIndex(i)}
+              />
+            </G>
+          );
+        })}
+      </Svg>
 
-      {/* Points */}
-      {points.map((p, i) => (
-        <Circle
-          key={i}
-          cx={p.x}
-          cy={p.y}
-          r={i === points.length - 1 ? 6 : 4}
-          fill={colors.accent}
-        />
-      ))}
-    </Svg>
+      {selected && selectedPoint && (
+        <View
+          style={{
+            position: "absolute",
+            left: tooltipX,
+            top: tooltipY,
+            backgroundColor: colors.surface,
+            borderRadius: 8,
+            paddingVertical: 4,
+            paddingHorizontal: 8,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 12,
+              fontWeight: "600",
+              color: colors.textPrimary,
+              textAlign: "center",
+            }}
+          >
+            {displayWeight(selected.weight, unit).toFixed(1)} {weightLabel(unit)}
+          </Text>
+          <Text
+            style={{
+              fontSize: 10,
+              color: colors.textMuted,
+              textAlign: "center",
+            }}
+          >
+            {selected.date}
+          </Text>
+        </View>
+      )}
+    </View>
   );
 }

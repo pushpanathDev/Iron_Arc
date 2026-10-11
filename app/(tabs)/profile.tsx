@@ -1,12 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
-import NetInfo from "@react-native-community/netinfo";
-import Constants from "expo-constants";
-import { router } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -15,119 +16,241 @@ import {
   View,
 } from "react-native";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
+import { EmailAuthProvider, GoogleAuthProvider, reauthenticateWithCredential } from "firebase/auth";
+import {
+  GoogleSignin,
+  isSuccessResponse,
+} from "@react-native-google-signin/google-signin";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
 import { useAuth } from "../../auth/AuthContext";
-import { SyncBadge, SyncState } from "../../components/SyncBadge";
-import { useGlobalSync } from "../../context/SyncContext";
+import { auth } from "../../firebase/config";
+import { SyncBadge } from "../../components/SyncBadge";
+import { ProfileCompletionPrompt } from "../../components/ProfileCompletionPrompt";
+import { EmailVerificationPrompt } from "../../components/EmailVerificationPrompt";
+import { ProfileStatus } from "../../components/ProfileStatus";
+import { useQueryClient } from "@tanstack/react-query";
+import { useProfile, useUpdateProfile } from "../../hooks/useProfile";
+import { userApi } from "../../services/api";
+import { useUnitPreference } from "../../hooks/useUnitPreference";
+import { useLatestWeight } from "../../hooks/useWeights";
 import {
-  getUserProfile,
-  updateUserProfile,
-  UserProfile,
-} from "../../db/profiles";
-import {
-  getSyncStatus,
-  getWorkoutSyncStatus,
-  syncAllData,
-} from "../../db/syncQueue";
+  clearEmailVerificationStart,
+  getEmailVerificationStart,
+  setEmailVerificationStart,
+} from "../../db/syncMeta";
 import { useTheme } from "../../theme/theme";
+import {
+  useThemeContext,
+  type ThemePreference,
+} from "../../context/ThemeContext";
 import { formatAccountDate, getAvatarUrl } from "../../utils/avatar";
 import { exportToCSV, exportToPDF } from "../../utils/exportData";
 import { createPageLogger } from "../../utils/logger";
+import { verificationMessages } from "../../constants/verificationMessages";
+import { clearVerificationSent } from "../../utils/verificationService";
+import { getVersionLabel } from "../../utils/appVersion";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const log = createPageLogger("Profile");
 
 export default function ProfileScreen() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
-  const { user, logout, isSyncing: isAuthSyncing } = useAuth();
-  const { startSync, endSync } = useGlobalSync();
+  const { preference: themePreference, setPreference: setThemePreference } = useThemeContext();
+  const { user, logout } = useAuth();
+  const insets = useSafeAreaInsets();
 
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const {
+    data: profile,
+    isLoading,
+    isError,
+    error,
+    refetch: refetchProfile,
+  } = useProfile();
+  const updateProfile = useUpdateProfile();
+  const { data: latestWeightEntry } = useLatestWeight();
+  const { unit: weightUnit, setUnit: setWeightUnit } = useUnitPreference();
+  const latestWeight = latestWeightEntry?.weight ?? null;
+  const isAdmin = profile?.isAdmin ?? false;
+
   const [isSaving, setIsSaving] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [height, setHeight] = useState("");
+  const [age, setAge] = useState("");
+  const [fitnessGoal, setFitnessGoal] = useState<string | null>(null);
   const [weeklyGoal, setWeeklyGoal] = useState("1");
   const [hasChanges, setHasChanges] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [pendingSync, setPendingSync] = useState(0);
-  const [syncState, setSyncState] = useState<SyncState>("synced");
   const [isExporting, setIsExporting] = useState(false);
+  const [showProfileCompletion, setShowProfileCompletion] = useState(false);
+  const [profilePromptMode, setProfilePromptMode] = useState<"missing" | "age">("missing");
+  const [verificationDaysLeft, setVerificationDaysLeft] = useState<number | null>(null);
+  const [showVerificationPrompt, setShowVerificationPrompt] = useState(false);
+  const [dismissVerificationBanner, setDismissVerificationBanner] = useState(false);
+  const [showDeleteReauthentication, setShowDeleteReauthentication] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
-  // Guard flag to prevent operations when component is unmounting
-  const isMounted = useRef(true);
+  const verificationGraceDays = 7;
 
-  useEffect(() => {
-    return () => {
-      isMounted.current = false;
-    };
-  }, []);
+  const clearLocalAccountData = async () => {
+    const uid = user?.uid;
 
-  /* =========================
-     LOAD PROFILE
-     ========================= */
-  useEffect(() => {
-    const loadProfile = async () => {
-      if (!user) {
-        setIsLoading(false);
-        return;
-      }
+    queryClient.cancelQueries();
+    queryClient.clear();
 
-      try {
-        const data = await getUserProfile(user.uid);
-        if (!isMounted.current) return;
-
-        setProfile(data);
-        setDisplayName(data?.displayName || "");
-        setHeight(data?.height ? String(data.height) : "");
-        setWeeklyGoal(data?.weeklyGoal ? String(data.weeklyGoal) : "1");
-
-        // Get pending sync count and update sync state
-        const [weightStatus, workoutStatus] = await Promise.all([
-          getSyncStatus(user.uid),
-          getWorkoutSyncStatus(user.uid),
+    try {
+      try { await GoogleSignin.signOut(); } catch {}
+      await logout();
+    } finally {
+      await AsyncStorage.clear();
+      if (uid) {
+        await Promise.allSettled([
+          SecureStore.deleteItemAsync(`evs_${uid}`),
+          clearVerificationSent(uid),
         ]);
-
-        if (!isMounted.current) return;
-
-        const total = weightStatus.pendingCount + workoutStatus.pendingCount;
-        setPendingSync(total);
-        setSyncState(total > 0 ? "pending" : "synced");
-
-        log.info(`Loaded profile for ${user.uid}`);
-      } catch (error) {
-        log.error(`Failed to load profile: ${error}`);
-        if (isMounted.current) setSyncState("failed");
-      } finally {
-        if (isMounted.current) setIsLoading(false);
       }
-    };
+    }
+  };
 
-    loadProfile();
+  const deleteAccount = async () => {
+    setIsDeletingAccount(true);
+    setDeleteError(null);
+
+    try {
+      await userApi.deleteAccount();
+      await clearLocalAccountData();
+      router.replace("/login");
+    } catch (error: any) {
+      if (error?.code === "REAUTHENTICATION_REQUIRED") {
+        const providerId = user?.providerData[0]?.providerId;
+        if (providerId === "google.com") {
+          try {
+            const response = await GoogleSignin.signIn();
+            if (isSuccessResponse(response)) {
+              const idToken = response.data.idToken;
+              if (idToken && auth.currentUser) {
+                await reauthenticateWithCredential(
+                  auth.currentUser,
+                  GoogleAuthProvider.credential(idToken),
+                );
+                await deleteAccountRef.current();
+                return;
+              }
+            }
+          } catch (reAuthErr: any) {
+            setDeleteError(reAuthErr?.message || "Google reauthentication failed.");
+          }
+        } else {
+          setShowDeleteReauthentication(true);
+        }
+      } else {
+        log.error(`Account deletion failed: ${error}`);
+        Alert.alert("Could not delete account", error?.message || "Please try again.");
+      }
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
+
+  const deleteAccountRef = useRef(deleteAccount);
+  deleteAccountRef.current = deleteAccount;
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Delete account?",
+      "This permanently deletes your profile, workouts, plans, weights, and achievements.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete account", style: "destructive", onPress: deleteAccount },
+      ],
+    );
+  };
+
+  const handleEmailReauthentication = async () => {
+    if (!auth.currentUser?.email || !deletePassword) {
+      setDeleteError("Enter your password to continue.");
+      return;
+    }
+
+    setIsDeletingAccount(true);
+    setDeleteError(null);
+    try {
+      const credential = EmailAuthProvider.credential(
+        auth.currentUser.email,
+        deletePassword,
+      );
+      await reauthenticateWithCredential(auth.currentUser, credential);
+      setShowDeleteReauthentication(false);
+      setDeletePassword("");
+      await deleteAccount();
+    } catch (error: any) {
+      setDeleteError(error?.message || "Reauthentication failed.");
+      setIsDeletingAccount(false);
+    }
+  };
+
+  // Initialize form when profile loads
+  useEffect(() => {
+    if (profile) {
+      setDisplayName(profile.displayName || "");
+      setHeight(profile.height ? String(profile.height) : "");
+      setAge(profile.age ? String(profile.age) : "");
+      setFitnessGoal(profile.fitnessGoal || null);
+      setWeeklyGoal(profile.weeklyGoal ? String(profile.weeklyGoal) : "1");
+    }
+  }, [profile?.id]);
+
+  const loadVerificationStatus = useCallback(async () => {
+    if (!user) return;
+    try { await user.reload(); } catch {}
+
+    if (user.emailVerified) {
+      setVerificationDaysLeft(null);
+      setDismissVerificationBanner(false);
+      await clearEmailVerificationStart(user.uid);
+      return;
+    }
+
+    let start = await getEmailVerificationStart(user.uid);
+    if (!start) {
+      start = Date.now();
+      await setEmailVerificationStart(user.uid, start);
+    }
+    const elapsedDays = Math.floor((Date.now() - start) / (24 * 60 * 60 * 1000));
+    setVerificationDaysLeft(Math.max(0, verificationGraceDays - elapsedDays));
   }, [user]);
+
+  useEffect(() => {
+    if (!user || user.emailVerified) return;
+    if (verificationDaysLeft === 0 && !showVerificationPrompt) {
+      setShowVerificationPrompt(true);
+    }
+  }, [user, verificationDaysLeft, showVerificationPrompt]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadVerificationStatus();
+    }, [loadVerificationStatus]),
+  );
+
+  // Show profile completion if data is missing
+  useEffect(() => {
+    if (profile && !isLoading) {
+      const needsCompletion = !profile.weight && !latestWeight && !profile.age;
+      setShowProfileCompletion(needsCompletion);
+    }
+  }, [profile, latestWeight, isLoading]);
 
   /* =========================
      PULL-TO-REFRESH
      ========================= */
   const handleRefresh = async () => {
-    if (!user) return;
-
     setRefreshing(true);
     try {
-      log.info("Pull-to-refresh triggered");
-      const data = await getUserProfile(user.uid);
-      setProfile(data);
-      setDisplayName(data?.displayName || "");
-      setHeight(data?.height ? String(data.height) : "");
-      setWeeklyGoal(data?.weeklyGoal ? String(data.weeklyGoal) : "1");
-
-      // Update pending sync count
-      const [weightStatus, workoutStatus] = await Promise.all([
-        getSyncStatus(user.uid),
-        getWorkoutSyncStatus(user.uid),
-      ]);
-      setPendingSync(weightStatus.pendingCount + workoutStatus.pendingCount);
-
+      await Promise.all([refetchProfile(), loadVerificationStatus()]);
       log.success("Profile refreshed");
     } catch (error) {
       log.error(`Failed to refresh profile: ${error}`);
@@ -137,84 +260,23 @@ export default function ProfileScreen() {
   };
 
   /* =========================
-     SYNC ALL DATA (Weights + Workouts)
-     ========================= */
-  const handleSync = async () => {
-    if (!user || isSyncing) {
-      if (!user) setSyncMessage("Not logged in");
-      return;
-    }
-
-    setIsSyncing(true);
-    setSyncState("syncing");
-    setSyncMessage(null);
-    startSync("Syncing..."); // Show global floating loader
-    log.info("Manual sync triggered from Profile");
-
-    try {
-      // Reset failed records to allow retry after code fixes
-      const result = await syncAllData(user.uid, true);
-
-      if (!isMounted.current) return;
-
-      const totalSynced = result.weights.synced + result.workouts.synced;
-      const totalFailed = result.weights.failed + result.workouts.failed;
-      const bothSuccess = result.weights.success && result.workouts.success;
-
-      if (bothSuccess && totalSynced > 0) {
-        log.success(
-          "Sync completed",
-          `Weights: ${result.weights.synced}, Workouts: ${result.workouts.synced}`,
-        );
-        setSyncMessage(`Synced ${totalSynced} records ✓`);
-        setPendingSync(0);
-        setSyncState("synced");
-      } else if (totalFailed > 0) {
-        log.warn("Sync partial", `${totalFailed} records failed to sync`);
-        setSyncMessage(`Synced ${totalSynced}, Failed: ${totalFailed}`);
-        setSyncState("failed");
-      } else {
-        setSyncMessage("All up to date!");
-        setPendingSync(0);
-        setSyncState("synced");
-      }
-    } catch (error) {
-      log.error(`Sync failed: ${error}`);
-      if (isMounted.current) {
-        setSyncMessage(
-          `Sync failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        );
-        setSyncState("failed");
-      }
-    } finally {
-      endSync(); // Hide global floating loader
-      if (isMounted.current) {
-        setIsSyncing(false);
-        setTimeout(() => setSyncMessage(null), 3000);
-      }
-    }
-  };
-
-  /* =========================
      DETECT CHANGES
      ========================= */
   useEffect(() => {
     if (!profile) return;
-
     const nameChanged = displayName !== (profile.displayName || "");
-    const heightChanged =
-      height !== (profile.height ? String(profile.height) : "");
-    const goalChanged =
-      weeklyGoal !== (profile.weeklyGoal ? String(profile.weeklyGoal) : "1");
-
-    setHasChanges(nameChanged || heightChanged || goalChanged);
-  }, [displayName, height, weeklyGoal, profile]);
+    const heightChanged = height !== (profile.height ? String(profile.height) : "");
+    const ageChanged = age !== (profile.age ? String(profile.age) : "");
+    const goalChanged = weeklyGoal !== (profile.weeklyGoal ? String(profile.weeklyGoal) : "1");
+    const fitnessGoalChanged = fitnessGoal !== (profile.fitnessGoal || null);
+    setHasChanges(nameChanged || heightChanged || ageChanged || goalChanged || fitnessGoalChanged);
+  }, [displayName, height, age, fitnessGoal, weeklyGoal, profile]);
 
   /* =========================
      SAVE PROFILE
      ========================= */
   const handleSaveProfile = async () => {
-    if (!user || !profile) return;
+    if (!profile) return;
 
     setIsSaving(true);
     try {
@@ -223,27 +285,50 @@ export default function ProfileScreen() {
       if (displayName !== (profile.displayName || "")) {
         updates.displayName = displayName || null;
       }
-
       if (height && height !== String(profile.height || "")) {
         updates.height = parseFloat(height) || null;
       } else if (!height && profile.height) {
         updates.height = null;
       }
-
-      // Daily goal update (ensure it's between 1-10)
+      const parsedAge = parseInt(age) || null;
+      if (parsedAge !== (profile.age || null)) {
+        updates.age = parsedAge && parsedAge > 0 && parsedAge < 120 ? parsedAge : null;
+      }
+      if (fitnessGoal !== (profile.fitnessGoal || null)) {
+        updates.fitnessGoal = fitnessGoal;
+      }
       const goalNum = parseInt(weeklyGoal) || 1;
       if (goalNum !== (profile.weeklyGoal || 1)) {
-        updates.weeklyGoal = Math.max(1, Math.min(10, goalNum));
+        updates.weeklyGoal = Math.max(1, Math.min(7, goalNum));
       }
 
-      await updateUserProfile(user.uid, updates);
-      setProfile({ ...profile, ...updates });
-      setHasChanges(false);
+      log.debug("Saving profile update", {
+        userId: user?.uid,
+        updates,
+      });
 
-      log.success("Profile saved successfully");
+      await updateProfile.mutateAsync(updates);
+      setHasChanges(false);
+      log.success("Profile saved");
       Alert.alert("Success", "Profile updated");
     } catch (error) {
-      log.error(`Failed to save profile: ${error}`);
+      if (error && typeof error === "object" && "status" in error) {
+        const apiError = error as {
+          status?: number;
+          message?: string;
+          errors?: { field: string; message: string }[];
+        };
+        log.error(
+          "Failed to save profile",
+          `status=${apiError.status ?? "unknown"}`,
+          {
+            message: apiError.message,
+            errors: apiError.errors,
+          }
+        );
+      } else {
+        log.error(`Failed to save profile: ${error}`);
+      }
       Alert.alert("Error", "Failed to save profile");
     } finally {
       setIsSaving(false);
@@ -251,107 +336,60 @@ export default function ProfileScreen() {
   };
 
   /* =========================
+     PROFILE COMPLETION
+     ========================= */
+  const handleProfileCompletion = async (
+    weight: number | null,
+    age: number | null
+  ) => {
+    try {
+      const updates: any = {};
+      if (weight !== null && weight !== profile?.weight) updates.weight = weight;
+      if (age !== null && age !== profile?.age) updates.age = age;
+
+      if (Object.keys(updates).length > 0) {
+        await updateProfile.mutateAsync(updates);
+      }
+      setShowProfileCompletion(false);
+      log.success("Profile completion saved");
+    } catch (error) {
+      log.error(`Failed to save profile completion: ${error}`);
+      throw error;
+    }
+  };
+
+  /* =========================
      LOGOUT
      ========================= */
   const handleLogout = async () => {
-    // Check network connectivity first
-    const networkState = await NetInfo.fetch();
-    const isOnline =
-      networkState.isConnected && networkState.isInternetReachable;
+    Alert.alert(
+      "Log Out?",
+      "Your data is safely stored in the cloud. You can log back in at any time.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Log Out",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              // Clear React Query cache so no stale data or background refetches
+              // fire unauthenticated requests after sign-out
+              queryClient.cancelQueries();
+              queryClient.clear();
 
-    // Also check if there's pending data to sync
-    let hasPendingData = false;
-    if (user) {
-      try {
-        const [weightStatus, workoutStatus] = await Promise.all([
-          getSyncStatus(user.uid),
-          getWorkoutSyncStatus(user.uid),
-        ]);
-        hasPendingData =
-          weightStatus.pendingCount + workoutStatus.pendingCount > 0;
-      } catch (e) {
-        // If we can't check, assume there might be pending data
-        hasPendingData = true;
-      }
-    }
+              await logout();
+              log.info("User logged out");
 
-    if (!isOnline && hasPendingData) {
-      // OFFLINE with pending data - WARN about data loss
-      Alert.alert(
-        "⚠️ You're Offline",
-        "You have unsynced data that will be LOST if you log out now.\n\nConnect to the internet and try again, or tap 'Log Out Anyway' to continue (data will be lost).",
-        [
-          {
-            text: "Cancel",
-            style: "cancel",
+              // Explicitly navigate to login instead of relying only on the auth guard
+              router.replace("/login");
+            } catch (error) {
+              log.error(`Logout failed: ${error}`);
+              Alert.alert("Error", "Failed to log out. Please try again.");
+            }
           },
-          {
-            text: "Log Out Anyway",
-            style: "destructive",
-            onPress: async () => {
-              try {
-                log.warn("User logging out OFFLINE - data may be lost!");
-                await logout();
-                log.info("User logged out (offline - data may be lost)");
-              } catch (error) {
-                log.error(`Logout failed: ${error}`);
-                Alert.alert("Error", "Failed to log out. Please try again.");
-              }
-            },
-          },
-        ],
-      );
-    } else if (!isOnline && !hasPendingData) {
-      // OFFLINE but no pending data - safe to logout
-      Alert.alert(
-        "Log Out?",
-        "You're offline, but all your data is already synced. Safe to log out!",
-        [
-          {
-            text: "Cancel",
-            style: "cancel",
-          },
-          {
-            text: "Log Out",
-            style: "destructive",
-            onPress: async () => {
-              try {
-                await logout();
-                log.info("User logged out (offline, no pending data)");
-              } catch (error) {
-                log.error(`Logout failed: ${error}`);
-                Alert.alert("Error", "Failed to log out. Please try again.");
-              }
-            },
-          },
-        ],
-      );
-    } else {
-      // ONLINE - normal flow with auto-sync
-      Alert.alert(
-        "Log Out?",
-        "Your data will be automatically synced to the cloud before logging out.",
-        [
-          {
-            text: "Cancel",
-            style: "cancel",
-          },
-          {
-            text: "Log Out",
-            style: "destructive",
-            onPress: async () => {
-              try {
-                await logout();
-                log.info("User logged out (with auto-sync)");
-              } catch (error) {
-                log.error(`Logout failed: ${error}`);
-                Alert.alert("Error", "Failed to log out. Please try again.");
-              }
-            },
-          },
-        ],
-      );
-    }
+        },
+      ],
+    );
   };
 
   /* =========================
@@ -366,29 +404,20 @@ export default function ProfileScreen() {
         {
           text: "Export",
           onPress: async () => {
-            if (!user) {
-              Alert.alert("Error", "You must be logged in to export data.");
-              return;
-            }
-
             setIsExporting(true);
             try {
               log.info(`Starting ${format.toUpperCase()} export...`);
-
               if (format === "csv") {
-                await exportToCSV(user.uid);
+                await exportToCSV();
               } else {
-                await exportToPDF(user.uid);
+                await exportToPDF();
               }
-
               log.success(`${format.toUpperCase()} export completed`);
             } catch (error) {
               log.error(`Export failed: ${error}`);
               Alert.alert(
                 "Export Failed",
-                error instanceof Error
-                  ? error.message
-                  : "An unknown error occurred",
+                error instanceof Error ? error.message : "An unknown error occurred",
               );
             } finally {
               setIsExporting(false);
@@ -399,7 +428,7 @@ export default function ProfileScreen() {
     );
   };
 
-  if (isLoading) {
+  if (isLoading && !profile) {
     return (
       <View
         style={{
@@ -414,21 +443,60 @@ export default function ProfileScreen() {
     );
   }
 
-  return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={{
-        padding: spacing.md,
-        paddingBottom: spacing.xxl,
-      }}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-          tintColor={colors.accent}
+  if (!profile && isError) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.background, padding: spacing.md, paddingTop: insets.top + spacing.md }}>
+        <ProfileStatus
+          title="Profile unavailable"
+          message={error instanceof Error ? error.message : "Can't load your profile right now."}
+          onRetry={() => void refetchProfile()}
         />
-      }
+      </View>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.background, padding: spacing.md, paddingTop: insets.top + spacing.md }}>
+        <ProfileStatus
+          title="Profile not available"
+          message="Your account profile has not been created yet."
+          onRetry={() => void refetchProfile()}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: colors.background }}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={insets.top + 12}
     >
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.background }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        contentContainerStyle={{
+          padding: spacing.md,
+          paddingBottom: insets.bottom + spacing.xxl,
+        }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.accent}
+          />
+        }
+      >
+      {isError && (
+        <ProfileStatus
+          compact
+          title="Showing cached profile"
+          message="The server is unavailable. Changes may not sync until you reconnect."
+          onRetry={() => void refetchProfile()}
+        />
+      )}
       {/* HEADER */}
       <Animated.View entering={FadeInDown.duration(400)}>
         <View
@@ -441,7 +509,7 @@ export default function ProfileScreen() {
         >
           <View style={{ flexDirection: "row", alignItems: "center" }}>
             <Pressable
-              onPress={() => router.back()}
+              onPress={() => router.navigate("/(tabs)")}
               style={{ marginRight: spacing.sm }}
             >
               <Ionicons
@@ -454,13 +522,8 @@ export default function ProfileScreen() {
               Profile
             </Text>
           </View>
-          {/* Sync Status Badge in Header */}
-          <SyncBadge
-            state={syncState}
-            pendingCount={pendingSync}
-            compact
-            onPress={handleSync}
-          />
+          {/* Data is always in sync with the backend */}
+          <SyncBadge state="synced" pendingCount={0} compact />
         </View>
         <Text
           style={{
@@ -472,6 +535,69 @@ export default function ProfileScreen() {
           Manage your account
         </Text>
       </Animated.View>
+
+      {/* Email Verification Banner */}
+      {user &&
+        !user.emailVerified &&
+        verificationDaysLeft !== null &&
+        !dismissVerificationBanner && (
+        <Animated.View
+          entering={FadeInDown.delay(120).duration(400)}
+          style={{ marginBottom: spacing.lg }}
+        >
+          <View
+            style={{
+              backgroundColor:
+                verificationDaysLeft > 0 ? colors.warning + "15" : colors.error + "15",
+              borderRadius: radius.lg,
+              padding: spacing.md,
+              borderLeftWidth: 4,
+              borderLeftColor:
+                verificationDaysLeft > 0 ? colors.warning : colors.error,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+              }}
+            >
+              <View style={{ flex: 1, paddingRight: spacing.sm }}>
+                <Text
+                  style={{
+                    ...typography.caption,
+                    color: verificationDaysLeft > 0 ? colors.warning : colors.error,
+                    marginBottom: spacing.xs,
+                    fontWeight: "600",
+                  }}
+                >
+                  {verificationDaysLeft > 0
+                    ? verificationMessages.bannerTitleSoft(verificationDaysLeft)
+                    : verificationMessages.bannerTitleHard}
+                </Text>
+                <Text style={{ ...typography.body, color: colors.textPrimary }}>
+                  {verificationMessages.bannerBody}
+                </Text>
+                <Pressable
+                  onPress={() => setShowVerificationPrompt(true)}
+                  style={{ marginTop: spacing.sm, alignSelf: "flex-start" }}
+                >
+                  <Text style={{ color: colors.accent, fontWeight: "600" }}>
+                    {verificationMessages.bannerAction}
+                  </Text>
+                </Pressable>
+              </View>
+              <Pressable
+                onPress={() => setDismissVerificationBanner(true)}
+                style={{ paddingLeft: spacing.sm }}
+              >
+                <Ionicons name="close" size={18} color={colors.textMuted} />
+              </Pressable>
+            </View>
+          </View>
+        </Animated.View>
+      )}
 
       {/* AVATAR & NAME HERO */}
       <Animated.View
@@ -543,6 +669,47 @@ export default function ProfileScreen() {
           <Text style={{ ...typography.caption, color: colors.textSecondary }}>
             {profile?.email || user?.email || "No email"}
           </Text>
+          {user?.emailVerified ? (
+            <View
+              style={{
+                marginLeft: spacing.xs,
+                backgroundColor: colors.success + "20",
+                borderRadius: radius.full,
+                paddingHorizontal: spacing.xs,
+                paddingVertical: 2,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: spacing.xxs,
+              }}
+            >
+              <Ionicons
+                name="checkmark-circle"
+                size={12}
+                color={colors.success}
+              />
+              <Text style={{ ...typography.label, color: colors.success }}>
+                {verificationMessages.badgeVerified}
+              </Text>
+            </View>
+          ) : (
+            <View
+              style={{
+                marginLeft: spacing.xs,
+                backgroundColor: colors.warning + "20",
+                borderRadius: radius.full,
+                paddingHorizontal: spacing.xs,
+                paddingVertical: 2,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: spacing.xxs,
+              }}
+            >
+              <Ionicons name="alert-circle" size={12} color={colors.warning} />
+              <Text style={{ ...typography.label, color: colors.warning }}>
+                {verificationMessages.badgeUnverified}
+              </Text>
+            </View>
+          )}
           {profile?.authProvider === "google" && (
             <View
               style={{
@@ -568,9 +735,51 @@ export default function ProfileScreen() {
             marginTop: spacing.xs,
           }}
         >
-          Member since {formatAccountDate(profile?.createdAt)}
+          Member since {profile?.createdAt ? formatAccountDate(new Date(profile.createdAt).getTime()) : "—"}
         </Text>
       </Animated.View>
+
+      {/* Legacy Profile Completion (missing age/weight) */}
+      {(!profile?.age || (!profile?.weight && !latestWeight)) && (
+        <Animated.View
+          entering={FadeInUp.delay(170).duration(400)}
+          style={{ marginBottom: spacing.lg }}
+        >
+          <View
+            style={{
+              backgroundColor: colors.surface,
+              borderRadius: radius.lg,
+              padding: spacing.md,
+              borderWidth: 1,
+              borderColor: colors.cardBorder,
+            }}
+          >
+            <Text
+              style={{
+                ...typography.bodyMedium,
+                color: colors.textPrimary,
+                marginBottom: spacing.xs,
+              }}
+            >
+              Complete your profile
+            </Text>
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              Add your age and weight so your insights are accurate.
+            </Text>
+            <Pressable
+              onPress={() => {
+                setProfilePromptMode("missing");
+                setShowProfileCompletion(true);
+              }}
+              style={{ marginTop: spacing.sm, alignSelf: "flex-start" }}
+            >
+              <Text style={{ color: colors.accent, fontWeight: "600" }}>
+                Add missing details
+              </Text>
+            </Pressable>
+          </View>
+        </Animated.View>
+      )}
 
       {/* PROFILE FIELDS */}
       <Animated.View
@@ -604,10 +813,10 @@ export default function ProfileScreen() {
               marginBottom: spacing.xs,
             }}
           >
-            Display Name
+            Display Name (Optional)
           </Text>
           <TextInput
-            placeholder="Enter your name"
+            placeholder="Your name (set during onboarding)"
             placeholderTextColor={colors.textMuted}
             value={displayName}
             onChangeText={setDisplayName}
@@ -630,10 +839,10 @@ export default function ProfileScreen() {
               marginBottom: spacing.xs,
             }}
           >
-            Height (cm) - Optional
+            Height (cm)
           </Text>
           <TextInput
-            placeholder="Enter height"
+            placeholder="Your height"
             placeholderTextColor={colors.textMuted}
             value={height}
             onChangeText={setHeight}
@@ -648,13 +857,136 @@ export default function ProfileScreen() {
           />
         </View>
 
-        {/* Daily Goal */}
-        <View>
+        {/* Weight */}
+        <View style={{ marginBottom: spacing.lg }}>
           <Text
             style={{
               ...typography.caption,
               color: colors.textSecondary,
               marginBottom: spacing.xs,
+            }}
+          >
+            Weight (kg)
+          </Text>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: colors.surfaceElevated,
+              borderRadius: radius.md,
+              paddingHorizontal: spacing.md,
+            }}
+          >
+            <Text style={{ ...typography.body, color: colors.textPrimary }}>
+              {latestWeight ? `${latestWeight} kg` : profile?.weight ? `${profile.weight} kg` : "Not set"}
+            </Text>
+            <Pressable
+              onPress={() => router.push("/body-weight")}
+              style={{ marginLeft: "auto", paddingVertical: spacing.md }}
+            >
+              <Text style={{ color: colors.accent, fontWeight: "600" }}>
+                Log
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Age */}
+        <View style={{ marginBottom: spacing.lg }}>
+          <Text
+            style={{
+              ...typography.caption,
+              color: colors.textSecondary,
+              marginBottom: spacing.xs,
+            }}
+          >
+            Age
+          </Text>
+          <TextInput
+            value={age}
+            onChangeText={setAge}
+            placeholder="e.g. 25"
+            placeholderTextColor={colors.textMuted}
+            keyboardType="number-pad"
+            style={{
+              backgroundColor: colors.surfaceElevated,
+              borderRadius: radius.md,
+              paddingHorizontal: spacing.md,
+              paddingVertical: spacing.md,
+              color: colors.textPrimary,
+              ...typography.body,
+            }}
+          />
+        </View>
+
+        {/* Fitness Goal */}
+        <View style={{ marginBottom: spacing.lg }}>
+          <Text
+            style={{
+              ...typography.caption,
+              color: colors.textSecondary,
+              marginBottom: spacing.sm,
+            }}
+          >
+            Fitness Goal
+          </Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+            {[
+              { id: "strength", label: "Strength", emoji: "🏋️" },
+              { id: "muscle", label: "Muscle Gain", emoji: "💪" },
+              { id: "endurance", label: "Endurance", emoji: "🏃" },
+              { id: "weight-loss", label: "Weight Loss", emoji: "⚖️" },
+              { id: "general", label: "General", emoji: "🎯" },
+            ].map((goal) => {
+              const selected = fitnessGoal === goal.id;
+              return (
+                <Pressable
+                  key={goal.id}
+                  onPress={() => setFitnessGoal(goal.id)}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingVertical: spacing.sm,
+                    paddingHorizontal: spacing.md,
+                    borderRadius: radius.lg,
+                    backgroundColor: selected ? colors.accent : colors.surfaceElevated,
+                    borderWidth: 1,
+                    borderColor: selected ? colors.accent : colors.cardBorder,
+                  }}
+                >
+                  <Text style={{ fontSize: 14, marginRight: 4 }}>{goal.emoji}</Text>
+                  <Text
+                    style={{
+                      ...typography.caption,
+                      color: selected ? "#fff" : colors.textPrimary,
+                      fontWeight: selected ? "700" : "500",
+                    }}
+                  >
+                    {goal.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Daily Goal */}
+        <View
+          style={{
+            paddingHorizontal: spacing.xs,
+            paddingVertical: spacing.md,
+            backgroundColor: colors.surfaceElevated,
+            borderRadius: radius.lg,
+          }}
+        >
+          <Text
+            style={{
+              ...typography.caption,
+              color: colors.textSecondary,
+              marginBottom: spacing.md,
+              fontWeight: "600",
+              textTransform: "uppercase",
+              letterSpacing: 0.5,
             }}
           >
             Daily Workout Goal
@@ -664,31 +996,34 @@ export default function ProfileScreen() {
               flexDirection: "row",
               alignItems: "center",
               flexWrap: "wrap",
-              gap: spacing.xs,
+              gap: spacing.md,
+              marginBottom: spacing.lg,
             }}
           >
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
+            {[1, 2, 3, 4, 5, 6, 7].map((num) => (
               <Pressable
                 key={num}
                 onPress={() => setWeeklyGoal(String(num))}
                 style={{
-                  width: 30,
-                  height: 30,
+                  width: 40,
+                  height: 40,
                   borderRadius: radius.md,
                   backgroundColor:
                     weeklyGoal === String(num)
                       ? colors.accent
-                      : colors.surfaceElevated,
+                      : colors.surface,
                   alignItems: "center",
                   justifyContent: "center",
+                  borderWidth: weeklyGoal === String(num) ? 0 : 1,
+                  borderColor: colors.cardBorder,
                 }}
               >
                 <Text
                   style={{
                     color:
                       weeklyGoal === String(num) ? "#fff" : colors.textPrimary,
-                    fontWeight: weeklyGoal === String(num) ? "600" : "400",
-                    fontSize: num === 10 ? 10 : 12,
+                    fontWeight: weeklyGoal === String(num) ? "600" : "500",
+                    fontSize: 14,
                   }}
                 >
                   {num}
@@ -700,11 +1035,78 @@ export default function ProfileScreen() {
             style={{
               ...typography.caption,
               color: colors.textMuted,
-              marginTop: spacing.xs,
+              fontSize: 12,
+              fontStyle: "italic",
             }}
           >
             How many workouts do you aim to complete each day?
           </Text>
+        </View>
+      </Animated.View>
+
+      {/* WEIGHT UNIT PREFERENCE */}
+      <Animated.View
+        entering={FadeInUp.delay(480).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          padding: spacing.lg,
+          marginBottom: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+        }}
+      >
+        <Text
+          style={{
+            ...typography.label,
+            color: colors.textMuted,
+            marginBottom: spacing.md,
+          }}
+        >
+          WEIGHT UNIT
+        </Text>
+        <View
+          style={{
+            flexDirection: "row",
+            gap: spacing.sm,
+          }}
+        >
+          {(["kg", "lbs"] as const).map((u) => (
+            <Pressable
+              key={u}
+              onPress={() => setWeightUnit(u)}
+              style={{
+                flex: 1,
+                paddingVertical: spacing.md,
+                borderRadius: radius.lg,
+                backgroundColor:
+                  weightUnit === u ? colors.accent : colors.surfaceElevated,
+                alignItems: "center",
+                borderWidth: weightUnit === u ? 0 : 1,
+                borderColor: colors.cardBorder,
+              }}
+            >
+              <Text
+                style={{
+                  color: weightUnit === u ? "#fff" : colors.textPrimary,
+                  fontWeight: "700",
+                  fontSize: 16,
+                }}
+              >
+                {u.toUpperCase()}
+              </Text>
+              <Text
+                style={{
+                  color: weightUnit === u ? "rgba(255,255,255,0.7)" : colors.textMuted,
+                  fontSize: 12,
+                  marginTop: 2,
+                }}
+              >
+                {u === "kg" ? "Kilograms" : "Pounds"}
+              </Text>
+            </Pressable>
+          ))}
         </View>
       </Animated.View>
 
@@ -735,7 +1137,7 @@ export default function ProfileScreen() {
         </Animated.View>
       )}
 
-      {/* ACCOUNT INFO */}
+      {/* ACCOUNT INFO - Hidden for cleaner profile
       <Animated.View
         entering={FadeInUp.delay(300).duration(400)}
         style={{
@@ -802,8 +1204,9 @@ export default function ProfileScreen() {
           typography={typography}
         />
       </Animated.View>
+      */}
 
-      {/* SETTINGS SECTION - Always visible at bottom */}
+      {/* DATA STATUS SECTION */}
       <Animated.View
         entering={FadeInUp.delay(400).duration(400)}
         style={{
@@ -823,100 +1226,253 @@ export default function ProfileScreen() {
             marginBottom: spacing.lg,
           }}
         >
-          DATA & SYNC
+          DATA
         </Text>
 
-        {/* Sync Status */}
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: spacing.md,
-          }}
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: radius.md,
+              backgroundColor: colors.successLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: spacing.sm,
+            }}
+          >
+            <Ionicons name="cloud-done-outline" size={20} color={colors.success} />
+          </View>
+          <View>
+            <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
+              All data synced
+            </Text>
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              Stored securely in the cloud
+            </Text>
+          </View>
+        </View>
+      </Animated.View>
+
+      {/* AI WORKOUT PLAN */}
+      <Animated.View
+        entering={FadeInUp.delay(430).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+          marginBottom: spacing.md,
+        }}
+      >
+        <Pressable
+          onPress={() => router.push("/ai-plan")}
+          style={{ flexDirection: "row", alignItems: "center", padding: spacing.lg }}
         >
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: radius.md,
+              backgroundColor: colors.accentLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: spacing.sm,
+            }}
+          >
+            <Ionicons name="sparkles" size={20} color={colors.accent} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
+              AI Workout Plan
+            </Text>
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              {profile?.activePlan ? "View & manage your plan" : "Generate with Gemini AI"}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </Pressable>
+      </Animated.View>
+
+      {/* ACHIEVEMENTS */}
+      <Animated.View
+        entering={FadeInUp.delay(435).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+          marginBottom: spacing.md,
+        }}
+      >
+        <Pressable
+          onPress={() => router.push("/achievements")}
+          accessibilityRole="button"
+          accessibilityLabel="Achievements"
+          style={{ flexDirection: "row", alignItems: "center", padding: spacing.lg }}
+        >
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: radius.md,
+              backgroundColor: colors.accentLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: spacing.sm,
+            }}
+          >
+            <Ionicons name="trophy" size={20} color={colors.accent} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
+              Achievements
+            </Text>
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              Badges and progress
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </Pressable>
+      </Animated.View>
+
+      {/* NOTIFICATION SETTINGS */}
+      <Animated.View
+        entering={FadeInUp.delay(440).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+          marginBottom: spacing.md,
+        }}
+      >
+        <Pressable
+          onPress={() => router.push("/notification-settings")}
+          style={{ flexDirection: "row", alignItems: "center", padding: spacing.lg }}
+        >
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: radius.md,
+              backgroundColor: colors.secondaryLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: spacing.sm,
+            }}
+          >
+            <Ionicons name="notifications-outline" size={20} color={colors.secondary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
+              Notification Settings
+            </Text>
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              Daily workout reminder
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </Pressable>
+      </Animated.View>
+
+      {/* APPEARANCE */}
+      <Animated.View
+        entering={FadeInUp.delay(445).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          ...shadows.sm,
+          marginBottom: spacing.md,
+        }}
+      >
+        <View style={{ padding: spacing.lg }}>
+          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}>
             <View
               style={{
                 width: 40,
                 height: 40,
                 borderRadius: radius.md,
-                backgroundColor:
-                  pendingSync > 0 ? colors.warningLight : colors.successLight,
+                backgroundColor: "#78350F20",
                 justifyContent: "center",
                 alignItems: "center",
                 marginRight: spacing.sm,
               }}
             >
-              <Ionicons
-                name={
-                  pendingSync > 0 ? "cloud-upload-outline" : "checkmark-circle"
-                }
-                size={20}
-                color={pendingSync > 0 ? colors.warning : colors.success}
-              />
+              <Ionicons name="color-palette-outline" size={20} color="#92400E" />
             </View>
             <View>
-              <Text
-                style={{ ...typography.bodyMedium, color: colors.textPrimary }}
-              >
-                {pendingSync > 0 ? `${pendingSync} pending` : "All synced"}
-              </Text>
-              <Text
-                style={{ ...typography.caption, color: colors.textSecondary }}
-              >
-                {pendingSync > 0 ? "Tap to sync now" : "Data is up to date"}
+              <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>Appearance</Text>
+              <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+                Choose your preferred theme
               </Text>
             </View>
           </View>
-        </View>
 
-        {/* Sync Button */}
-        <Pressable
-          onPress={handleSync}
-          disabled={isSyncing}
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: colors.accent,
-            padding: spacing.md,
-            borderRadius: radius.lg,
-            opacity: isSyncing ? 0.6 : 1,
-          }}
-        >
-          {isSyncing ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Ionicons
-                name="sync-outline"
-                size={20}
-                color="#fff"
-                style={{ marginRight: spacing.xs }}
-              />
-              <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
-                Sync Now
-              </Text>
-            </>
-          )}
-        </Pressable>
-
-        {syncMessage && (
-          <Text
+          {/* Three-way toggle */}
+          <View
             style={{
-              textAlign: "center",
-              color: syncMessage.includes("failed")
-                ? colors.error
-                : colors.success,
-              marginTop: spacing.md,
-              fontWeight: "500",
-              fontSize: 14,
+              flexDirection: "row",
+              backgroundColor: colors.surfaceElevated,
+              borderRadius: radius.lg,
+              padding: 3,
+              borderWidth: 1,
+              borderColor: colors.cardBorder,
             }}
           >
-            {syncMessage}
-          </Text>
-        )}
+            {(
+              [
+                { value: "system" as ThemePreference, label: "System", icon: "phone-portrait-outline" as const },
+                { value: "light" as ThemePreference, label: "Light", icon: "sunny-outline" as const },
+                { value: "dark" as ThemePreference, label: "Dark", icon: "moon-outline" as const },
+              ]
+            ).map((opt) => {
+              const active = themePreference === opt.value;
+              return (
+                <Pressable
+                  key={opt.value}
+                  onPress={() => setThemePreference(opt.value)}
+                  style={{
+                    flex: 1,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    paddingVertical: spacing.sm,
+                    borderRadius: radius.md,
+                    backgroundColor: active ? colors.surface : "transparent",
+                    gap: 5,
+                    borderWidth: active ? 1 : 0,
+                    borderColor: active ? colors.cardBorder : "transparent",
+                  }}
+                >
+                  <Ionicons
+                    name={opt.icon}
+                    size={15}
+                    color={active ? colors.accent : colors.textMuted}
+                  />
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontWeight: active ? "700" : "500",
+                      color: active ? colors.accent : colors.textMuted,
+                    }}
+                  >
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
       </Animated.View>
 
       {/* EXPORT DATA SECTION */}
@@ -1049,6 +1605,111 @@ export default function ProfileScreen() {
         </View>
       </Animated.View>
 
+      {/* ADMIN TOOLS */}
+      {isAdmin && (
+        <Animated.View
+          entering={FadeInUp.delay(520).duration(400)}
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: radius.xl,
+            overflow: "hidden",
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            ...shadows.sm,
+            marginBottom: spacing.md,
+          }}
+        >
+          <Pressable
+            onPress={() => router.push("/admin-catalog")}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              padding: spacing.lg,
+            }}
+          >
+            <View
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: radius.md,
+                backgroundColor: colors.accentLight,
+                justifyContent: "center",
+                alignItems: "center",
+                marginRight: spacing.sm,
+              }}
+            >
+              <Ionicons name="settings-outline" size={20} color={colors.accent} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text
+                style={{
+                  ...typography.bodyMedium,
+                  color: colors.textPrimary,
+                }}
+              >
+                Admin: Exercise Catalog
+              </Text>
+              <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+                Manage remote additions and removals
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          </Pressable>
+        </Animated.View>
+      )}
+
+      {/* DELETE ACCOUNT SECTION */}
+      <Animated.View
+        entering={FadeInUp.delay(520).duration(400)}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.xl,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: colors.error + "55",
+          ...shadows.sm,
+          marginBottom: spacing.md,
+        }}
+      >
+        <Pressable
+          onPress={handleDeleteAccount}
+          disabled={isDeletingAccount}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            padding: spacing.lg,
+            opacity: isDeletingAccount ? 0.6 : 1,
+          }}
+        >
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: radius.md,
+              backgroundColor: colors.errorLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: spacing.sm,
+            }}
+          >
+            <Ionicons name="trash-outline" size={20} color={colors.error} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ ...typography.bodyMedium, color: colors.error }}>
+              Delete Account
+            </Text>
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              Permanently remove your account and data
+            </Text>
+          </View>
+          {isDeletingAccount ? (
+            <ActivityIndicator size="small" color={colors.error} />
+          ) : (
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          )}
+        </Pressable>
+      </Animated.View>
+
       {/* LOGOUT SECTION */}
       <Animated.View
         entering={FadeInUp.delay(550).duration(400)}
@@ -1059,12 +1720,10 @@ export default function ProfileScreen() {
           borderWidth: 1,
           borderColor: colors.cardBorder,
           ...shadows.sm,
-          opacity: isAuthSyncing ? 0.7 : 1,
         }}
       >
         <Pressable
           onPress={handleLogout}
-          disabled={isAuthSyncing}
           style={{
             flexDirection: "row",
             alignItems: "center",
@@ -1076,35 +1735,20 @@ export default function ProfileScreen() {
               width: 40,
               height: 40,
               borderRadius: radius.md,
-              backgroundColor: isAuthSyncing
-                ? colors.surfaceElevated
-                : colors.errorLight,
+              backgroundColor: colors.errorLight,
               justifyContent: "center",
               alignItems: "center",
               marginRight: spacing.sm,
             }}
           >
-            {isAuthSyncing ? (
-              <ActivityIndicator size="small" color={colors.accent} />
-            ) : (
-              <Ionicons name="log-out-outline" size={20} color={colors.error} />
-            )}
+            <Ionicons name="log-out-outline" size={20} color={colors.error} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text
-              style={{
-                ...typography.bodyMedium,
-                color: isAuthSyncing ? colors.textSecondary : colors.error,
-              }}
-            >
-              {isAuthSyncing ? "Syncing data..." : "Log Out"}
+            <Text style={{ ...typography.bodyMedium, color: colors.error }}>
+              Log Out
             </Text>
-            <Text
-              style={{ ...typography.caption, color: colors.textSecondary }}
-            >
-              {isAuthSyncing
-                ? "Please wait while your data is saved"
-                : "Sign out of your account"}
+            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+              Sign out of your account
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
@@ -1133,25 +1777,136 @@ export default function ProfileScreen() {
           style={{
             ...typography.bodyMedium,
             color: colors.textPrimary,
-            marginBottom: spacing.xxs,
-          }}
-        >
-          Iron Arc
-        </Text>
-        <Text
-          style={{
-            ...typography.caption,
-            color: colors.textSecondary,
             marginBottom: spacing.xs,
           }}
         >
-          Version {Constants.expoConfig?.version || "1.0.0"}
+          Iron Arc {getVersionLabel()}
         </Text>
         <Text style={{ ...typography.caption, color: colors.textMuted }}>
           Designed & Built by Pushpanath
         </Text>
       </Animated.View>
-    </ScrollView>
+      </ScrollView>
+
+      {/* Profile Completion Prompt */}
+      <ProfileCompletionPrompt
+        visible={showProfileCompletion}
+        onDismiss={() => setShowProfileCompletion(false)}
+        onSave={handleProfileCompletion}
+        currentWeight={profile?.weight}
+        currentAge={profile?.age}
+        isLoading={isSaving}
+        allowWeightEdit={profilePromptMode === "missing"}
+      />
+
+      <EmailVerificationPrompt
+        visible={showVerificationPrompt}
+        user={user}
+        dismissible={verificationDaysLeft !== 0}
+        onSkip={() => setShowVerificationPrompt(false)}
+        onVerified={async () => {
+          setShowVerificationPrompt(false);
+          if (user) {
+            await clearEmailVerificationStart(user.uid);
+          }
+          await loadVerificationStatus();
+        }}
+      />
+
+      <Modal
+        visible={showDeleteReauthentication}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDeleteReauthentication(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            padding: spacing.lg,
+            backgroundColor: "rgba(0, 0, 0, 0.55)",
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: colors.surface,
+              borderRadius: radius.lg,
+              padding: spacing.lg,
+            }}
+          >
+            <Text style={{ ...typography.h2, color: colors.textPrimary }}>
+              Confirm your password
+            </Text>
+            <Text
+              style={{
+                ...typography.body,
+                color: colors.textSecondary,
+                marginTop: spacing.xs,
+                marginBottom: spacing.md,
+              }}
+            >
+              For your security, sign in again before deleting this account.
+            </Text>
+            <TextInput
+              value={deletePassword}
+              onChangeText={setDeletePassword}
+              placeholder="Password"
+              placeholderTextColor={colors.textMuted}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={{
+                color: colors.textPrimary,
+                borderWidth: 1,
+                borderColor: colors.cardBorder,
+                borderRadius: radius.md,
+                paddingHorizontal: spacing.md,
+                paddingVertical: spacing.sm,
+                marginBottom: spacing.xs,
+              }}
+            />
+            {deleteError && (
+              <Text style={{ ...typography.caption, color: colors.error, marginBottom: spacing.sm }}>
+                {deleteError}
+              </Text>
+            )}
+            <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm }}>
+              <Pressable
+                onPress={() => {
+                  setShowDeleteReauthentication(false);
+                  setDeletePassword("");
+                  setDeleteError(null);
+                }}
+                disabled={isDeletingAccount}
+                style={{ padding: spacing.sm }}
+              >
+                <Text style={{ ...typography.bodyMedium, color: colors.textSecondary }}>
+                  Cancel
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={handleEmailReauthentication}
+                disabled={isDeletingAccount}
+                style={{
+                  paddingHorizontal: spacing.md,
+                  paddingVertical: spacing.sm,
+                  borderRadius: radius.md,
+                  backgroundColor: colors.error,
+                }}
+              >
+                {isDeletingAccount ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={{ ...typography.bodyMedium, color: "#fff" }}>
+                    Continue
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </KeyboardAvoidingView>
   );
 }
 

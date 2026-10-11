@@ -153,6 +153,7 @@ export function WorkoutCalendar({
           const hasWorkout = workoutDateSet.has(day.dateStr);
           const isSelected = selectedDate === day.dateStr;
           const isToday = day.dateStr === today;
+          const showWorkoutHighlight = hasWorkout && !isSelected;
 
           return (
             <Pressable
@@ -165,8 +166,14 @@ export function WorkoutCalendar({
                     ? colors.accent
                     : isToday
                       ? colors.accentDim
-                      : "transparent",
+                      : showWorkoutHighlight
+                        ? colors.accent + "14"
+                        : "transparent",
                   borderRadius: radius.md,
+                  borderWidth: showWorkoutHighlight ? 1 : 0,
+                  borderColor: showWorkoutHighlight
+                    ? colors.accent + "55"
+                    : "transparent",
                 },
               ]}
             >
@@ -186,27 +193,7 @@ export function WorkoutCalendar({
                 {day.date.getDate()}
               </Text>
 
-              {/* Workout Indicator Dot */}
-              {hasWorkout && !isSelected && (
-                <View
-                  style={[
-                    styles.workoutDot,
-                    {
-                      backgroundColor: colors.accent,
-                    },
-                  ]}
-                />
-              )}
-              {hasWorkout && isSelected && (
-                <View
-                  style={[
-                    styles.workoutDot,
-                    {
-                      backgroundColor: colors.textOnAccent,
-                    },
-                  ]}
-                />
-              )}
+              {/* Workout days are highlighted with a soft pill + border */}
             </Pressable>
           );
         })}
@@ -274,7 +261,7 @@ const styles = StyleSheet.create({
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
-  },
+  },  
   dayCell: {
     width: "14.28%", // 100% / 7 days
     aspectRatio: 1,
@@ -284,13 +271,10 @@ const styles = StyleSheet.create({
   },
   dayText: {
     fontSize: 14,
-  },
-  workoutDot: {
-    position: "absolute",
-    bottom: 4,
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    lineHeight: 20,
+    textAlignVertical: "center",
+    includeFontPadding: false,
+    transform: [{ translateY: -4 }],
   },
   legend: {
     flexDirection: "row",

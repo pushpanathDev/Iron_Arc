@@ -16,6 +16,10 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://iron-arc-backend-v2.onrender.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "89046456850-3sfgpbt5fg60uv1735p3lnedo5pvq8sd.apps.googleusercontent.com"
       }
     },
     "preview-optimized": {
@@ -24,7 +28,9 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_NO_DEV_CLIENT": "1"
+        "EXPO_NO_DEV_CLIENT": "1",
+        "EXPO_PUBLIC_BACKEND_URL": "https://iron-arc-backend-v2.onrender.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "89046456850-3sfgpbt5fg60uv1735p3lnedo5pvq8sd.apps.googleusercontent.com"
       }
     },
     "production": {
@@ -33,7 +39,9 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_NO_DEV_CLIENT": "1"
+        "EXPO_NO_DEV_CLIENT": "1",
+        "EXPO_PUBLIC_BACKEND_URL": "https://iron-arc-backend-v2.onrender.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "89046456850-3sfgpbt5fg60uv1735p3lnedo5pvq8sd.apps.googleusercontent.com"
       }
     }
   },

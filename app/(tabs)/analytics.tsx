@@ -1,207 +1,72 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { router, useFocusEffect } from "expo-router";
+import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Dimensions,
   Pressable,
   RefreshControl,
   ScrollView,
   Text,
   View,
 } from "react-native";
-import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
-import Svg, { Circle, Path } from "react-native-svg";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Animated, {
+  FadeInDown,
+  FadeInUp,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
+import Svg, { Circle, G, Path } from "react-native-svg";
 
-import { useAuth } from "../../auth/AuthContext";
-import { useGlobalSync } from "../../context/SyncContext";
 import { useTheme } from "../../theme/theme";
 
-import { getUserProfile } from "../../db/profiles";
-import { BodyWeight, getAllWeights } from "../../db/weights";
-import { getAllWorkouts, Workout } from "../../db/workouts";
+import { useProfile } from "../../hooks/useProfile";
+import { useAllWeights } from "../../hooks/useWeights";
+import { useAllWorkouts } from "../../hooks/useWorkouts";
 import {
+  calculateAnalyticsStats,
   generateInsights,
-  Insight,
-  InsightPriority,
 } from "../../insights/insightEngine";
-import { formatDate } from "../../utils/weekUtils";
-
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 export default function Analytics() {
   const { colors, spacing, radius, typography, shadows } = useTheme();
-  const { user } = useAuth();
-  const { globalSync, refreshVersion } = useGlobalSync();
+  const insets = useSafeAreaInsets();
 
-  const [workouts, setWorkouts] = useState<Workout[]>([]);
-  const [weights, setWeights] = useState<BodyWeight[]>([]);
+  const { data: workouts = [], refetch: refetchWorkouts } = useAllWorkouts();
+  const { data: rawWeights = [], refetch: refetchWeights } = useAllWeights();
+  const { data: profile } = useProfile();
+
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedPeriod, setSelectedPeriod] = useState<
-    "week" | "month" | "all"
-  >("week");
-  const [insights, setInsights] = useState<Insight[]>([]);
-  const [weeklyGoal, setWeeklyGoal] = useState(1); // Daily goal - default to 1 workout per day
+  const [selectedPeriod, setSelectedPeriod] = useState<"week" | "month" | "all">("week");
+  const [selectedWeightIndex, setSelectedWeightIndex] = useState<number | null>(null);
 
-  /* =========================
-     LOAD DATA
-     ========================= */
-  const reloadData = useCallback(async () => {
-    if (!user) {
-      setWorkouts([]);
-      setWeights([]);
-      setInsights([]);
-      return;
-    }
-
-    const [w, bw, profile] = await Promise.all([
-      getAllWorkouts(user.uid),
-      getAllWeights(user.uid),
-      getUserProfile(user.uid),
-    ]);
-
-    bw.sort((a, b) => a.date.localeCompare(b.date));
-    setWorkouts(w);
-    setWeights(bw);
-
-    // Load weekly goal from profile
-    if (profile?.weeklyGoal) {
-      setWeeklyGoal(profile.weeklyGoal);
-    }
-
-    // Generate insights from workout and weight data
-    const generatedInsights = generateInsights(w, bw);
-    setInsights(generatedInsights);
-  }, [user]);
-
-  useFocusEffect(
-    useCallback(() => {
-      reloadData();
-    }, [reloadData]),
-  );
+  const weeklyGoal = profile?.weeklyGoal ?? 1;
+  const insights = useMemo(() => generateInsights(workouts, rawWeights), [workouts, rawWeights]);
 
   const handleRefresh = useCallback(async () => {
-    if (!user) return;
     setRefreshing(true);
     try {
-      // Trigger global sync to pull from Firebase
-      await globalSync(user.uid);
-      await reloadData();
+      await Promise.all([refetchWorkouts(), refetchWeights()]);
     } finally {
       setRefreshing(false);
     }
-  }, [reloadData, user, globalSync]);
+  }, [refetchWorkouts, refetchWeights]);
 
-  // Refresh when global sync happens on another screen
+  const stats = useMemo(
+    () => calculateAnalyticsStats(workouts, rawWeights, selectedPeriod, weeklyGoal),
+    [workouts, rawWeights, selectedPeriod, weeklyGoal],
+  );
+
+  const { personalRecords, muscleHeatmap } = stats;
+
   useEffect(() => {
-    if (!user || refreshVersion === 0) return;
-    reloadData();
-  }, [refreshVersion]);
-
-  /* =========================
-     COMPUTED STATS
-     ========================= */
-  const stats = useMemo(() => {
-    const now = new Date();
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-
-    const filterByPeriod = (dateStr: string) => {
-      const d = new Date(dateStr);
-      if (selectedPeriod === "week") return d >= weekAgo;
-      if (selectedPeriod === "month") return d >= monthAgo;
-      return true;
-    };
-
-    const filteredWorkouts = workouts.filter((w) => filterByPeriod(w.date));
-    const filteredWeights = weights.filter((w) => filterByPeriod(w.date));
-
-    // Workout stats
-    const totalWorkouts = filteredWorkouts.length;
-    const totalSets = filteredWorkouts.reduce(
-      (sum, w) => sum + w.sets.length,
-      0,
-    );
-    const totalReps = filteredWorkouts.reduce(
-      (sum, w) => sum + w.sets.reduce((s, set) => s + set.reps, 0),
-      0,
-    );
-    const totalVolume = filteredWorkouts.reduce(
-      (sum, w) => sum + w.sets.reduce((s, set) => s + set.reps * set.weight, 0),
-      0,
-    );
-
-    // Weight stats
-    const weightValues = filteredWeights.map((w) => w.weight);
-    const latestWeight = weightValues[weightValues.length - 1] || 0;
-    const firstWeight = weightValues[0] || 0;
-    const weightDelta = latestWeight - firstWeight;
-    const avgWeight = weightValues.length
-      ? weightValues.reduce((s, v) => s + v, 0) / weightValues.length
-      : 0;
-
-    // Weekly distribution (last 7 days)
-    const weeklyData: number[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      const dateStr = formatDate(d);
-      const count = workouts.filter((w) => w.date === dateStr).length;
-      weeklyData.push(count);
+    if (stats.weightValues.length > 0) {
+      setSelectedWeightIndex(stats.weightValues.length - 1);
+    } else {
+      setSelectedWeightIndex(null);
     }
-
-    // Category breakdown
-    const categoryMap = new Map<string, number>();
-    filteredWorkouts.forEach((w) => {
-      const cat = w.category || "Other";
-      categoryMap.set(cat, (categoryMap.get(cat) || 0) + 1);
-    });
-    const categories = Array.from(categoryMap.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5);
-
-    // Streak calculation
-    let streak = 0;
-    const sortedDates = [...new Set(workouts.map((w) => w.date))]
-      .sort()
-      .reverse();
-    const today = formatDate(now);
-    const yesterday = formatDate(new Date(now.getTime() - 24 * 60 * 60 * 1000));
-
-    // Today's workouts count (for daily goal)
-    const todayWorkouts = workouts.filter((w) => w.date === today).length;
-
-    if (sortedDates[0] === today || sortedDates[0] === yesterday) {
-      streak = 1;
-      for (let i = 1; i < sortedDates.length; i++) {
-        const curr = new Date(sortedDates[i - 1]);
-        const prev = new Date(sortedDates[i]);
-        const diffDays = Math.floor(
-          (curr.getTime() - prev.getTime()) / (24 * 60 * 60 * 1000),
-        );
-        if (diffDays === 1) {
-          streak++;
-        } else {
-          break;
-        }
-      }
-    }
-
-    return {
-      totalWorkouts,
-      todayWorkouts,
-      totalSets,
-      totalReps,
-      totalVolume,
-      latestWeight,
-      weightDelta,
-      avgWeight,
-      weightValues,
-      weeklyData,
-      categories,
-      streak,
-      goalProgress: Math.min((todayWorkouts / weeklyGoal) * 100, 100),
-    };
-  }, [workouts, weights, selectedPeriod, weeklyGoal]);
+  }, [stats.weightValues.length]);
 
   /* =========================
      PERIOD SELECTOR
@@ -253,7 +118,7 @@ export default function Analytics() {
       style={{ flex: 1, backgroundColor: colors.background }}
       contentContainerStyle={{
         padding: spacing.md,
-        paddingBottom: spacing.xxl,
+        paddingBottom: insets.bottom + spacing.xxl,
       }}
       refreshControl={
         <RefreshControl
@@ -416,7 +281,7 @@ export default function Analytics() {
               }}
             >
               <Text style={{ ...typography.label, color: colors.textMuted }}>
-                TODAY'S GOAL
+                {"TODAY'S GOAL"}
               </Text>
               <Pressable
                 onPress={() => router.push("/(tabs)/profile")}
@@ -593,11 +458,27 @@ export default function Analytics() {
                   {Math.abs(stats.weightDelta).toFixed(1)} kg
                 </Text>
               </View>
+              {stats.weightSeries?.length > 0 && selectedWeightIndex !== null && (
+                <Text
+                  style={{
+                    ...typography.caption,
+                    color: colors.textSecondary,
+                    marginTop: spacing.xxs,
+                  }}
+                >
+                  Selected:{" "}
+                  {stats.weightSeries[selectedWeightIndex]?.weight.toFixed(1)} kg
+                  {" • "}
+                  {stats.weightSeries[selectedWeightIndex]?.date}
+                </Text>
+              )}
             </View>
             <View style={{ width: 100, height: 40 }}>
               <MiniSparkline
-                data={stats.weightValues}
+                data={stats.weightSeries}
                 color={colors.secondary}
+                selectedIndex={selectedWeightIndex}
+                onPointPress={setSelectedWeightIndex}
               />
             </View>
           </View>
@@ -682,6 +563,146 @@ export default function Analytics() {
               </View>
             );
           })}
+        </Animated.View>
+      )}
+
+      {/* PERSONAL RECORDS */}
+      {personalRecords.length > 0 && (
+        <Animated.View
+          entering={FadeInUp.delay(650).duration(400)}
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: radius.xl,
+            padding: spacing.lg,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            marginBottom: spacing.md,
+            ...shadows.sm,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}>
+            <Ionicons name="trophy" size={18} color={colors.warning} />
+            <Text style={{ ...typography.h3, color: colors.textPrimary, marginLeft: spacing.xs }}>
+              Personal Records
+            </Text>
+          </View>
+          {personalRecords.map((pr, i) => (
+            <View
+              key={pr.exercise}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingVertical: spacing.sm,
+                borderTopWidth: i > 0 ? 1 : 0,
+                borderTopColor: colors.cardBorder,
+              }}
+            >
+              <View
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: radius.full,
+                  backgroundColor: i === 0 ? colors.warning + "22" : colors.surfaceElevated,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  marginRight: spacing.sm,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 12,
+                    fontWeight: "700",
+                    color: i === 0 ? colors.warning : colors.textMuted,
+                  }}
+                >
+                  #{i + 1}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{ ...typography.bodyMedium, color: colors.textPrimary }}
+                  numberOfLines={1}
+                >
+                  {pr.exercise}
+                </Text>
+                <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+                  {pr.date}
+                </Text>
+              </View>
+              <View style={{ alignItems: "flex-end" }}>
+                <Text style={{ ...typography.bodyMedium, color: colors.accent, fontWeight: "700" }}>
+                  {pr.weight} kg
+                </Text>
+                <Text style={{ ...typography.caption, color: colors.textSecondary }}>
+                  {pr.reps} reps
+                </Text>
+              </View>
+            </View>
+          ))}
+        </Animated.View>
+      )}
+
+      {/* MUSCLE GROUP HEATMAP */}
+      {muscleHeatmap.length > 0 && (
+        <Animated.View
+          entering={FadeInUp.delay(670).duration(400)}
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: radius.xl,
+            padding: spacing.lg,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            marginBottom: spacing.md,
+            ...shadows.sm,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.xs }}>
+            <Ionicons name="body" size={18} color={colors.accent} />
+            <Text style={{ ...typography.h3, color: colors.textPrimary, marginLeft: spacing.xs }}>
+              Muscle Heatmap
+            </Text>
+          </View>
+          <Text style={{ ...typography.caption, color: colors.textSecondary, marginBottom: spacing.md }}>
+            Training frequency — last 28 days
+          </Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+            {muscleHeatmap.map(({ muscle, count, intensity }) => {
+              const alpha = Math.round(40 + intensity * 180).toString(16).padStart(2, "0");
+              return (
+                <View
+                  key={muscle}
+                  style={{
+                    paddingVertical: spacing.sm,
+                    paddingHorizontal: spacing.md,
+                    borderRadius: radius.lg,
+                    backgroundColor: colors.accent + alpha,
+                    borderWidth: 1,
+                    borderColor: colors.accent + "40",
+                    alignItems: "center",
+                    minWidth: 90,
+                  }}
+                >
+                  <Text
+                    style={{
+                      ...typography.bodyMedium,
+                      color: intensity > 0.5 ? "#fff" : colors.textPrimary,
+                      fontWeight: "600",
+                    }}
+                  >
+                    {muscle}
+                  </Text>
+                  <Text
+                    style={{
+                      ...typography.caption,
+                      color: intensity > 0.5 ? "rgba(255,255,255,0.8)" : colors.textSecondary,
+                    }}
+                  >
+                    {count}×
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
         </Animated.View>
       )}
 
@@ -929,62 +950,171 @@ function WeeklyBarChart({
   spacing: any;
   radius: any;
 }) {
-  const days = ["M", "T", "W", "T", "F", "S", "S"];
+  const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const maxVal = Math.max(...data, 1);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+
+  // Calculate what day of week each bar represents
+  // data[0] = 6 days ago, data[6] = today
+  const today = new Date();
+  const todayDayOfWeek = today.getDay(); // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, etc.
+
+  // Build labels in the correct order matching data array
+  const weekDays: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const daysAgo = 6 - i;
+    const dayNumber = (todayDayOfWeek - daysAgo + 7) % 7;
+    weekDays.push(dayLabels[dayNumber]);
+  }
 
   return (
-    <View
-      style={{
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "flex-end",
-        height: 100,
-      }}
-    >
-      {data.map((val, i) => {
-        const height = (val / maxVal) * 70 + 10;
-        const isToday = i === 6;
-        return (
-          <View key={i} style={{ alignItems: "center", flex: 1 }}>
-            <View
-              style={{
-                width: 24,
-                height,
-                backgroundColor: isToday
-                  ? colors.accent
-                  : colors.surfaceElevated,
-                borderRadius: radius.sm,
-                marginBottom: spacing.xs,
-              }}
+    <View>
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "flex-end",
+          height: 110,
+        }}
+      >
+        {data.map((val, i) => {
+          const height = (val / maxVal) * 70 + 10;
+          const isToday = i === 6; // Last index is always today
+          const hasWorkouts = val > 0;
+          const fillColor = isToday
+            ? colors.accent
+            : hasWorkouts
+              ? colors.accentLight
+              : colors.surfaceElevated;
+
+          return (
+            <WeeklyBarItem
+              key={i}
+              label={weekDays[i]}
+              height={height}
+              color={fillColor}
+              radius={radius}
+              spacing={spacing}
+              isToday={isToday}
+              isSelected={selectedIndex === i}
+              onPress={() => setSelectedIndex(i)}
+              textColor={isToday ? colors.accent : colors.textMuted}
+              highlightColor={colors.accent}
             />
-            <Text
-              style={{
-                fontSize: 11,
-                fontWeight: isToday ? "600" : "400",
-                color: isToday ? colors.accent : colors.textMuted,
-              }}
-            >
-              {days[i]}
-            </Text>
-          </View>
-        );
-      })}
+          );
+        })}
+      </View>
+
+      {selectedIndex !== null && (
+        <Text
+          style={{
+            marginTop: spacing.xs,
+            fontSize: 12,
+            color: colors.textSecondary,
+            textAlign: "center",
+          }}
+        >
+          {weekDays[selectedIndex]} • {data[selectedIndex]} workout
+          {data[selectedIndex] === 1 ? "" : "s"}
+        </Text>
+      )}
     </View>
   );
 }
 
-function MiniSparkline({ data, color }: { data: number[]; color: string }) {
+function WeeklyBarItem({
+  label,
+  height,
+  color,
+  radius,
+  spacing,
+  isToday,
+  isSelected,
+  onPress,
+  textColor,
+  highlightColor,
+}: {
+  label: string;
+  height: number;
+  color: string;
+  radius: any;
+  spacing: any;
+  isToday: boolean;
+  isSelected: boolean;
+  onPress: () => void;
+  textColor: string;
+  highlightColor: string;
+}) {
+  const animatedHeight = useSharedValue(height);
+
+  useEffect(() => {
+    animatedHeight.value = withTiming(isSelected ? height + 8 : height, {
+      duration: 180,
+    });
+  }, [animatedHeight, height, isSelected]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    height: animatedHeight.value,
+  }));
+
+  return (
+    <Pressable onPress={onPress} style={{ alignItems: "center", flex: 1 }}>
+      <View style={{ height: 90, justifyContent: "flex-end" }}>
+        <Animated.View
+          style={[
+            {
+              width: 24,
+              backgroundColor: color,
+              borderRadius: radius.sm,
+              marginBottom: spacing.xs,
+            },
+            animatedStyle,
+            isSelected && {
+              shadowColor: highlightColor,
+              shadowOpacity: 0.25,
+              shadowRadius: 6,
+              shadowOffset: { width: 0, height: 2 },
+              elevation: 3,
+            },
+          ]}
+        />
+      </View>
+      <Text
+        style={{
+          fontSize: 11,
+          fontWeight: isToday || isSelected ? "600" : "400",
+          color: isToday || isSelected ? highlightColor : textColor,
+        }}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function MiniSparkline({
+  data,
+  color,
+  selectedIndex,
+  onPointPress,
+}: {
+  data: BodyWeight[];
+  color: string;
+  selectedIndex: number | null;
+  onPointPress?: (index: number) => void;
+}) {
   if (data.length < 2) return null;
 
   const width = 100;
   const height = 40;
   const padding = 4;
 
-  const minVal = Math.min(...data);
-  const maxVal = Math.max(...data);
+  const values = data.map((d) => d.weight);
+  const minVal = Math.min(...values);
+  const maxVal = Math.max(...values);
   const range = maxVal - minVal || 1;
 
-  const points = data.map((val, i) => {
+  const points = values.map((val, i) => {
     const x = padding + (i / (data.length - 1)) * (width - padding * 2);
     const y =
       height - padding - ((val - minVal) / range) * (height - padding * 2);
@@ -1002,6 +1132,30 @@ function MiniSparkline({ data, color }: { data: number[]; color: string }) {
         fill="transparent"
         strokeLinecap="round"
       />
+      {points.map((p, i) => {
+        const [cx, cy] = p.split(",").map((v) => Number(v));
+        const isSelected = i === selectedIndex;
+        return (
+          <G key={i}>
+            <Circle
+              cx={cx}
+              cy={cy}
+              r={isSelected ? 3.5 : 2.5}
+              fill={color}
+              stroke={isSelected ? "#fff" : "transparent"}
+              strokeWidth={isSelected ? 1.5 : 0}
+              onPress={() => onPointPress?.(i)}
+            />
+            <Circle
+              cx={cx}
+              cy={cy}
+              r={10}
+              fill="transparent"
+              onPress={() => onPointPress?.(i)}
+            />
+          </G>
+        );
+      })}
     </Svg>
   );
 }

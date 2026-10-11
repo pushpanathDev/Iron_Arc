@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
+import React from "react";
 import { Text, View } from "react-native";
 import { useAuth } from "../auth/AuthContext";
-import { getUserProfile, UserProfile } from "../db/profiles";
+import { useProfile } from "../hooks/useProfile";
 import { useTheme } from "../theme/theme";
 
 interface UserHeaderProps {
@@ -14,40 +14,10 @@ interface UserHeaderProps {
  * Note: All hooks run unconditionally to maintain hook order
  */
 export function UserHeader({ variant = "subtle" }: UserHeaderProps) {
-  // All hooks must run unconditionally
   const { colors, spacing } = useTheme();
   const { user } = useAuth();
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const isMounted = useRef(true);
+  const { data: profile } = useProfile();
 
-  useEffect(() => {
-    return () => {
-      isMounted.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    // Guard inside effect, not before hooks
-    if (!user) {
-      setProfile(null);
-      return;
-    }
-
-    const loadProfile = async () => {
-      try {
-        const data = await getUserProfile(user.uid);
-        if (isMounted.current) {
-          setProfile(data);
-        }
-      } catch (error) {
-        console.warn("Failed to load profile for header:", error);
-      }
-    };
-
-    loadProfile();
-  }, [user]);
-
-  // Return empty view instead of null to maintain consistency
   if (!user) {
     return <View />;
   }

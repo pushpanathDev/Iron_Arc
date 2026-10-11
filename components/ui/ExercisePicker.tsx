@@ -11,13 +11,12 @@ import {
 } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useAuth } from "../../auth/AuthContext";
-import { EXERCISES, ExerciseCategory } from "../../data/exercises";
 import {
-  addCustomExercise,
-  customExerciseExists,
-  getCustomExercises,
-} from "../../db/customExercises";
-import { getFrequentExercises } from "../../db/workouts";
+  getExercisesForCategory,
+  refreshExercisesForCategory,
+} from "../../data/exerciseCatalog";
+import { EXERCISES, ExerciseCategory } from "../../data/exercises";
+import { exerciseApi, workoutApi } from "../../services/api";
 import { useTheme } from "../../theme/theme";
 
 type Props = {
@@ -33,17 +32,23 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
   const [query, setQuery] = useState("");
   const [frequentExercises, setFrequentExercises] = useState<string[]>([]);
   const [customExercises, setCustomExercises] = useState<string[]>([]);
+  const [catalogExercises, setCatalogExercises] = useState<string[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newExerciseName, setNewExerciseName] = useState("");
   const [isAdding, setIsAdding] = useState(false);
 
   // Load frequently used and custom exercises when category changes
+  // Clear query but preserve exercise selection when category changes
   useEffect(() => {
     setQuery("");
-    onChange(null as any);
+    // Only clear exercise if no value is set or category actually changed
+    if (!value) {
+      onChange(null as any);
+    }
     setOpen(false);
     setFrequentExercises([]);
     setCustomExercises([]);
+    setCatalogExercises([]);
 
     if (category && user) {
       loadFrequentExercises();
@@ -51,10 +56,48 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
     }
   }, [category, user]);
 
+  // Load exercise catalog (base + remote cache)
+  useEffect(() => {
+    let active = true;
+
+    if (!category) {
+      setCatalogExercises([]);
+      return () => {
+        active = false;
+      };
+    }
+
+    // Start with local base list for instant render
+    setCatalogExercises(EXERCISES[category] ?? []);
+
+    const load = async () => {
+      const cachedList = await getExercisesForCategory(category);
+      if (active) setCatalogExercises(cachedList);
+
+      const refreshed = await refreshExercisesForCategory(category);
+      if (active && refreshed) setCatalogExercises(refreshed);
+    };
+
+    load();
+
+    return () => {
+      active = false;
+    };
+  }, [category]);
+
   const loadFrequentExercises = async () => {
     if (!category || !user) return;
     try {
-      const frequent = await getFrequentExercises(user.uid, category, 5);
+      // Derive frequent exercises from recent workouts for this category
+      const result = await workoutApi.list({ category, limit: 50 });
+      const countMap = new Map<string, number>();
+      for (const w of result.workouts ?? []) {
+        countMap.set(w.exercise, (countMap.get(w.exercise) ?? 0) + 1);
+      }
+      const frequent = [...countMap.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([name]) => name);
       setFrequentExercises(frequent);
     } catch (e) {
       console.log("Error loading frequent exercises:", e);
@@ -64,8 +107,8 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
   const loadCustomExercises = async () => {
     if (!category || !user) return;
     try {
-      const customs = await getCustomExercises(user.uid, category);
-      setCustomExercises(customs);
+      const customs = await exerciseApi.list(category);
+      setCustomExercises(customs.map((c) => c.name));
     } catch (e) {
       console.log("Error loading custom exercises:", e);
     }
@@ -76,38 +119,29 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
 
     setIsAdding(true);
     try {
-      // Check if it already exists (either in predefined or custom)
       const predefinedExists = exercises.some(
         (ex) => ex.toLowerCase() === newExerciseName.trim().toLowerCase(),
       );
 
       if (predefinedExists) {
-        Alert.alert(
-          "Already Exists",
-          "This exercise already exists in the predefined list.",
-        );
+        Alert.alert("Already Exists", "This exercise already exists in the predefined list.");
         setIsAdding(false);
         return;
       }
 
-      const customExists = await customExerciseExists(
-        user.uid,
-        category,
-        newExerciseName,
+      const existingCustoms = await exerciseApi.list(category);
+      const customExists = existingCustoms.some(
+        (c) => c.name.toLowerCase() === newExerciseName.trim().toLowerCase()
       );
       if (customExists) {
-        Alert.alert(
-          "Already Exists",
-          "You've already added this custom exercise.",
-        );
+        Alert.alert("Already Exists", "You've already added this custom exercise.");
         setIsAdding(false);
         return;
       }
 
-      await addCustomExercise(user.uid, category, newExerciseName.trim());
+      await exerciseApi.create({ category, name: newExerciseName.trim() });
       await loadCustomExercises();
 
-      // Auto-select the newly added exercise
       onChange(newExerciseName.trim());
       setNewExerciseName("");
       setShowAddModal(false);
@@ -119,7 +153,7 @@ export default function ExercisePicker({ category, value, onChange }: Props) {
     setIsAdding(false);
   };
 
-  const exercises = category ? EXERCISES[category] : [];
+  const exercises = category ? catalogExercises : [];
 
   // Combine predefined and custom exercises
   const allExercises = useMemo(() => {

@@ -1,5 +1,4 @@
-import { Workout, WorkoutSet } from "../db/workouts";
-import { BodyWeight } from "../db/weights";
+import { Workout, BodyWeight } from "../services/api";
 
 /* =========================
    TYPES
@@ -85,6 +84,133 @@ export function generateInsights(
   // Sort by priority
   const priorityOrder = { high: 0, medium: 1, low: 2 };
   return insights.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+}
+
+export type AnalyticsPeriod = "week" | "month" | "all";
+
+export interface AnalyticsStats {
+  totalWorkouts: number;
+  todayWorkouts: number;
+  totalSets: number;
+  totalReps: number;
+  totalVolume: number;
+  latestWeight: number;
+  weightDelta: number;
+  avgWeight: number;
+  weightValues: number[];
+  weightSeries: BodyWeight[];
+  weeklyData: number[];
+  categories: [string, number][];
+  streak: number;
+  goalProgress: number;
+  personalRecords: { exercise: string; weight: number; reps: number; date: string }[];
+  muscleHeatmap: { muscle: string; count: number; intensity: number }[];
+}
+
+export function calculateAnalyticsStats(
+  workouts: Workout[],
+  weights: BodyWeight[],
+  period: AnalyticsPeriod = "all",
+  weeklyGoal = 1,
+): AnalyticsStats {
+  const now = new Date();
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const filterByPeriod = (date: string) => {
+    const value = new Date(date);
+    if (period === "week") return value >= weekAgo;
+    if (period === "month") return value >= monthAgo;
+    return true;
+  };
+
+  const filteredWorkouts = workouts.filter((workout) => filterByPeriod(workout.date));
+  const sortedWeights = [...weights].sort((a, b) => a.date.localeCompare(b.date));
+  const filteredWeights = sortedWeights.filter((weight) => filterByPeriod(weight.date));
+  const weightValues = filteredWeights.map((weight) => weight.weight);
+  const today = toDateKey(now);
+  const todayWorkouts = workouts.filter((workout) => workout.date === today).length;
+
+  const totalSets = filteredWorkouts.reduce((sum, workout) => sum + workout.sets.length, 0);
+  const totalReps = filteredWorkouts.reduce(
+    (sum, workout) => sum + workout.sets.reduce((sets, set) => sets + set.reps, 0),
+    0,
+  );
+  const totalVolume = filteredWorkouts.reduce(
+    (sum, workout) => sum + workout.sets.reduce((sets, set) => sets + set.reps * set.weight, 0),
+    0,
+  );
+
+  const latestWeight = weightValues[weightValues.length - 1] || 0;
+  const firstWeight = weightValues[0] || 0;
+  const weightDelta = latestWeight - firstWeight;
+  const avgWeight = weightValues.length
+    ? weightValues.reduce((sum, value) => sum + value, 0) / weightValues.length
+    : 0;
+
+  const weeklyData = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(now.getTime() - (6 - index) * 24 * 60 * 60 * 1000);
+    const dateKey = toDateKey(date);
+    return workouts.filter((workout) => workout.date === dateKey).length;
+  });
+
+  const categoryMap = new Map<string, number>();
+  for (const workout of filteredWorkouts) {
+    const category = workout.category || "Other";
+    categoryMap.set(category, (categoryMap.get(category) || 0) + 1);
+  }
+  const categories = [...categoryMap.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5) as [string, number][];
+
+  const personalRecordMap = new Map<string, { exercise: string; weight: number; reps: number; date: string }>();
+  for (const workout of workouts) {
+    const bestSet = workout.sets.reduce(
+      (best, set) => (set.weight > best.weight ? set : best),
+      { weight: 0, reps: 0 },
+    );
+    const current = personalRecordMap.get(workout.exercise);
+    if (!current || bestSet.weight > current.weight) {
+      personalRecordMap.set(workout.exercise, {
+        exercise: workout.exercise,
+        weight: bestSet.weight,
+        reps: bestSet.reps,
+        date: workout.date,
+      });
+    }
+  }
+
+  const recentCutoff = new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000);
+  const heatmapCounts = new Map<string, number>();
+  for (const workout of workouts) {
+    if (new Date(workout.date) >= recentCutoff && workout.category) {
+      heatmapCounts.set(workout.category, (heatmapCounts.get(workout.category) || 0) + 1);
+    }
+  }
+  const maxHeatmapCount = Math.max(1, ...heatmapCounts.values());
+  const muscleHeatmap = [...heatmapCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([muscle, count]) => ({ muscle, count, intensity: count / maxHeatmapCount }));
+
+  return {
+    totalWorkouts: filteredWorkouts.length,
+    todayWorkouts,
+    totalSets,
+    totalReps,
+    totalVolume,
+    latestWeight,
+    weightDelta,
+    avgWeight,
+    weightValues,
+    weightSeries: filteredWeights,
+    weeklyData,
+    categories,
+    streak: calculateStreak(workouts),
+    goalProgress: Math.min((todayWorkouts / weeklyGoal) * 100, 100),
+    personalRecords: [...personalRecordMap.values()]
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 5),
+    muscleHeatmap,
+  };
 }
 
 /* =========================
@@ -380,8 +506,6 @@ function generateWeightInsights(
 
   const latest = weights[0];
   const oldest = weights[weights.length - 1];
-  const totalChange = latest.weight - oldest.weight;
-
   // Weekly change
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const weekAgoWeight = weights.find(
@@ -527,19 +651,31 @@ function generateConsistencyInsights(workouts: Workout[], now: number): Insight[
    HELPER FUNCTIONS
    ========================= */
 
-function calculateStreak(workouts: Workout[]): number {
+function toDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseLocalDate(dateKey: string): Date {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+export function calculateStreak(workouts: Workout[], now = new Date()): number {
   const uniqueDates = [...new Set(workouts.map((w) => w.date))].sort().reverse();
   
   if (uniqueDates.length === 0) return 0;
 
-  const today = new Date();
+  const today = new Date(now);
   today.setHours(0, 0, 0, 0);
   
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
 
-  const todayStr = today.toISOString().split("T")[0];
-  const yesterdayStr = yesterday.toISOString().split("T")[0];
+  const todayStr = toDateKey(today);
+  const yesterdayStr = toDateKey(yesterday);
 
   // Streak must start from today or yesterday
   if (uniqueDates[0] !== todayStr && uniqueDates[0] !== yesterdayStr) {
@@ -547,11 +683,10 @@ function calculateStreak(workouts: Workout[]): number {
   }
 
   let streak = 0;
-  let checkDate = new Date(uniqueDates[0]);
+  let checkDate = parseLocalDate(uniqueDates[0]);
 
   for (const dateStr of uniqueDates) {
-    const currentDate = new Date(dateStr);
-    const expectedStr = checkDate.toISOString().split("T")[0];
+    const expectedStr = toDateKey(checkDate);
 
     if (dateStr === expectedStr) {
       streak++;
@@ -565,12 +700,12 @@ function calculateStreak(workouts: Workout[]): number {
 }
 
 function hasWorkedOutToday(workouts: Workout[]): boolean {
-  const today = new Date().toISOString().split("T")[0];
+  const today = toDateKey(new Date());
   return workouts.some((w) => w.date === today);
 }
 
 function getTodaysVolume(workouts: Workout[]): number {
-  const today = new Date().toISOString().split("T")[0];
+  const today = toDateKey(new Date());
   return workouts
     .filter((w) => w.date === today)
     .reduce((sum, w) => {

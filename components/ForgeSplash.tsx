@@ -13,9 +13,9 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useTheme } from "../theme/theme";
+import { getVersionLabel } from "../utils/appVersion";
 
 const { width, height } = Dimensions.get("window");
-const APP_VERSION = "1.0.0";
 
 interface ForgeSplashProps {
   onFinish: () => void;
@@ -219,7 +219,7 @@ export function ForgeSplash({ onFinish, duration = 2500 }: ForgeSplashProps) {
 
       {/* Version at bottom */}
       <Animated.View style={[styles.versionContainer, versionAnimatedStyle]}>
-        <Text style={styles.version}>v{APP_VERSION}</Text>
+        <Text style={styles.version}>{getVersionLabel()}</Text>
       </Animated.View>
     </LinearGradient>
   );

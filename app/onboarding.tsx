@@ -4,24 +4,28 @@
  * Multi-step onboarding for new users:
  * 1. Intro - Welcome screen with animated gym illustration
  * 2. Info - Feature highlights
- * 3. Height - Collect user height for personalization
+ * 3. Profile - Collect name (required), height & goal (optional) for personalization
  *
- * Premium UI with consistent theming throughout.
+ * Fast & friction-free onboarding. Users can always complete profile later.
  */
 
 import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
-import { HeightPickerScreen } from "../components/HeightPickerScreen";
+import { OnboardingProfileSetup } from "../components/OnboardingProfileSetup";
 import { OnboardingInfo } from "../components/OnboardingInfo";
 import { OnboardingIntro } from "../components/OnboardingIntro";
-import { updateUserProfile } from "../db/profiles";
+import { userApi } from "../services/api";
+import { useToast } from "../context/ToastContext";
 
-type OnboardingStep = "intro" | "info" | "height";
+type OnboardingStep = "intro" | "info" | "profile";
 
 export default function OnboardingScreen() {
-  const { user } = useAuth();
+  const { user, retryBootstrap, setAwaitingEmailVerification } = useAuth();
+  const queryClient = useQueryClient();
   const router = useRouter();
+  const { showToast } = useToast();
   const [step, setStep] = useState<OnboardingStep>("intro");
 
   const handleIntroStart = useCallback(() => {
@@ -29,27 +33,54 @@ export default function OnboardingScreen() {
   }, []);
 
   const handleInfoNext = useCallback(() => {
-    setStep("height");
+    setStep("profile");
   }, []);
 
-  const handleHeightComplete = useCallback(
-    async (heightCm: number) => {
+  const handleProfileComplete = useCallback(
+    async (
+      name: string,
+      age: number | null,
+      fitnessGoal: "strength" | "muscle" | "endurance" | "weight-loss" | "general",
+      heightCm: number | null,
+      weightKg: number | null
+    ) => {
       if (!user) return;
 
       try {
-        // Save height to profile
-        await updateUserProfile(user.uid, { height: heightCm });
-        console.log("✅ Height saved:", heightCm, "cm");
+        // Save profile data
+        const profileData: any = {
+          displayName: name,
+          age: age,
+          fitnessGoal: fitnessGoal,
+        };
 
-        // Navigate to main app
-        router.replace("/(tabs)");
+        if (heightCm !== null) {
+          profileData.height = heightCm;
+        }
+
+        if (weightKg !== null) {
+          profileData.weight = weightKg;
+        }
+
+        const updatedProfile = await userApi.updateProfile(profileData);
+        queryClient.setQueryData(["profile"], updatedProfile);
+        await queryClient.invalidateQueries({ queryKey: ["profile"] });
+        await queryClient.invalidateQueries({ queryKey: ["weights"] });
+        console.log("✅ Profile setup complete:", profileData);
+
+        setAwaitingEmailVerification(false);
+        await retryBootstrap();
+        router.replace("/");
       } catch (error) {
-        console.error("Failed to save height:", error);
-        // Still navigate even if save fails
-        router.replace("/(tabs)");
+        console.error("Failed to save profile:", error);
+        showToast({
+          message: "Couldn't save your profile. You can update it anytime in Settings.",
+          type: "warning",
+          duration: 5000,
+        });
       }
     },
-    [user, router],
+    [user, queryClient, retryBootstrap, router, setAwaitingEmailVerification, showToast],
   );
 
   // Render current step
@@ -58,10 +89,10 @@ export default function OnboardingScreen() {
       return <OnboardingIntro onStart={handleIntroStart} />;
     case "info":
       return <OnboardingInfo onNext={handleInfoNext} />;
-    case "height":
+    case "profile":
       return (
-        <HeightPickerScreen
-          onComplete={handleHeightComplete}
+        <OnboardingProfileSetup
+          onComplete={handleProfileComplete}
           showBackButton
           onBack={() => setStep("info")}
         />
@@ -70,3 +101,5 @@ export default function OnboardingScreen() {
       return <OnboardingIntro onStart={handleIntroStart} />;
   }
 }
+
+

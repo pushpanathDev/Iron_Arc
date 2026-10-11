@@ -8,7 +8,6 @@
  * - Safety guard prevents getting stuck
  */
 
-import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useRef, useState } from "react";
 import { Dimensions, StyleSheet, Text, View } from "react-native";
@@ -22,6 +21,8 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
+
+import { getVersionLabel } from "../utils/appVersion";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -319,7 +320,7 @@ export function AnimatedSplashScreen({
         <Text style={styles.creditsText}>Designed & Built by</Text>
         <Text style={styles.developerName}>Pushpanath</Text>
         <Text style={styles.versionText}>
-          v{Constants.expoConfig?.version || "1.1.1"}
+          {getVersionLabel()}
         </Text>
       </Animated.View>
     </Animated.View>

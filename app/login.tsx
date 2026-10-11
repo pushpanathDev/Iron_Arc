@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import Constants from "expo-constants";
 import { useRouter } from "expo-router";
 import {
   GoogleSignin,
@@ -42,6 +41,7 @@ import { EmailVerificationPrompt } from "../components/EmailVerificationPrompt";
 import { EmailConfirmationModal } from "../components/EmailConfirmationModal";
 import { sendVerificationEmail } from "../utils/verificationService";
 import { userApi } from "../services/api";
+import { getVersionLabel } from "../utils/appVersion";
 import {
   validateEmail,
   validatePasswordStrength,
@@ -932,7 +932,7 @@ export default function LoginScreen() {
               opacity: 0.6,
             }}
           >
-            Version {Constants.expoConfig?.version || "1.1.1"}
+            {getVersionLabel()}
           </Text>
         </Animated.View>
       </ScrollView>

@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import Constants from "expo-constants";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -50,6 +49,7 @@ import { exportToCSV, exportToPDF } from "../../utils/exportData";
 import { createPageLogger } from "../../utils/logger";
 import { verificationMessages } from "../../constants/verificationMessages";
 import { clearVerificationSent } from "../../utils/verificationService";
+import { getVersionLabel } from "../../utils/appVersion";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const log = createPageLogger("Profile");
@@ -1777,19 +1777,10 @@ export default function ProfileScreen() {
           style={{
             ...typography.bodyMedium,
             color: colors.textPrimary,
-            marginBottom: spacing.xxs,
-          }}
-        >
-          Iron Arc
-        </Text>
-        <Text
-          style={{
-            ...typography.caption,
-            color: colors.textSecondary,
             marginBottom: spacing.xs,
           }}
         >
-          Version {Constants.expoConfig?.version || "1.1.1"}
+          Iron Arc {getVersionLabel()}
         </Text>
         <Text style={{ ...typography.caption, color: colors.textMuted }}>
           Designed & Built by Pushpanath

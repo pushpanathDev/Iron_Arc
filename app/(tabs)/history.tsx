@@ -499,7 +499,7 @@ export default function History() {
                 marginBottom: spacing.md,
               }}
             >
-              <Ionicons name="barbell-outline" size={40} color="#fff" />
+              <Ionicons name="barbell-outline" size={40} color={colors.onAccent} />
             </LinearGradient>
             <Text
               style={{
@@ -703,7 +703,7 @@ export default function History() {
               borderRadius: radius.md,
             }}
           >
-            <Text style={{ color: "#fff", fontWeight: "600", fontSize: 14 }}>
+            <Text style={{ color: colors.onAccent, fontWeight: "600", fontSize: 14 }}>
               UNDO
             </Text>
           </Pressable>
@@ -809,7 +809,7 @@ function SwipeRow({
         }}
       >
         <Pressable onPress={onDelete} style={{ padding: spacing.md }}>
-          <Ionicons name="trash" size={22} color="#FFF" />
+          <Ionicons name="trash" size={22} color={colors.onDanger} />
         </Pressable>
       </View>
 

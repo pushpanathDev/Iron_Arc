@@ -1,101 +1,171 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useState, type Ref } from "react";
-import { Pressable, Text, TextInput, View, type StyleProp, type TextInputProps, type ViewStyle } from "react-native";
+import { MaterialIcons } from "@expo/vector-icons";
+import { useCallback, useEffect, useRef, useState, type Ref } from "react";
+import { Text, TextInput, View, type StyleProp, type TextInputProps, type ViewStyle } from "react-native";
+import Animated, { interpolateColor, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { useTheme } from "../../theme/theme";
-import { radius, spacing, touchTarget, typography } from "../../theme/tokens";
+import { alpha, motion, radius, size, spacing, typography, withAlpha } from "../../theme/tokens";
+import { FadingMessage } from "./FadingMessage";
+import { PressableScale } from "./PressableScale";
 
 export type TextFieldProps = Omit<TextInputProps, "style" | "secureTextEntry"> & {
   label: string;
+  /** Short note on the right of the label, e.g. "Required". */
+  labelHint?: string;
   helperText?: string;
   error?: string | null;
   variant?: "text" | "password";
+  /** Keep one line under the field for errors so showing one never shifts the layout. */
+  reserveMessageSpace?: boolean;
   containerStyle?: StyleProp<ViewStyle>;
   ref?: Ref<TextInput>;
 };
 
+/** Filled text field: no border, background lifts on focus. */
 export function TextField({
   label,
+  labelHint,
   helperText,
   error,
   variant = "text",
+  reserveMessageSpace = false,
   containerStyle,
   editable = true,
   onFocus,
   onBlur,
+  onSelectionChange,
   ref,
   ...inputProps
 }: TextFieldProps) {
   const { colors } = useTheme();
-  const [focused, setFocused] = useState(false);
   const [hidden, setHidden] = useState(true);
   const isPassword = variant === "password";
   const hasError = !!error;
+  const message = error || helperText;
 
-  const borderColor = hasError ? colors.danger : focused ? colors.accent : colors.borderStrong;
+  const inputRef = useRef<TextInput | null>(null);
+  const selection = useRef<{ start: number; end: number } | null>(null);
+  const setRefs = useCallback(
+    (node: TextInput | null) => {
+      inputRef.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) (ref as { current: TextInput | null }).current = node;
+    },
+    [ref],
+  );
+
+  const toggleVisibility = () => {
+    const saved = selection.current;
+    setHidden((h) => !h);
+    // Switching secure entry re-creates the native text on Android and moves the cursor; put it back.
+    if (saved) requestAnimationFrame(() => inputRef.current?.setSelection(saved.start, saved.end));
+  };
+
+  const focus = useSharedValue(0);
+  const fill = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(focus.value, [0, 1], [colors.card, colors.raised]),
+  }));
+  useEffect(() => {
+    if (!editable) focus.value = 0;
+  }, [editable, focus]);
 
   return (
-    <View style={[{ gap: spacing.xxs }, containerStyle]}>
-      <Text style={[typography.bodySmall, { color: colors.text, fontWeight: "600" }]}>{label}</Text>
-      <View
-        style={{
-          minHeight: touchTarget,
-          flexDirection: "row",
-          alignItems: "center",
-          borderRadius: radius.md,
-          borderWidth: focused || hasError ? 2 : 1,
-          borderColor,
-          backgroundColor: editable ? colors.raised : colors.bg,
-          paddingLeft: spacing.sm,
-        }}
+    <View style={[{ gap: spacing.sm }, containerStyle]}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
+        <Text style={[typography.labelMd, { color: colors.textSecondary }]}>{label}</Text>
+        {labelHint && (
+          <Text
+            style={[typography.labelSm, { color: withAlpha(colors.textSecondary, alpha.muted) }]}
+            importantForAccessibility="no"
+            accessibilityElementsHidden
+          >
+            {labelHint}
+          </Text>
+        )}
+      </View>
+      <Animated.View
+        style={[
+          {
+            minHeight: size.control,
+            borderRadius: radius.lg,
+            justifyContent: "center",
+            borderWidth: hasError ? size.divider : 0,
+            borderColor: colors.danger,
+          },
+          fill,
+        ]}
       >
         <TextInput
-          ref={ref}
+          ref={setRefs}
           {...inputProps}
           editable={editable}
           secureTextEntry={isPassword && hidden}
           autoCapitalize={isPassword ? "none" : inputProps.autoCapitalize}
           autoCorrect={isPassword ? false : inputProps.autoCorrect}
-          accessibilityLabel={label}
+          accessibilityLabel={labelHint ? `${label}, ${labelHint.toLowerCase()}` : label}
           accessibilityHint={error ?? helperText}
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={withAlpha(colors.textSecondary, alpha.placeholder)}
           selectionColor={colors.accent}
+          cursorColor={colors.accent}
+          onSelectionChange={(e) => {
+            selection.current = e.nativeEvent.selection;
+            onSelectionChange?.(e);
+          }}
           onFocus={(e) => {
-            setFocused(true);
+            focus.value = withTiming(1, { duration: motion.focusMs });
             onFocus?.(e);
           }}
           onBlur={(e) => {
-            setFocused(false);
+            focus.value = withTiming(0, { duration: motion.focusMs });
             onBlur?.(e);
           }}
           style={[
-            typography.body,
+            typography.bodyMd,
             {
-              flex: 1,
+              minHeight: size.control,
               color: editable ? colors.text : colors.textMuted,
-              paddingVertical: spacing.sm,
-              paddingRight: isPassword ? 0 : spacing.sm,
+              paddingLeft: spacing.lg,
+              paddingRight: isPassword ? size.control : spacing.lg,
+              paddingVertical: 0,
             },
           ]}
         />
         {isPassword && (
-          <Pressable
-            onPress={() => setHidden((h) => !h)}
+          <PressableScale
+            onPress={toggleVisibility}
             accessibilityRole="button"
             accessibilityLabel={hidden ? "Show password" : "Hide password"}
-            style={{ width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center" }}
+            style={{
+              position: "absolute",
+              top: 0,
+              right: 0,
+              width: size.control,
+              height: size.control,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
           >
-            <Ionicons name={hidden ? "eye-outline" : "eye-off-outline"} size={22} color={colors.textSecondary} />
-          </Pressable>
+            {({ pressed }) => (
+              <MaterialIcons
+                name={hidden ? "visibility" : "visibility-off"}
+                size={size.icon}
+                color={pressed ? colors.text : colors.textSecondary}
+              />
+            )}
+          </PressableScale>
         )}
-      </View>
-      {hasError ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xxs }} accessibilityLiveRegion="polite">
-          <Ionicons name="alert-circle" size={16} color={colors.danger} />
-          <Text style={[typography.bodySmall, { color: colors.danger, flex: 1 }]}>{error}</Text>
-        </View>
-      ) : helperText ? (
-        <Text style={[typography.bodySmall, { color: colors.textSecondary }]}>{helperText}</Text>
-      ) : null}
+      </Animated.View>
+      {reserveMessageSpace ? (
+        <FadingMessage message={message} color={hasError ? colors.danger : colors.textSecondary} live={hasError} />
+      ) : (
+        !!message && (
+          <Text
+            accessibilityLiveRegion={hasError ? "polite" : "none"}
+            style={[typography.labelSm, { color: hasError ? colors.danger : colors.textSecondary }]}
+          >
+            {message}
+          </Text>
+        )
+      )}
     </View>
   );
 }

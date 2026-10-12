@@ -15,11 +15,13 @@ import {
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { SplashScreen, Stack, useRouter, useSegments } from "expo-router";
+import { useFonts } from "expo-font";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ActivityIndicator, Animated as NativeAnimated, AppState, Platform, Pressable, Text, View } from "react-native";
 import type { AppStateStatus } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import "react-native-reanimated";
 import { SafeAreaInsetsContext, SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -33,8 +35,9 @@ import { useProfile } from "../hooks/useProfile";
 import { useNotificationScheduling } from "../hooks/useNotificationScheduling";
 import { initNotifications } from "../notifications/notificationService";
 import { isNetworkApiError } from "../services/api";
+import { fontAssets } from "../theme/fonts";
 import { useTheme } from "../theme/theme";
-import { spacing, touchTarget, typography } from "../theme/tokens";
+import { darkColors, spacing, touchTarget, typography, semibold } from "../theme/tokens";
 import { configureGoogle } from "../utils/googleSignin";
 
 configureGoogle();
@@ -333,7 +336,7 @@ function BootstrapState() {
   return (
     <View style={stateContainerStyle}>
       <View style={loaderStyle}>
-        <ActivityIndicator size="large" color="#10B981" />
+        <ActivityIndicator size="large" color={darkColors.accent} />
         <NativeAnimated.View
           style={{
             ...loaderPulseStyle,
@@ -418,9 +421,9 @@ function OfflineBanner({ topInset, onRetry }: { topInset: number; onRetry: () =>
         borderBottomColor: colors.border,
       }}
     >
-      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.md, minHeight: touchTarget }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingLeft: spacing.lg, minHeight: touchTarget }}>
         <Ionicons name="cloud-offline-outline" size={18} color={colors.textSecondary} />
-        <Text style={[typography.bodySmall, { color: colors.textSecondary, flex: 1 }]}>
+        <Text style={[typography.bodyMd, { color: colors.textSecondary, flex: 1 }]}>
           Offline. Showing saved data.
         </Text>
         <Pressable
@@ -432,7 +435,7 @@ function OfflineBanner({ topInset, onRetry }: { topInset: number; onRetry: () =>
           style={({ pressed }) => ({
             minHeight: touchTarget,
             minWidth: touchTarget,
-            paddingHorizontal: spacing.md,
+            paddingHorizontal: spacing.lg,
             alignItems: "center",
             justifyContent: "center",
             backgroundColor: pressed ? colors.border : "transparent",
@@ -441,7 +444,7 @@ function OfflineBanner({ topInset, onRetry }: { topInset: number; onRetry: () =>
           {retrying ? (
             <ActivityIndicator size="small" color={colors.accent} />
           ) : (
-            <Text style={[typography.bodySmall, { color: colors.accent, fontWeight: "700" }]}>Retry</Text>
+            <Text style={[typography.bodyMd, { color: colors.accent, ...semibold }]}>Retry</Text>
           )}
         </Pressable>
       </View>
@@ -474,7 +477,7 @@ const stateContainerStyle = {
   justifyContent: "center" as const,
   alignItems: "center" as const,
   padding: 24,
-  backgroundColor: "#0B1220",
+  backgroundColor: darkColors.bg,
 };
 
 const stateOverlayStyle = {
@@ -488,9 +491,9 @@ const stateOverlayStyle = {
 };
 
 const stateTitleStyle = {
-  color: "#FFFFFF",
+  color: darkColors.text,
   fontSize: 22,
-  fontWeight: "700" as const,
+  ...semibold,
   textAlign: "center" as const,
 };
 
@@ -508,11 +511,11 @@ const loaderPulseStyle = {
   height: 68,
   borderRadius: 34,
   borderWidth: 2,
-  borderColor: "#10B981",
+  borderColor: darkColors.accent,
 };
 
 const stateMessageStyle = {
-  color: "#B8C2D1",
+  color: darkColors.textSecondary,
   fontSize: 15,
   textAlign: "center" as const,
   marginTop: 10,
@@ -524,13 +527,13 @@ const retryButtonStyle = {
   paddingHorizontal: 24,
   paddingVertical: 12,
   borderRadius: 8,
-  backgroundColor: "#10B981",
+  backgroundColor: darkColors.accent,
 };
 
 const retryButtonTextStyle = {
-  color: "#FFFFFF",
+  color: darkColors.onAccent,
   fontSize: 16,
-  fontWeight: "700" as const,
+  ...semibold,
 };
 
 /**
@@ -554,6 +557,9 @@ export default function RootLayout() {
   const [dbReady, setDbReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [nativeSplashHidden, setNativeSplashHidden] = useState(false);
+  const [fontsLoaded, fontError] = useFonts(fontAssets);
+  // A font failure falls back to the system font rather than blocking startup.
+  const fontsReady = fontsLoaded || !!fontError;
 
   // Subscribe to AppState changes for focusManager
   useEffect(() => {
@@ -587,18 +593,6 @@ export default function RootLayout() {
           console.log(`[RootLayout] ✓ DB ready (${Date.now() - initStartTime}ms)`);
         }
 
-        // Hide the native splash screen now (allow animated splash to show)
-        if (mounted) {
-          try {
-            await SplashScreen.hideAsync();
-            setNativeSplashHidden(true);
-            console.log(`[RootLayout] ✓ Native splash hidden (${Date.now() - initStartTime}ms)`);
-          } catch (e) {
-            console.warn("[RootLayout] Native splash already hidden or error:", e);
-            setNativeSplashHidden(true);
-          }
-        }
-
       } catch (error: any) {
         console.error("[RootLayout] Initialization error:", error?.message || error);
         setInitError(error?.message || "Unknown error");
@@ -606,12 +600,6 @@ export default function RootLayout() {
         // Still mark as ready to allow recovery UI or fallback
         if (mounted) {
           setDbReady(true);
-          try {
-            await SplashScreen.hideAsync();
-            setNativeSplashHidden(true);
-          } catch (e) {
-            // Ignore nested errors
-          }
         }
       }
     };
@@ -622,6 +610,18 @@ export default function RootLayout() {
       mounted = false;
     };
   }, []);
+
+  // Hide the native splash only once init has finished and fonts are loaded.
+  useEffect(() => {
+    if (!dbReady || !fontsReady) return;
+    if (fontError) console.warn("[RootLayout] Font loading failed, using system font:", fontError);
+    SplashScreen.hideAsync()
+      .catch((e) => console.warn("[RootLayout] Native splash already hidden or error:", e))
+      .finally(() => setNativeSplashHidden(true));
+  }, [dbReady, fontsReady, fontError]);
+
+  // Keep the native splash up until fonts are ready.
+  if (!fontsReady) return null;
 
   // Show error if initialization failed
   if (initError) {
@@ -642,6 +642,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
+        <KeyboardProvider>
         <PersistQueryClientProvider
           client={queryClient}
           persistOptions={{ persister: asyncStoragePersister }}
@@ -657,6 +658,7 @@ export default function RootLayout() {
             </NavigationThemeBridge>
           </AppThemeProvider>
         </PersistQueryClientProvider>
+        </KeyboardProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

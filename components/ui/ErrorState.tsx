@@ -27,13 +27,13 @@ export function ErrorState({
   return (
     <View
       accessibilityLiveRegion="polite"
-      style={[{ alignItems: "center", paddingVertical: spacing.xl, paddingHorizontal: spacing.lg, gap: spacing.sm }, style]}
+      style={[{ alignItems: "center", paddingVertical: spacing.xxl, paddingHorizontal: spacing.xl, gap: spacing.md }, style]}
     >
       <Ionicons name={icon} size={36} color={colors.danger} accessibilityElementsHidden importantForAccessibility="no" />
-      <Text accessibilityRole="header" style={[typography.heading, { color: colors.text, textAlign: "center" }]}>
+      <Text accessibilityRole="header" style={[typography.headlineMd, { color: colors.text, textAlign: "center" }]}>
         {title}
       </Text>
-      <Text style={[typography.body, { color: colors.textSecondary, textAlign: "center", maxWidth: 320 }]}>{message}</Text>
+      <Text style={[typography.bodyLg, { color: colors.textSecondary, textAlign: "center", maxWidth: 320 }]}>{message}</Text>
       {onRetry && (
         <Button
           title={retrying ? "Retrying…" : "Retry"}
@@ -41,7 +41,7 @@ export function ErrorState({
           variant="secondary"
           onPress={onRetry}
           loading={retrying}
-          style={{ marginTop: spacing.xs, alignSelf: "center" }}
+          style={{ marginTop: spacing.sm, alignSelf: "center" }}
         />
       )}
     </View>

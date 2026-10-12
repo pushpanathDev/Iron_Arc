@@ -609,9 +609,9 @@ export function PlanCriteriaSheet({
             <Ionicons
               name={isGenerating ? "hourglass-outline" : "sparkles"}
               size={20}
-              color="#fff"
+              color={colors.onAccent}
             />
-            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 17 }}>
+            <Text style={{ color: colors.onAccent, fontWeight: "700", fontSize: 17 }}>
               {isGenerating
                 ? "Generating your plan…"
                 : isRegenerate

@@ -1,43 +1,40 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithCredential,
   signInWithEmailAndPassword,
 } from "firebase/auth";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
+  BackHandler,
   Image,
+  Keyboard,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { 
-  FadeInDown, 
-  FadeInUp,
-  interpolate,
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
+import Animated, {
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
+  withTiming,
 } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { useAuth } from "../auth/AuthContext";
 import { auth } from "../firebase/config";
 import { useTheme } from "../theme/theme";
+import { alpha, motion, radius, size, spacing, touchTarget, tracking, typography, withAlpha } from "../theme/tokens";
 import { ForgotPasswordModal } from "../components/ForgotPasswordModal";
 import { EmailVerificationPrompt } from "../components/EmailVerificationPrompt";
 import { EmailConfirmationModal } from "../components/EmailConfirmationModal";
 import { sendVerificationEmail } from "../utils/verificationService";
 import { userApi } from "../services/api";
 import { getVersionLabel } from "../utils/appVersion";
-import { Button } from "../components/ui/Button";
+import { Button, FadingMessage, GoogleLogo, PressableScale, TextField } from "../components/ui";
 import { getGoogleSignin, isGoogleSignInAvailable } from "../utils/googleSignin";
 import {
   validateEmail,
@@ -46,24 +43,27 @@ import {
   getEmailValidationMessage,
 } from "../utils/emailPasswordValidation";
 
+const APP_LOGO = require("../assets/images/icon.png");
+const PASSWORD_RULES = "At least 8 characters, with upper and lower case letters and a number.";
+
 export default function LoginScreen() {
-  const router = useRouter();
-  const { colors, spacing, radius, typography, shadows } = useTheme();
+  const { colors } = useTheme();
   const {
     user,
     loading: authLoading,
     retryBootstrap,
     setAwaitingEmailVerification,
     awaitingEmailVerification,
+    logout,
   } = useAuth();
   const insets = useSafeAreaInsets();
   const googleAvailable = isGoogleSignInAvailable();
+  const passwordRef = useRef<TextInput>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSignup, setIsSignup] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [showEmailVerification, setShowEmailVerification] = useState(false);
   const [showEmailConfirmation, setShowEmailConfirmation] = useState(false);
@@ -73,70 +73,93 @@ export default function LoginScreen() {
   const [verificationOrigin, setVerificationOrigin] = useState<
     "signup" | "signin" | null
   >(null);
-  const [passwordStrength, setPasswordStrength] = useState(0);
   const [emailValidationWarning, setEmailValidationWarning] = useState<
     string | null
   >(null);
   const [emailValidationError, setEmailValidationError] = useState<
     string | null
   >(null);
+  // Which button started the current request, so only that one shows a spinner.
+  const [pendingAction, setPendingAction] = useState<"email" | "google" | null>(null);
+  const submittingRef = useRef(false);
 
-  // Animation for password visibility eye icon
-  const eyeProgress = useSharedValue(0);
-
-  // Animated style for eye icon rotation
-  const eyeAnimStyle = useAnimatedStyle(() => ({
-    transform: [
-      {
-        rotateZ: `${interpolate(eyeProgress.value, [0, 1], [0, 15])}deg`,
-      },
-    ],
-  }));
-
-  const togglePasswordVisibility = () => {
-    setShowPassword(!showPassword);
-    eyeProgress.value = withSpring(showPassword ? 0 : 1);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
-
-  /* Handle email input - show validation feedback */
+  /* Email input: errors clear on edit and come back on blur or submit; warnings stay live. */
   const handleEmailChange = (text: string) => {
     setEmail(text);
-    
-    // Show email validation feedback if they enter something
+    setEmailValidationError(null);
+    setError(null);
+
     if (text.length > 5) {
       const validation = validateEmail(text);
-      
-      // Check for hard errors (block signup)
-      if (!validation.isValid) {
-        setEmailValidationError(validation.errors[0]);
-        setEmailValidationWarning(null);
-      } else {
-        setEmailValidationError(null);
-        // Check for warnings/suspicious patterns (allow but warn)
-        if (validation.warnings.length > 0) {
-          setEmailValidationWarning(validation.warnings[0]);
-        } else {
-          setEmailValidationWarning(null);
-        }
-      }
+      setEmailValidationWarning(validation.isValid && validation.warnings.length > 0 ? validation.warnings[0] : null);
     } else {
-      setEmailValidationError(null);
       setEmailValidationWarning(null);
     }
   };
 
-  /* Handle password input - show strength feedback */
+  const handleEmailBlur = () => {
+    if (email.length <= 5) return;
+    const validation = validateEmail(email);
+    if (!validation.isValid) setEmailValidationError(validation.errors[0]);
+  };
+
   const handlePasswordChange = (text: string) => {
     setPassword(text);
-    
-    // Update password strength for signup mode
-    if (isSignup && text.length > 0) {
-      const strength = validatePasswordStrength(text);
-      setPasswordStrength(strength.score);
-    } else {
-      setPasswordStrength(0);
+    setError(null);
+  };
+
+  /* Sign in <-> Create account: fade out, swap, fade in. */
+  const modeOpacity = useSharedValue(1);
+  const modeStyle = useAnimatedStyle(() => ({ opacity: modeOpacity.value }));
+  const applyMode = useCallback(
+    (toSignup: boolean) => {
+      setIsSignup(toSignup);
+      setError(null);
+      setEmailValidationError(null);
+      modeOpacity.value = withTiming(1, { duration: motion.modeMs / 2 });
+    },
+    [modeOpacity],
+  );
+  const switchMode = useCallback(
+    (toSignup: boolean) => {
+      modeOpacity.value = withTiming(0, { duration: motion.modeMs / 2 }, () => {
+        runOnJS(applyMode)(toSignup);
+      });
+    },
+    [modeOpacity, applyMode],
+  );
+
+  // Sign up is a mode of this screen, so system back returns to sign in instead of exiting.
+  useEffect(() => {
+    if (!isSignup) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      switchMode(false);
+      return true;
+    });
+    return () => sub.remove();
+  }, [isSignup, switchMode]);
+
+  /* One request at a time: ignores taps that land before the loading state re-renders. */
+  const runOnce = async (action: "email" | "google", task: () => Promise<void>) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setPendingAction(action);
+    Keyboard.dismiss();
+    try {
+      await task();
+    } finally {
+      submittingRef.current = false;
+      setPendingAction(null);
     }
+  };
+
+  const handleUseDifferentAccount = async () => {
+    setShowEmailVerification(false);
+    setVerificationUser(null);
+    setVerificationOrigin(null);
+    setError(null);
+    await logout();
+    setAwaitingEmailVerification(false);
   };
 
   /* EMAIL / PASSWORD AUTH */
@@ -395,6 +418,7 @@ export default function LoginScreen() {
       }
     } catch (err: any) {
       if (err.code === statusCodes.SIGN_IN_CANCELLED) return;
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       if (err.code === "auth/account-exists-with-different-credential") {
         setError("An account already exists with the same email but different sign-in credentials.");
       } else {
@@ -411,536 +435,231 @@ export default function LoginScreen() {
   if ((user || authLoading) && !awaitingEmailVerification) {
     return (
       <View
-        style={{
-          flex: 1,
-          backgroundColor: colors.background,
-          justifyContent: "center",
-          alignItems: "center",
-        }}
+        style={{ flex: 1, backgroundColor: colors.bg, justifyContent: "center", alignItems: "center" }}
+        accessibilityLabel="Signing in"
       >
         <ActivityIndicator size="large" color={colors.accent} />
       </View>
     );
   }
 
+  const passwordRuleError = isSignup && password ? validatePasswordStrength(password).errors[0] : undefined;
+  const passwordHelper = isSignup
+    ? passwordRuleError ?? (password ? "Password meets the requirements." : PASSWORD_RULES)
+    : undefined;
+  const subtle = withAlpha(colors.textSecondary, alpha.muted);
+  const busy = loading || pendingAction !== null;
+  const onSignIn = () => runOnce("email", handleAuth);
+  const onGoogle = () => runOnce("google", handleGoogleSignIn);
+
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
-      <ScrollView
-        contentContainerStyle={{
-          flexGrow: 1,
-          backgroundColor: colors.background,
-          padding: spacing.lg,
-          paddingTop: spacing.lg,
-          paddingBottom: spacing.lg,
-        }}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-      >
-        {/* MAIN CONTENT CONTAINER */}
-        <View style={{ flex: 1 }}>
-          {/* LOGO / BRAND */}
-          <Animated.View
-            entering={FadeInDown.delay(100).duration(500)}
-            style={{ alignItems: "center", marginBottom: spacing.xl }}
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top, paddingBottom: insets.bottom }}>
+        <KeyboardAwareScrollView
+          contentContainerStyle={{ flexGrow: 1, paddingHorizontal: spacing.screen }}
+          bottomOffset={size.keyboardClearance}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
+          <Pressable
+            onPress={Keyboard.dismiss}
+            accessible={false}
+            style={{ flex: 1, justifyContent: "center", paddingVertical: spacing.xl }}
           >
-            <View
-              style={{
-                width: 100,
-                height: 100,
-                borderRadius: radius.full,
-                justifyContent: "center",
-                alignItems: "center",
-                marginBottom: spacing.md,
-                backgroundColor: "#000",
-                overflow: "hidden",
-                ...shadows.lg,
-              }}
-            >
-              <Image
-                source={require("../assets/images/icon.png")}
-                style={{ width: 100, height: 100 }}
-                resizeMode="contain"
-              />
-            </View>
-            <Text style={{ ...typography.h1, color: colors.textPrimary }}>
-              Iron Arc
-            </Text>
-            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-              Forge your strength
-            </Text>
-          </Animated.View>
-
-          {/* HEADER */}
-          <Animated.View entering={FadeInUp.delay(200).duration(400)}>
-            <Text
-              style={{
-                ...typography.h2,
-                color: colors.textPrimary,
-                marginBottom: spacing.xs,
-              }}
-            >
-              {isSignup ? "Create Account" : "Welcome Back"}
-            </Text>
-
-            <Text
-              style={{
-                ...typography.body,
-                color: colors.textSecondary,
-                marginBottom: spacing.lg,
-              }}
-            >
-              {isSignup
-                ? "Sign up to start tracking your workouts"
-                : "Log in to continue your fitness journey"}
-            </Text>
-          </Animated.View>
-
-          {/* FORM */}
-          <Animated.View entering={FadeInUp.delay(300).duration(400)}>
-            {/* Email */}
-            <View style={{ marginBottom: spacing.sm }}>
-              <Text
+          <Animated.View style={modeStyle}>
+            {/* Header */}
+            <View style={{ alignItems: "center", marginBottom: spacing.xxl }}>
+              <View
                 style={{
-                  ...typography.caption,
-                  color: colors.textSecondary,
-                  marginBottom: spacing.xs,
+                  width: size.logoTile,
+                  height: size.logoTile,
+                  borderRadius: radius.xl,
+                  backgroundColor: colors.raised,
+                  overflow: "hidden",
                 }}
               >
-                Email
+                <Image
+                  source={APP_LOGO}
+                  style={{ width: size.logoTile, height: size.logoTile }}
+                  resizeMode="cover"
+                  accessibilityIgnoresInvertColors
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                />
+              </View>
+              <Text
+                accessibilityRole="header"
+                accessibilityLabel="Iron Arc"
+                style={[
+                  typography.headlineLg,
+                  {
+                    color: colors.text,
+                    textTransform: "uppercase",
+                    letterSpacing: tracking.wordmark,
+                    marginTop: spacing.lg,
+                    marginBottom: spacing.sm,
+                  },
+                ]}
+              >
+                Iron Arc
               </Text>
-              <TextInput
-                placeholder="your@email.com"
-                placeholderTextColor={colors.textMuted}
-                autoCapitalize="none"
-                keyboardType="email-address"
+              <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center", maxWidth: size.textNarrow }]}>
+                {isSignup
+                  ? "Begin your training log.\nCreate your account."
+                  : "Welcome back.\nSign in to your training log."}
+              </Text>
+            </View>
+
+            {/* Form */}
+            <View style={{ gap: spacing.form }}>
+              <TextField
+                onBlur={handleEmailBlur}
+                label="Email"
+                labelHint="Required"
                 value={email}
                 onChangeText={handleEmailChange}
-                style={{
-                  backgroundColor: colors.surface,
-                  borderWidth: emailValidationError || emailValidationWarning ? 2 : 1,
-                  borderColor:
-                    emailValidationError
-                      ? colors.error
-                      : emailValidationWarning
-                        ? colors.warning || "#FFA500"
-                        : colors.cardBorder,
-                  borderRadius: radius.lg,
-                  padding: spacing.md,
-                  color: colors.textPrimary,
-                  fontSize: typography.body.fontSize,
-                }}
+                placeholder="you@example.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="email"
+                textContentType="emailAddress"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => passwordRef.current?.focus()}
+                error={emailValidationError}
+                helperText={emailValidationWarning ?? undefined}
+                reserveMessageSpace
               />
-              {emailValidationError && (
-                <View
-                  style={{
-                    marginTop: spacing.xs,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: spacing.xs,
-                  }}
-                >
-                  <Ionicons
-                    name="alert-circle"
-                    size={14}
-                    color={colors.error}
-                  />
-                  <Text
-                    style={{
-                      color: colors.error,
-                      fontSize: 12,
-                      flex: 1,
-                    }}
-                  >
-                    {emailValidationError}
-                  </Text>
-                </View>
-              )}
-              {emailValidationWarning && !emailValidationError && (
-                <View
-                  style={{
-                    marginTop: spacing.xs,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: spacing.xs,
-                  }}
-                >
-                  <Ionicons
-                    name="warning"
-                    size={14}
-                    color={colors.warning || "#FFA500"}
-                  />
-                  <Text
-                    style={{
-                      color: colors.warning || "#FFA500",
-                      fontSize: 12,
-                      flex: 1,
-                    }}
-                  >
-                    {emailValidationWarning}
-                  </Text>
-                </View>
-              )}
-            </View>
 
-            {/* Password with Visibility Toggle */}
-            <View style={{ marginBottom: spacing.md }}>
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: spacing.xs,
-                }}
-              >
-                <Text
-                  style={{
-                    ...typography.caption,
-                    color: colors.textSecondary,
-                  }}
-                >
-                  Password
-                </Text>
-                {isSignup && password.length > 0 && (
-                  <Text
-                    style={{
-                      ...typography.caption,
-                      color:
-                        passwordStrength < 50
-                          ? colors.error
-                          : passwordStrength < 75
-                            ? colors.warning
-                            : colors.success,
-                      fontWeight: "600",
-                    }}
-                  >
-                    {passwordStrength < 25
-                      ? "Weak"
-                      : passwordStrength < 50
-                        ? "Fair"
-                        : passwordStrength < 75
-                          ? "Good"
-                          : "Strong"}{" "}
-                    ({Math.round(passwordStrength)}%)
-                  </Text>
-                )}
-              </View>
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  backgroundColor: colors.surface,
-                  borderWidth: 1,
-                  borderColor: colors.cardBorder,
-                  borderRadius: radius.lg,
-                  paddingRight: spacing.xs,
-                }}
-              >
-                <TextInput
-                  placeholder="••••••••"
-                  placeholderTextColor={colors.textMuted}
-                  secureTextEntry={!showPassword}
+              <View style={{ gap: spacing.sm }}>
+                <TextField
+                  ref={passwordRef}
+                  label="Password"
+                  variant="password"
                   value={password}
                   onChangeText={handlePasswordChange}
-                  style={{
-                    flex: 1,
-                    padding: spacing.md,
-                    color: colors.textPrimary,
-                    fontSize: typography.body.fontSize,
-                  }}
+                  placeholder={isSignup ? "Create a password" : "••••••••••••"}
+                  autoComplete={isSignup ? "new-password" : "password"}
+                  textContentType={isSignup ? "newPassword" : "password"}
+                  returnKeyType="go"
+                  onSubmitEditing={onSignIn}
+                  helperText={passwordHelper}
                 />
-                <Pressable
-                  onPress={togglePasswordVisibility}
-                  style={{
-                    padding: spacing.sm,
-                    justifyContent: "center",
-                    alignItems: "center",
-                  }}
-                >
-                  <Animated.View style={eyeAnimStyle}>
-                    <Ionicons
-                      name={showPassword ? "eye" : "eye-off"}
-                      size={20}
-                      color={colors.textSecondary}
-                    />
-                  </Animated.View>
-                </Pressable>
+                {/* Fixed-height row: the sign-in error fades in on the left without moving anything. */}
+                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.md }}>
+                  <FadingMessage message={error} color={colors.danger} reserveLines={2} live style={{ flex: 1 }} />
+                {!isSignup && (
+                  <PressableScale
+                    onPress={() => setShowForgotPassword(true)}
+                    hitSlop={{ top: (touchTarget - size.linkMin) / 2, bottom: (touchTarget - size.linkMin) / 2 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Forgot password"
+                    style={{ minHeight: size.linkMin, justifyContent: "center" }}
+                  >
+                    {({ pressed }) => (
+                      <Text style={[typography.labelMd, { color: pressed ? colors.text : colors.textSecondary }]}>
+                        Forgot password?
+                      </Text>
+                    )}
+                  </PressableScale>
+                )}
+                </View>
               </View>
 
-              {/* Password Requirements (Signup Mode) */}
-              {isSignup && password.length > 0 && (
-                <View
-                  style={{
-                    marginTop: spacing.sm,
-                    padding: spacing.md,
-                    backgroundColor: colors.surfaceElevated,
-                    borderRadius: radius.lg,
-                    borderLeftWidth: 3,
-                    borderLeftColor:
-                      passwordStrength < 50 ? colors.error : colors.accent,
-                  }}
-                >
-                  <Text
-                    style={{
-                      ...typography.caption,
-                      color: colors.textSecondary,
-                      marginBottom: spacing.xs,
-                      fontWeight: "600",
-                    }}
+              <View style={{ marginTop: spacing.sm }}>
+                <Button
+                  title={isSignup ? "Create account" : "Sign in"}
+                  uppercase
+                  haptic
+                  onPress={onSignIn}
+                  loading={loading && pendingAction !== "google"}
+                  disabled={busy}
+                  fullWidth
+                />
+              </View>
+
+              {googleAvailable ? (
+                <View style={{ gap: spacing.form }}>
+                  <View
+                    style={{ flexDirection: "row", alignItems: "center", gap: spacing.lg, marginVertical: spacing.sm }}
+                    importantForAccessibility="no-hide-descendants"
+                    accessibilityElementsHidden
                   >
-                    Password Requirements:
-                  </Text>
-                  {validatePasswordStrength(password).errors.length > 0 && (
-                    <View style={{ gap: spacing.xs }}>
-                      {validatePasswordStrength(password).errors.map(
-                        (error, idx) => (
-                          <View
-                            key={idx}
-                            style={{
-                              flexDirection: "row",
-                              alignItems: "center",
-                              gap: spacing.xs,
-                            }}
-                          >
-                            <Ionicons
-                              name="close-circle"
-                              size={14}
-                              color={colors.error}
-                            />
-                            <Text
-                              style={{
-                                color: colors.error,
-                                fontSize: 11,
-                                flex: 1,
-                              }}
-                            >
-                              {error}
-                            </Text>
-                          </View>
-                        )
-                      )}
-                    </View>
-                  )}
-                  {validatePasswordStrength(password).suggestions.length > 0 && (
-                    <View style={{ gap: spacing.xs, marginTop: spacing.xs }}>
-                      {validatePasswordStrength(password).suggestions.map(
-                        (suggestion, idx) => (
-                          <View
-                            key={idx}
-                            style={{
-                              flexDirection: "row",
-                              alignItems: "center",
-                              gap: spacing.xs,
-                            }}
-                          >
-                            <Ionicons
-                              name="bulb"
-                              size={14}
-                              color={colors.accent}
-                            />
-                            <Text
-                              style={{
-                                color: colors.textSecondary,
-                                fontSize: 11,
-                                flex: 1,
-                              }}
-                            >
-                              {suggestion}
-                            </Text>
-                          </View>
-                        )
-                      )}
-                    </View>
-                  )}
+                    <View style={{ flex: 1, height: size.divider, backgroundColor: colors.surfaceContainerHigh }} />
+                    <Text
+                      style={[
+                        typography.labelSm,
+                        {
+                          color: withAlpha(colors.textSecondary, alpha.divider),
+                          textTransform: "uppercase",
+                          letterSpacing: tracking.overline,
+                        },
+                      ]}
+                    >
+                      or
+                    </Text>
+                    <View style={{ flex: 1, height: size.divider, backgroundColor: colors.surfaceContainerHigh }} />
+                  </View>
+                  <Button
+                    title="Continue with Google"
+                    variant="tonal"
+                    leading={<GoogleLogo />}
+                    haptic
+                    onPress={onGoogle}
+                    loading={loading && pendingAction === "google"}
+                    disabled={busy}
+                    fullWidth
+                  />
                 </View>
+              ) : (
+                <Text style={[typography.labelSm, { color: colors.textSecondary, textAlign: "center" }]}>
+                  Google sign-in isn&apos;t available in this preview.
+                </Text>
               )}
             </View>
 
-            {/* Forgot Password Link (only show in login mode) */}
-            {!isSignup && (
-              <Pressable
-                onPress={() => setShowForgotPassword(true)}
-                style={{ marginBottom: spacing.md, alignItems: "flex-end" }}
-              >
-                <Text
-                  style={{
-                    color: colors.accent,
-                    fontSize: 13,
-                    fontWeight: "500",
-                  }}
-                >
-                  Forgot password?
-                </Text>
-              </Pressable>
-            )}
-
-            {/* Error */}
-            {error && (
-              <View
-                style={{
-                  backgroundColor: colors.errorLight,
-                  padding: spacing.sm,
-                  borderRadius: radius.md,
-                  marginBottom: spacing.md,
-                  flexDirection: "row",
-                  alignItems: "center",
-                }}
-              >
-                <Ionicons
-                  name="alert-circle"
-                  size={18}
-                  color={colors.error}
-                  style={{ marginRight: spacing.xs }}
-                />
-                <Text style={{ color: colors.error, flex: 1, fontSize: 14 }}>
-                  {error}
-                </Text>
-              </View>
-            )}
-
-            {/* Login / Signup Button */}
-            <Button
-              title={isSignup ? "Sign Up" : "Login"}
-              onPress={handleAuth}
-              loading={loading}
-              fullWidth
-              style={{ marginBottom: spacing.md }}
-            />
-
-            {googleAvailable ? (
-            <>
-            {/* Divider */}
+            {/* Mode switch */}
             <View
               style={{
+                marginTop: spacing.xxl,
+                minHeight: touchTarget,
                 flexDirection: "row",
-                alignItems: "center",
-                marginBottom: spacing.md,
-              }}
-            >
-              <View
-                style={{ flex: 1, height: 1, backgroundColor: colors.divider }}
-              />
-              <Text
-                style={{
-                  ...typography.caption,
-                  color: colors.textMuted,
-                  marginHorizontal: spacing.md,
-                }}
-              >
-                or
-              </Text>
-              <View
-                style={{ flex: 1, height: 1, backgroundColor: colors.divider }}
-              />
-            </View>
-
-            {/* Google Sign-In */}
-            <Pressable
-              disabled={loading}
-              onPress={handleGoogleSignIn}
-              style={{
-                backgroundColor: colors.surface,
-                borderWidth: 1,
-                borderColor: colors.cardBorder,
-                padding: spacing.md,
-                borderRadius: radius.xl,
-                alignItems: "center",
-                marginBottom: spacing.lg,
-                flexDirection: "row",
+                flexWrap: "wrap",
                 justifyContent: "center",
-                opacity: loading ? 0.6 : 1,
+                alignItems: "center",
+                gap: spacing.inline,
               }}
             >
-              <Ionicons
-                name="logo-google"
-                size={20}
-                color={colors.textPrimary}
-                style={{ marginRight: spacing.sm }}
-              />
-              <Text
-                style={{
-                  color: colors.textPrimary,
-                  fontWeight: "600",
-                  fontSize: 16,
-                }}
-              >
-                Continue with Google
+              <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
+                {isSignup ? "Already have an account?" : "Don't have an account?"}
               </Text>
-            </Pressable>
-            </>
-            ) : (
-              <Text
-                style={{
-                  ...typography.caption,
-                  color: colors.textMuted,
-                  textAlign: "center",
-                  marginBottom: spacing.lg,
-                }}
+              <PressableScale
+                onPress={() => switchMode(!isSignup)}
+                accessibilityRole="button"
+                accessibilityLabel={isSignup ? "Sign in instead" : "Create account"}
+                disabled={busy}
+                style={{ minHeight: touchTarget, justifyContent: "center", paddingHorizontal: spacing.xs }}
               >
-                Google sign-in isn&apos;t available in this preview.
-              </Text>
-            )}
-
-            {/* Toggle - Sign Up / Login Prompt */}
-            <Pressable onPress={() => setIsSignup(!isSignup)}>
-              <Text
-                style={{
-                  ...typography.body,
-                  color: colors.textSecondary,
-                  textAlign: "center",
-                  marginBottom: spacing.md,
-                }}
-              >
-                {isSignup ? "Already have an account? " : "New here? "}
-                <Text style={{ color: colors.accent, fontWeight: "600" }}>
-                  {isSignup ? "Login" : "Create an account"}
-                </Text>
-              </Text>
-            </Pressable>
+                {({ pressed }) => (
+                  <Text style={[typography.bodyMdMedium, { color: pressed ? colors.accentPressed : colors.accent }]}>
+                    {isSignup ? "Sign in" : "Create account"}
+                  </Text>
+                )}
+              </PressableScale>
+            </View>
           </Animated.View>
-        </View>
+          </Pressable>
 
-        {/* SPACING FLEX - Pushes footer to bottom */}
-        <View style={{ flex: 1 }} />
-
-        {/* FOOTER SECTION */}
-        <Animated.View
-          entering={FadeInUp.delay(600).duration(400)}
-          style={{
-            alignItems: "center",
-            paddingTop: spacing.lg,
-            borderTopWidth: 1,
-            borderTopColor: colors.divider,
-            marginTop: spacing.xl,
-            marginHorizontal: -spacing.lg,
-            marginBottom: -spacing.lg,
-            paddingHorizontal: spacing.lg,
-            paddingBottom: insets.bottom + spacing.lg,
-          }}
-        >
+          {/* Footer */}
           <Text
-            style={{
-              ...typography.caption,
-              color: colors.textMuted,
-              textAlign: "center",
-              marginBottom: spacing.xs,
-            }}
+            style={[
+              typography.labelSm,
+              { color: subtle, textAlign: "center", paddingBottom: spacing.md },
+            ]}
           >
-            Designed & Built by Pushpanath
+            Designed & built by Pushpanath · {getVersionLabel()}
           </Text>
-          <Text
-            style={{
-              ...typography.caption,
-              color: colors.textMuted,
-              opacity: 0.6,
-            }}
-          >
-            {getVersionLabel()}
-          </Text>
-        </Animated.View>
-      </ScrollView>
+        </KeyboardAwareScrollView>
 
       {/* Forgot Password Modal */}
       <ForgotPasswordModal
@@ -955,7 +674,6 @@ export default function LoginScreen() {
         onConfirm={handleConfirmEmailAndSignup}
         onEdit={() => {
           setShowEmailConfirmation(false);
-          // Focus returns to email input
         }}
         onCancel={() => {
           setShowEmailConfirmation(false);
@@ -986,18 +704,10 @@ export default function LoginScreen() {
           setVerificationOrigin(null);
         }}
         onResendSuccess={() => {
-          // Email resent successfully
           setError(null);
         }}
+        onSignOut={handleUseDifferentAccount}
       />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
-
-
-
-
-
-
-
-

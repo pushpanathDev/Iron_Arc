@@ -962,7 +962,7 @@ export default function ProfileScreen() {
                   <Text
                     style={{
                       ...typography.caption,
-                      color: selected ? "#fff" : colors.textPrimary,
+                      color: selected ? colors.onAccent : colors.textPrimary,
                       fontWeight: selected ? "700" : "500",
                     }}
                   >
@@ -1025,7 +1025,7 @@ export default function ProfileScreen() {
                 <Text
                   style={{
                     color:
-                      weeklyGoal === String(num) ? "#fff" : colors.textPrimary,
+                      weeklyGoal === String(num) ? colors.onAccent : colors.textPrimary,
                     fontWeight: weeklyGoal === String(num) ? "600" : "500",
                     fontSize: 14,
                   }}
@@ -1093,7 +1093,7 @@ export default function ProfileScreen() {
             >
               <Text
                 style={{
-                  color: weightUnit === u ? "#fff" : colors.textPrimary,
+                  color: weightUnit === u ? colors.onAccent : colors.textPrimary,
                   fontWeight: "700",
                   fontSize: 16,
                 }}
@@ -1102,7 +1102,7 @@ export default function ProfileScreen() {
               </Text>
               <Text
                 style={{
-                  color: weightUnit === u ? "rgba(255,255,255,0.7)" : colors.textMuted,
+                  color: weightUnit === u ? colors.onAccent : colors.textMuted,
                   fontSize: 12,
                   marginTop: 2,
                 }}
@@ -1131,9 +1131,9 @@ export default function ProfileScreen() {
             }}
           >
             {isSaving ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.onAccent} />
             ) : (
-              <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
+              <Text style={{ color: colors.onAccent, fontWeight: "600", fontSize: 16 }}>
                 Save Changes
               </Text>
             )}
@@ -1899,9 +1899,9 @@ export default function ProfileScreen() {
                 }}
               >
                 {isDeletingAccount ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.onDanger} />
                 ) : (
-                  <Text style={{ ...typography.bodyMedium, color: "#fff" }}>
+                  <Text style={{ ...typography.bodyMedium, color: colors.onDanger }}>
                     Continue
                   </Text>
                 )}

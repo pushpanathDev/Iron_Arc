@@ -323,7 +323,7 @@ export function ProfileCompletionPrompt({
                   style={[
                     styles.buttonText,
                     {
-                      color: isFormValid ? "#fff" : colors.textMuted,
+                      color: isFormValid ? colors.onAccent : colors.textMuted,
                     },
                   ]}
                 >

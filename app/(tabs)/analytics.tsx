@@ -99,7 +99,7 @@ export default function Analytics() {
               textAlign: "center",
               fontSize: typography.caption.fontSize,
               fontWeight: selectedPeriod === period ? "600" : "400",
-              color: selectedPeriod === period ? "#fff" : colors.textSecondary,
+              color: selectedPeriod === period ? colors.onAccent : colors.textSecondary,
             }}
           >
             {period === "week"
@@ -191,14 +191,14 @@ export default function Analytics() {
                 alignItems: "center",
               }}
             >
-              <Ionicons name="barbell-outline" size={18} color="#fff" />
+              <Ionicons name="barbell-outline" size={18} color={colors.onAccent} />
             </View>
           </View>
-          <Text style={{ ...typography.display, color: "#fff" }}>
+          <Text style={{ ...typography.display, color: colors.onAccent }}>
             {stats.totalWorkouts}
           </Text>
           <Text
-            style={{ ...typography.caption, color: "rgba(255,255,255,0.8)" }}
+            style={{ ...typography.caption, color: colors.onAccent }}
           >
             Workouts
           </Text>
@@ -685,7 +685,7 @@ export default function Analytics() {
                   <Text
                     style={{
                       ...typography.bodyMedium,
-                      color: intensity > 0.5 ? "#fff" : colors.textPrimary,
+                      color: intensity > 0.5 ? colors.onAccent : colors.textPrimary,
                       fontWeight: "600",
                     }}
                   >
@@ -694,7 +694,7 @@ export default function Analytics() {
                   <Text
                     style={{
                       ...typography.caption,
-                      color: intensity > 0.5 ? "rgba(255,255,255,0.8)" : colors.textSecondary,
+                      color: intensity > 0.5 ? colors.onAccent : colors.textSecondary,
                     }}
                   >
                     {count}×

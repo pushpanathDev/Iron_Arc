@@ -1,28 +1,26 @@
 /**
- * Email Verification Prompt Component (V1.2.0)
- * =============================================
- * Post-signup email verification with change email support.
- * Features:
- * - Rate-limited resend (5-minute cooldown)
- * - Change email functionality (for typos)
- * - Beautiful UI with animations
- * - Comprehensive error handling
+ * Full-screen email verification: resend (with cooldown), change email,
+ * "I've verified", and an optional sign-out.
  */
 
 import { Ionicons } from "@expo/vector-icons";
 import { User, verifyBeforeUpdateEmail } from "firebase/auth";
+import { StatusBar } from "expo-status-bar";
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  ScrollView,
   Text,
   View,
-  TextInput,
-  Alert,
 } from "react-native";
-import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme/theme";
+import { radius, spacing, touchTarget, typography, semibold } from "../theme/tokens";
+import { Button, Card, TextField } from "./ui";
 import * as Haptics from "expo-haptics";
 import { verificationMessages } from "../constants/verificationMessages";
 import {
@@ -39,6 +37,8 @@ interface EmailVerificationPromptProps {
   onResendSuccess?: () => void;
   onVerified?: () => void;
   dismissible?: boolean;
+  /** Shows a "Use a different account" action that signs out. */
+  onSignOut?: () => void | Promise<void>;
 }
 
 export function EmailVerificationPrompt({
@@ -48,8 +48,12 @@ export function EmailVerificationPrompt({
   onResendSuccess,
   onVerified,
   dismissible = true,
+  onSignOut,
 }: EmailVerificationPromptProps) {
-  const { colors, spacing, radius, typography } = useTheme();
+  const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [cooldownTotal, setCooldownTotal] = useState(60);
+  const [signingOut, setSigningOut] = useState(false);
   const [loading, setLoading] = useState(false);
   const [resent, setResent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +67,13 @@ export function EmailVerificationPrompt({
     null,
   );
   const verificationDelayIndexRef = useRef(0);
+
+  // Remember the starting length of each cooldown so the progress bar can scale.
+  const previousCooldown = useRef(0);
+  useEffect(() => {
+    if (resendCooldown > previousCooldown.current) setCooldownTotal(resendCooldown);
+    previousCooldown.current = resendCooldown;
+  }, [resendCooldown]);
 
   // Cooldown timer for resend button
   useEffect(() => {
@@ -273,359 +284,230 @@ export function EmailVerificationPrompt({
 
   if (!user) return null;
 
+  const coolingDown = resendCooldown > 0;
+  const mm = String(Math.floor(resendCooldown / 60)).padStart(2, "0");
+  const ss = String(resendCooldown % 60).padStart(2, "0");
+
+  const handleSignOut = async () => {
+    if (!onSignOut) return;
+    setSigningOut(true);
+    try {
+      await onSignOut();
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
   return (
     <Modal
       visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={dismissible ? onSkip : undefined}
+      animationType="slide"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={dismissible ? onSkip : () => {}}
     >
-      <Animated.View
-        entering={FadeIn.duration(300)}
-        style={{
-          flex: 1,
-          backgroundColor: "rgba(0, 0, 0, 0.5)",
-          justifyContent: "flex-end",
-        }}
+      <StatusBar style={isDark ? "light" : "dark"} />
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: colors.bg }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        {dismissible && (
-          <Pressable
-            style={{ flex: 1 }}
-            onPress={onSkip}
-            hitSlop={10}
-          />
-        )}
-
-        <Animated.View
-          entering={FadeInDown.duration(400)}
-          style={{
-            backgroundColor: colors.surface,
-            borderTopLeftRadius: radius.xxl,
-            borderTopRightRadius: radius.xxl,
-            padding: spacing.lg,
-            paddingBottom: spacing.lg,
+        <ScrollView
+          contentContainerStyle={{
+            flexGrow: 1,
+            paddingHorizontal: spacing.lg,
+            paddingTop: insets.top + spacing.lg,
+            paddingBottom: insets.bottom + spacing.xl,
+            gap: spacing.lg,
           }}
+          keyboardShouldPersistTaps="handled"
         >
-          {/* ICON */}
-          <View
-            style={{
-              alignItems: "center",
-              marginBottom: spacing.lg,
-            }}
-          >
+          {dismissible ? (
+            <Pressable
+              onPress={onSkip}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              style={{ alignSelf: "flex-end", width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center" }}
+            >
+              <Ionicons name="close" size={24} color={colors.textSecondary} />
+            </Pressable>
+          ) : (
+            <View style={{ height: spacing.xl }} />
+          )}
+
+          {/* Header */}
+          <View style={{ alignItems: "center", gap: spacing.md }}>
             <View
               style={{
                 width: 64,
                 height: 64,
-                borderRadius: radius.full,
-                backgroundColor: colors.accentLight,
-                justifyContent: "center",
+                borderRadius: radius.xl,
+                backgroundColor: colors.raised,
+                borderWidth: 1,
+                borderColor: colors.border,
                 alignItems: "center",
-                marginBottom: spacing.md,
+                justifyContent: "center",
               }}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
             >
-              <Ionicons
-                name="mail-outline"
-                size={32}
-                color={colors.accent}
-              />
+              <Ionicons name="mail-unread-outline" size={30} color={colors.accent} />
             </View>
+            <Text accessibilityRole="header" style={[typography.headlineLg, { color: colors.text, textAlign: "center" }]}>
+              Check your inbox
+            </Text>
+            <Text style={[typography.bodyLg, { color: colors.textSecondary, textAlign: "center", maxWidth: 340 }]}>
+              We sent a verification link to{" "}
+              <Text style={{ color: colors.text, ...semibold }}>{user.email}</Text>. Tap the link in the email to
+              verify your account.
+            </Text>
           </View>
 
-          {/* TITLE */}
-          <Text
-            style={{
-              ...typography.h2,
-              color: colors.textPrimary,
-              marginBottom: spacing.xs,
-              textAlign: "center",
-            }}
-          >
-            Verify Your Email
-          </Text>
-
-          {/* DESCRIPTION */}
-          <Text
-            style={{
-              ...typography.body,
-              color: colors.textSecondary,
-              marginBottom: spacing.lg,
-              textAlign: "center",
-              lineHeight: 22,
-            }}
-          >
-            {"We've sent a verification link to "}
-            {"\n"}
-            <Text style={{ fontWeight: "600", color: colors.accent }}>
-              {user.email}
-            </Text>
-          </Text>
-
-          {/* RESENT MESSAGE */}
           {resent && (
             <View
-              style={{
-                backgroundColor: colors.success + "20",
-                borderLeftWidth: 3,
-                borderLeftColor: colors.success,
-                padding: spacing.md,
-                borderRadius: radius.lg,
-                marginBottom: spacing.lg,
-              }}
+              accessibilityLiveRegion="polite"
+              style={{ flexDirection: "row", gap: spacing.sm, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.accentSubtle }}
             >
-              <Text
-                style={{
-                  color: colors.success,
-                  fontWeight: "500",
-                  fontSize: 13,
-                }}
-              >
-                ✓ Verification email sent! Check your inbox.
+              <Ionicons name="checkmark-circle" size={20} color={colors.accent} />
+              <Text style={[typography.bodyMd, { color: colors.text, flex: 1 }]}>
+                Verification email sent. Check your inbox.
               </Text>
             </View>
           )}
 
-          {/* ERROR MESSAGE */}
           {error && (
             <View
+              accessibilityLiveRegion="polite"
               style={{
-                backgroundColor: colors.error + "15",
-                borderLeftWidth: 3,
-                borderLeftColor: colors.error,
+                flexDirection: "row",
+                gap: spacing.sm,
                 padding: spacing.md,
                 borderRadius: radius.lg,
-                marginBottom: spacing.lg,
+                backgroundColor: colors.dangerSubtle,
+                borderWidth: 1,
+                borderColor: colors.danger,
               }}
             >
-              <Text
-                style={{
-                  color: colors.error,
-                  fontWeight: "500",
-                  fontSize: 13,
-                }}
-              >
-                {error}
-              </Text>
+              <Ionicons name="alert-circle" size={20} color={colors.danger} />
+              <Text style={[typography.bodyMd, { color: colors.text, flex: 1 }]}>{error}</Text>
             </View>
           )}
 
-          {/* NEXT STEPS */}
-          <View
-            style={{
-              backgroundColor: colors.surfaceElevated,
-              padding: spacing.md,
-              borderRadius: radius.lg,
-              marginBottom: spacing.lg,
-              borderLeftWidth: 3,
-              borderLeftColor: colors.accentLight,
-            }}
-          >
-            <Text
-              style={{
-                ...typography.caption,
-                color: colors.textMuted,
-                marginBottom: spacing.xs,
-                fontWeight: "600",
-              }}
-            >
-              NEXT STEPS
-            </Text>
-            <View style={{ gap: spacing.xs }}>
-              <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-                1. Check your email inbox
-              </Text>
-              <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-                2. Click the verification link
-              </Text>
-              <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-                3. Come back to the app
-              </Text>
-            </View>
-          </View>
-
-          {/* SPINE */}
-          <Text
-            style={{
-              ...typography.caption,
-              color: colors.textMuted,
-              marginBottom: spacing.lg,
-              textAlign: "center",
-            }}
-          >
-            {"Didn't receive the email? Check your spam folder."}
-          </Text>
-
-          {/* BUTTONS */}
-          <View style={{ gap: spacing.md, marginBottom: spacing.md }}>
-            <Pressable
+          {/* Resend */}
+          <Card style={{ gap: spacing.md }}>
+            {coolingDown && (
+              <View style={{ gap: spacing.sm }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Ionicons name="timer-outline" size={18} color={colors.textSecondary} />
+                  <Text style={[typography.bodyMd, { color: colors.textSecondary, flex: 1 }]}>
+                    You can resend soon
+                  </Text>
+                  <Text
+                    style={[typography.bodyLg, { color: colors.accent, ...semibold, fontVariant: ["tabular-nums"] }]}
+                    accessibilityLabel={`${resendCooldown} seconds`}
+                  >
+                    {mm}:{ss}
+                  </Text>
+                </View>
+                <View
+                  style={{ height: 4, borderRadius: radius.full, backgroundColor: colors.border, overflow: "hidden" }}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
+                >
+                  <View
+                    style={{
+                      height: 4,
+                      width: `${Math.min(100, (resendCooldown / Math.max(cooldownTotal, 1)) * 100)}%`,
+                      backgroundColor: colors.accent,
+                    }}
+                  />
+                </View>
+              </View>
+            )}
+            <Button
+              title={loading ? "Sending…" : coolingDown ? `Resend email in ${resendCooldown}s` : "Resend email"}
+              icon="refresh"
+              variant="secondary"
               onPress={handleResendEmail}
-              disabled={loading || resendCooldown > 0}
-              style={{
-                backgroundColor:
-                  resendCooldown > 0 ? colors.surfaceElevated : colors.accent,
-                padding: spacing.md,
-                borderRadius: radius.lg,
-                alignItems: "center",
-                opacity: loading || resendCooldown > 0 ? 0.6 : 1,
-                flexDirection: "row",
-                justifyContent: "center",
-                gap: spacing.xs,
-              }}
-            >
-              {loading ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Ionicons
-                  name="refresh"
-                  size={18}
-                  color={resendCooldown > 0 ? colors.textSecondary : "#fff"}
-                />
-              )}
-              <Text
-                style={{
-                  color: resendCooldown > 0 ? colors.textSecondary : "#fff",
-                  fontWeight: "600",
-                }}
-              >
-                {loading
-                  ? "Sending..."
-                  : resendCooldown > 0
-                  ? `Wait ${resendCooldown}s`
-                  : "Resend Verification Email"}
-              </Text>
-            </Pressable>
+              loading={loading}
+              disabled={loading || coolingDown}
+              fullWidth
+            />
+          </Card>
 
-            <Pressable
-              onPress={() => {
-                setShowChangeEmail(!showChangeEmail);
-                setError(null);
-              }}
-              disabled={loading}
-              style={{
-                padding: spacing.md,
-                borderRadius: radius.lg,
-                alignItems: "center",
-                borderWidth: 1,
-                borderColor: colors.accent,
-                opacity: loading ? 0.6 : 1,
-              }}
-            >
-              <Text style={{ color: colors.accent, fontWeight: "600", fontSize: 14 }}>
-                {showChangeEmail ? "Cancel" : "Wrong Email? Change It"}
-              </Text>
-            </Pressable>
+          <Button
+            title="I've verified"
+            icon="checkmark-circle-outline"
+            onPress={handleIHaveVerified}
+            loading={checkingVerification}
+            disabled={loading || checkingVerification}
+            fullWidth
+          />
 
-            <Pressable
-              onPress={handleIHaveVerified}
-              disabled={loading || checkingVerification}
-              style={{
-                padding: spacing.md,
-                borderRadius: radius.lg,
-                alignItems: "center",
-                borderWidth: 1,
-                borderColor: colors.cardBorder,
-                opacity: loading || checkingVerification ? 0.6 : 1,
-                flexDirection: "row",
-                justifyContent: "center",
-                gap: spacing.xs,
-              }}
-            >
-              {checkingVerification && (
-                <ActivityIndicator color={colors.textPrimary} size="small" />
-              )}
-              <Text style={{ color: colors.textPrimary, fontWeight: "500" }}>
-                {"I've Verified My Email"}
-              </Text>
-            </Pressable>
-          </View>
+          <Button
+            title={showChangeEmail ? "Cancel email change" : "Use a different email address"}
+            variant="secondary"
+            onPress={() => {
+              setShowChangeEmail(!showChangeEmail);
+              setError(null);
+            }}
+            disabled={loading}
+            fullWidth
+          />
 
-          {/* CHANGE EMAIL FORM */}
           {showChangeEmail && (
-            <Animated.View
-              entering={FadeInDown.delay(200)}
-              style={{
-                backgroundColor: colors.surfaceElevated,
-                borderRadius: radius.lg,
-                padding: spacing.md,
-                marginBottom: spacing.md,
-                borderWidth: 1,
-                borderColor: colors.cardBorder,
-              }}
-            >
-              <Text
-                style={{
-                  ...typography.caption,
-                  color: colors.textMuted,
-                  marginBottom: spacing.sm,
-                  fontWeight: "600",
-                }}
-              >
-                NEW EMAIL ADDRESS
-              </Text>
-              <TextInput
-                placeholder="your.new.email@example.com"
-                placeholderTextColor={colors.textMuted}
+            <Card style={{ gap: spacing.md }}>
+              <TextField
+                label="New email address"
                 value={newEmail}
                 onChangeText={setNewEmail}
-                autoCapitalize="none"
+                placeholder="you@example.com"
                 keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="email"
+                textContentType="emailAddress"
+                returnKeyType="send"
+                onSubmitEditing={handleChangeEmail}
                 editable={!changeEmailLoading}
-                style={{
-                  backgroundColor: colors.surface,
-                  borderRadius: radius.lg,
-                  borderWidth: 1,
-                  borderColor: colors.cardBorder,
-                  padding: spacing.md,
-                  color: colors.textPrimary,
-                  fontSize: 14,
-                  marginBottom: spacing.md,
-                }}
+                helperText="We'll send a new verification link to this address."
               />
-              <Pressable
+              <Button
+                title={changeEmailLoading ? "Updating…" : "Send link to new email"}
+                icon="send-outline"
                 onPress={handleChangeEmail}
+                loading={changeEmailLoading}
                 disabled={changeEmailLoading}
-                style={{
-                  backgroundColor: colors.accent,
-                  borderRadius: radius.lg,
-                  paddingVertical: spacing.md,
-                  alignItems: "center",
-                  opacity: changeEmailLoading ? 0.7 : 1,
-                  flexDirection: "row",
-                  justifyContent: "center",
-                  gap: spacing.xs,
-                }}
-              >
-                {changeEmailLoading ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Ionicons name="checkmark" size={18} color="#fff" />
-                )}
-                <Text
-                  style={{
-                    color: "#fff",
-                    fontWeight: "600",
-                    fontSize: 14,
-                  }}
-                >
-                  {changeEmailLoading ? "Updating..." : "Update Email"}
-                </Text>
-              </Pressable>
-            </Animated.View>
+                fullWidth
+              />
+            </Card>
           )}
 
-          {/* INFO */}
-          <Text
-            style={{
-              ...typography.caption,
-              color: colors.textMuted,
-              marginTop: spacing.lg,
-              textAlign: "center",
-            }}
-          >
-            Email verification helps protect your account
-          </Text>
-        </Animated.View>
-      </Animated.View>
+          {onSignOut && (
+            <Button
+              title="Use a different account"
+              variant="ghost"
+              icon="log-out-outline"
+              onPress={handleSignOut}
+              loading={signingOut}
+              disabled={signingOut}
+              style={{ alignSelf: "center" }}
+            />
+          )}
+
+          {/* Help */}
+          <Card style={{ flexDirection: "row", gap: spacing.md }}>
+            <Ionicons name="help-circle-outline" size={22} color={colors.textSecondary} />
+            <View style={{ flex: 1 }}>
+              <Text style={[typography.bodyMd, { color: colors.text, ...semibold }]}>
+                Didn&apos;t get the email?
+              </Text>
+              <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
+                Check your spam or junk folder, or resend it above.
+              </Text>
+            </View>
+          </Card>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

@@ -121,10 +121,10 @@ export function WorkoutDaySummary({ date, workouts }: WorkoutDaySummaryProps) {
           alignItems: "center",
         }}
       >
-        <Ionicons name="star" size={18} color="#fff" />
+        <Ionicons name="star" size={18} color={colors.onAccent} />
         <Text
           style={{
-            color: "#fff",
+            color: colors.onAccent,
             fontWeight: "700",
             fontSize: 12,
             marginLeft: spacing.sm,

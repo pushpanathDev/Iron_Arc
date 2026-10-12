@@ -31,22 +31,22 @@ export function StatTile({ value, label, unit, icon, tone = "default", style }: 
           backgroundColor: colors.card,
           borderColor: colors.border,
           borderWidth: 1,
-          borderRadius: radius.md,
-          padding: spacing.md,
-          gap: spacing.xxs,
+          borderRadius: radius.lg,
+          padding: spacing.lg,
+          gap: spacing.xs,
         },
         style,
       ]}
     >
-      <View style={{ flexDirection: "row", alignItems: "baseline", gap: spacing.xxs }}>
+      <View style={{ flexDirection: "row", alignItems: "baseline", gap: spacing.xs }}>
         <Text style={[typography.number, { color: emphasis }]} numberOfLines={1} adjustsFontSizeToFit>
           {value}
         </Text>
-        {unit && <Text style={[typography.bodySmall, { color: colors.textSecondary }]}>{unit}</Text>}
+        {unit && <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>{unit}</Text>}
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xxs }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
         {icon && <Ionicons name={icon} size={14} color={iconColor} />}
-        <Text style={[typography.caption, { color: colors.textSecondary }]} numberOfLines={1}>
+        <Text style={[typography.labelMd, { color: colors.textSecondary }]} numberOfLines={1}>
           {label}
         </Text>
       </View>

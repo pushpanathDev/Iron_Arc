@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, Text, type StyleProp, type ViewStyle } from "react-native";
 import { useTheme } from "../../theme/theme";
-import { radius, spacing, typography } from "../../theme/tokens";
+import { radius, spacing, typography, semibold } from "../../theme/tokens";
 import type { IconName } from "./iconName";
 
 export type ChipProps = {
@@ -45,13 +45,13 @@ export function Chip({
         {
           minHeight: VISUAL_HEIGHT,
           minWidth: 48,
-          paddingHorizontal: spacing.md,
-          borderRadius: radius.pill,
+          paddingHorizontal: spacing.lg,
+          borderRadius: radius.full,
           borderWidth: 1,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
-          gap: spacing.xxs,
+          gap: spacing.xs,
           backgroundColor: selected
             ? pressed
               ? colors.accentPressed
@@ -66,7 +66,7 @@ export function Chip({
     >
       {icon && <Ionicons name={icon} size={16} color={fg} />}
       {selected && !icon && <Ionicons name="checkmark" size={16} color={fg} />}
-      <Text style={[typography.bodySmall, { color: fg, fontWeight: "600" }]} numberOfLines={1}>
+      <Text style={[typography.bodyMd, { color: fg, ...semibold }]} numberOfLines={1}>
         {label}
       </Text>
     </Pressable>

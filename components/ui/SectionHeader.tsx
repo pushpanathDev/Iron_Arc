@@ -1,6 +1,6 @@
 import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { useTheme } from "../../theme/theme";
-import { spacing, touchTarget, typography } from "../../theme/tokens";
+import { spacing, touchTarget, typography, semibold } from "../../theme/tokens";
 
 export type SectionHeaderProps = {
   title: string;
@@ -20,7 +20,7 @@ export function SectionHeader({ title, actionLabel, onAction, actionAccessibilit
         style,
       ]}
     >
-      <Text accessibilityRole="header" style={[typography.heading, { color: colors.text, flexShrink: 1 }]}>
+      <Text accessibilityRole="header" style={[typography.headlineMd, { color: colors.text, flexShrink: 1 }]}>
         {title}
       </Text>
       {actionLabel && onAction && (
@@ -31,13 +31,13 @@ export function SectionHeader({ title, actionLabel, onAction, actionAccessibilit
           style={({ pressed }) => ({
             minHeight: touchTarget,
             minWidth: touchTarget,
-            paddingHorizontal: spacing.xs,
+            paddingHorizontal: spacing.sm,
             justifyContent: "center",
             alignItems: "flex-end",
             opacity: pressed ? 0.7 : 1,
           })}
         >
-          <Text style={[typography.bodySmall, { color: colors.accent, fontWeight: "600" }]}>{actionLabel}</Text>
+          <Text style={[typography.bodyMd, { color: colors.accent, ...semibold }]}>{actionLabel}</Text>
         </Pressable>
       )}
     </View>

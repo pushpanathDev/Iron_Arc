@@ -20,10 +20,10 @@ export function OfflineState({ mode, onRetry, retrying, style }: OfflineStatePro
         accessibilityLiveRegion="polite"
         accessibilityRole="progressbar"
         accessibilityLabel="Waking up the server"
-        style={[{ alignItems: "center", paddingVertical: spacing.xl, paddingHorizontal: spacing.lg, gap: spacing.sm }, style]}
+        style={[{ alignItems: "center", paddingVertical: spacing.xxl, paddingHorizontal: spacing.xl, gap: spacing.md }, style]}
       >
         <ActivityIndicator size="large" color={colors.accent} />
-        <Text style={[typography.body, { color: colors.textSecondary, textAlign: "center" }]}>Waking up the server…</Text>
+        <Text style={[typography.bodyLg, { color: colors.textSecondary, textAlign: "center" }]}>Waking up the server…</Text>
       </View>
     );
   }

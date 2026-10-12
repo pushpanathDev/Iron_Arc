@@ -1,7 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter, Tabs } from "expo-router";
-import { useCallback } from "react";
-import { BackHandler } from "react-native";
+import { useRouter, Tabs } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AppTabBar } from "../../components/ui/AppTabBar";
 import { useTheme } from "../../theme/theme";
@@ -15,15 +13,6 @@ export default function TabLayout() {
   const { colors } = useTheme();
   const router = useRouter();
 
-  // Consume hardware back presses at the tab root so the unhandled-action
-  // warning doesn't fire in dev when there is nothing to go back to.
-  useFocusEffect(
-    useCallback(() => {
-      const sub = BackHandler.addEventListener("hardwareBackPress", () => true);
-      return () => sub.remove();
-    }, []),
-  );
-
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: colors.bg }}
@@ -31,6 +20,8 @@ export default function TabLayout() {
     >
       <Tabs
         initialRouteName="index"
+        // Back from any tab (including Profile, declared first) returns to Home; back on Home exits.
+        backBehavior="initialRoute"
         tabBar={(props) => (
           <AppTabBar {...props} onLogPress={() => router.push("/add-workout")} />
         )}

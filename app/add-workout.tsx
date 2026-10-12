@@ -601,7 +601,7 @@ export default function AddWorkout() {
                 }}
               >
                 <Text
-                  style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}
+                  style={{ color: colors.onAccent, fontWeight: "700", fontSize: 12 }}
                 >
                   SET {index + 1}
                 </Text>
@@ -903,7 +903,7 @@ export default function AddWorkout() {
             ...shadows.md,
           }}
         >
-          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 18 }}>
+          <Text style={{ color: colors.onAccent, fontWeight: "700", fontSize: 18 }}>
             {saving ? "Saving..." : isEdit ? "Update Workout" : "Save Workout"}
           </Text>
         </Pressable>

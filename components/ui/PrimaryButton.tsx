@@ -35,7 +35,7 @@ export default function PrimaryButton({
     >
       <Text
         style={{
-          color: disabled ? colors.textSecondary : "#FFFFFF",
+          color: disabled ? colors.textSecondary : colors.onAccent,
           fontSize: 16,
           fontWeight: "600",
         }}

@@ -12,3 +12,6 @@ export { Skeleton, type SkeletonProps } from "./Skeleton";
 export { StatTile, type StatTileProps, type StatTone } from "./StatTile";
 export { TextField, type TextFieldProps } from "./TextField";
 export { UndoSnackbar, type UndoSnackbarProps } from "./UndoSnackbar";
+export { GoogleLogo } from "./GoogleLogo";
+export { PressableScale, type PressableScaleProps } from "./PressableScale";
+export { FadingMessage, type FadingMessageProps } from "./FadingMessage";

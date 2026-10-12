@@ -22,7 +22,7 @@ import {
 } from "../components/ui";
 import { ForcedThemeProvider } from "../context/ThemeContext";
 import { useTheme } from "../theme/theme";
-import { spacing, typography } from "../theme/tokens";
+import { spacing, typography, semibold } from "../theme/tokens";
 
 // Dev-only component gallery. Not linked from navigation; open via /dev-components.
 export default function DevComponentsScreen() {
@@ -41,7 +41,7 @@ function Gallery({ scheme, onToggle }: { scheme: "dark" | "light"; onToggle: () 
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={["top", "bottom"]}>
-      <ScrollView contentContainerStyle={{ padding: spacing.md, gap: spacing.lg }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.xl }}>
         <SectionHeader title={`Components (${scheme})`} actionLabel={`Show ${scheme === "dark" ? "light" : "dark"}`} onAction={onToggle} />
         <Buttons />
         <Cards />
@@ -60,8 +60,8 @@ function Gallery({ scheme, onToggle }: { scheme: "dark" | "light"; onToggle: () 
 function Block({ title, children }: { title: string; children: ReactNode }) {
   const { colors } = useTheme();
   return (
-    <View style={{ gap: spacing.sm }}>
-      <Text style={[typography.heading, { color: colors.text }]}>{title}</Text>
+    <View style={{ gap: spacing.md }}>
+      <Text style={[typography.headlineMd, { color: colors.text }]}>{title}</Text>
       {children}
     </View>
   );
@@ -74,7 +74,7 @@ function Buttons() {
   return (
     <Block title="Button">
       {variants.map((v) => (
-        <View key={v} style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }}>
+        <View key={v} style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
           <Button title={v} variant={v} onPress={noop} />
           <Button title="Icon" variant={v} icon="add" onPress={noop} />
           <Button title="Loading" variant={v} loading onPress={noop} />
@@ -91,10 +91,10 @@ function Cards() {
   return (
     <Block title="Card">
       <Card>
-        <Text style={[typography.body, { color: colors.text }]}>Static card, radius lg</Text>
+        <Text style={[typography.bodyLg, { color: colors.text }]}>Static card, radius lg</Text>
       </Card>
       <Card radius="md" onPress={noop} accessibilityLabel="Pressable card">
-        <Text style={[typography.body, { color: colors.text }]}>Pressable card, radius md</Text>
+        <Text style={[typography.bodyLg, { color: colors.text }]}>Pressable card, radius md</Text>
       </Card>
     </Block>
   );
@@ -105,7 +105,7 @@ function Chips() {
   const toggle = (c: string) => setSelected((s) => (s.includes(c) ? s.filter((x) => x !== c) : [...s, c]));
   return (
     <Block title="Chip">
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
         {["Chest", "Back", "Legs", "Shoulders"].map((c) => (
           <Chip key={c} label={c} selected={selected.includes(c)} onPress={() => toggle(c)} />
         ))}
@@ -133,15 +133,15 @@ function Stats() {
   const { colors } = useTheme();
   return (
     <Block title="StatTile and ProgressRing">
-      <View style={{ flexDirection: "row", gap: spacing.xs }}>
+      <View style={{ flexDirection: "row", gap: spacing.sm }}>
         <StatTile value={12} label="Workouts" icon="barbell-outline" />
         <StatTile value={5} label="Day streak" icon="flame" tone="streak" />
         <StatTile value={100} unit="kg" label="Bench record" icon="trophy" tone="record" />
       </View>
-      <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "center" }}>
+      <View style={{ flexDirection: "row", gap: spacing.lg, alignItems: "center" }}>
         {[0, 0.5, 1].map((p) => (
           <ProgressRing key={p} progress={p} accessibilityLabel={`${Math.round(p * 4)} of 4 workouts this week`}>
-            <Text style={[typography.bodySmall, { color: colors.text, fontWeight: "700" }]}>{Math.round(p * 4)}/4</Text>
+            <Text style={[typography.bodyMd, { color: colors.text, ...semibold }]}>{Math.round(p * 4)}/4</Text>
           </ProgressRing>
         ))}
       </View>
@@ -169,7 +169,7 @@ function States() {
 function Skeletons() {
   return (
     <Block title="Skeleton">
-      <Card style={{ gap: spacing.xs }}>
+      <Card style={{ gap: spacing.sm }}>
         <Skeleton width="60%" height={20} />
         <Skeleton />
         <Skeleton width="80%" />

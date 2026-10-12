@@ -434,20 +434,20 @@ export default function BodyWeightScreen() {
               <Text
                 style={{
                   ...typography.caption,
-                  color: "rgba(255,255,255,0.7)",
+                  color: colors.onAccent,
                   marginBottom: spacing.xs,
                 }}
               >
                 Current Weight
               </Text>
               <View style={{ flexDirection: "row", alignItems: "baseline" }}>
-                <Text style={{ ...typography.display, color: "#fff" }}>
+                <Text style={{ ...typography.display, color: colors.onAccent }}>
                   {currentWeight || "—"}
                 </Text>
                 <Text
                   style={{
                     ...typography.h3,
-                    color: "rgba(255,255,255,0.8)",
+                    color: colors.onAccent,
                     marginLeft: spacing.xs,
                   }}
                 >
@@ -477,11 +477,11 @@ export default function BodyWeightScreen() {
                         : "remove"
                   }
                   size={14}
-                  color="#fff"
+                  color={colors.onAccent}
                 />
                 <Text
                   style={{
-                    color: "#fff",
+                    color: colors.onAccent,
                     fontWeight: "600",
                     fontSize: 14,
                     marginLeft: 4,
@@ -502,19 +502,19 @@ export default function BodyWeightScreen() {
             }}
           >
             <View>
-              <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}>
+              <Text style={{ color: colors.onAccent, fontSize: 12 }}>
                 Total Change
               </Text>
-              <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
+              <Text style={{ color: colors.onAccent, fontWeight: "600", fontSize: 16 }}>
                 {totalChange > 0 ? "+" : ""}
                 {totalChange.toFixed(1)} {weightLabel(unit)}
               </Text>
             </View>
             <View>
-              <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}>
+              <Text style={{ color: colors.onAccent, fontSize: 12 }}>
                 Entries
               </Text>
-              <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
+              <Text style={{ color: colors.onAccent, fontWeight: "600", fontSize: 16 }}>
                 {history.length}
               </Text>
             </View>
@@ -761,7 +761,7 @@ export default function BodyWeightScreen() {
             ...shadows.md,
           }}
         >
-          <Text style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>
+          <Text style={{ color: colors.onAccent, fontWeight: "600", fontSize: 16 }}>
             {existingEntry
               ? isToday
                 ? "Update Today's Entry"
@@ -859,7 +859,7 @@ export default function BodyWeightScreen() {
               borderRadius: radius.lg,
             }}
           >
-            <Text style={{ color: "#fff", fontWeight: "600" }}>Undo</Text>
+            <Text style={{ color: colors.onAccent, fontWeight: "600" }}>Undo</Text>
           </Pressable>
         </Animated.View>
       )}
@@ -931,7 +931,7 @@ function WeightSwipeRow({
         }}
       >
         <Pressable onPress={onDelete} style={{ padding: spacing.md }}>
-          <Ionicons name="trash" size={22} color="#FFF" />
+          <Ionicons name="trash" size={22} color={colors.onDanger} />
         </Pressable>
       </View>
 

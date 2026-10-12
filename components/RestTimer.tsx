@@ -311,7 +311,7 @@ export function RestTimer({ visible, onClose }: RestTimerProps) {
                   backgroundColor: colors.success,
                 }}
               >
-                <Text style={{ color: "#fff", fontWeight: "700", fontSize: 16 }}>
+                <Text style={{ color: colors.onAccent, fontWeight: "700", fontSize: 16 }}>
                   Done
                 </Text>
               </Pressable>
@@ -339,7 +339,7 @@ export function RestTimer({ visible, onClose }: RestTimerProps) {
                 backgroundColor: colors.accent,
               }}
             >
-              <Text style={{ color: "#fff", fontWeight: "700", fontSize: 18 }}>
+              <Text style={{ color: colors.onAccent, fontWeight: "700", fontSize: 18 }}>
                 {remaining < duration ? "Resume" : "Start"}
               </Text>
             </Pressable>
@@ -383,7 +383,7 @@ export function RestTimer({ visible, onClose }: RestTimerProps) {
                 >
                   <Text
                     style={{
-                      color: active ? "#fff" : "rgba(255,255,255,0.7)",
+                      color: active ? colors.onAccent : "rgba(255,255,255,0.7)",
                       fontWeight: "600",
                       fontSize: 14,
                     }}

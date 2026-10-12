@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { AccessibilityInfo, Pressable, Text, type StyleProp, type ViewStyle } from "react-native";
 import Animated, { FadeInDown, FadeOutDown } from "react-native-reanimated";
 import { useTheme } from "../../theme/theme";
-import { elevation, radius, spacing, touchTarget, typography } from "../../theme/tokens";
+import { elevation, radius, spacing, touchTarget, typography, semibold } from "../../theme/tokens";
 
 export type UndoSnackbarProps = {
   visible: boolean;
@@ -49,15 +49,15 @@ export function UndoSnackbar({
       style={[
         {
           position: "absolute",
-          left: spacing.md,
-          right: spacing.md,
-          bottom: spacing.md,
+          left: spacing.lg,
+          right: spacing.lg,
+          bottom: spacing.lg,
           minHeight: 56,
           flexDirection: "row",
           alignItems: "center",
-          paddingLeft: spacing.md,
-          paddingRight: spacing.xxs,
-          borderRadius: radius.md,
+          paddingLeft: spacing.lg,
+          paddingRight: spacing.xs,
+          borderRadius: radius.lg,
           borderWidth: 1,
           borderColor: colors.border,
           backgroundColor: colors.raised,
@@ -66,7 +66,7 @@ export function UndoSnackbar({
         style,
       ]}
     >
-      <Text style={[typography.body, { color: colors.text, flex: 1 }]} numberOfLines={2}>
+      <Text style={[typography.bodyLg, { color: colors.text, flex: 1 }]} numberOfLines={2}>
         {message}
       </Text>
       <Pressable
@@ -76,14 +76,14 @@ export function UndoSnackbar({
         style={({ pressed }) => ({
           minHeight: touchTarget,
           minWidth: touchTarget,
-          paddingHorizontal: spacing.sm,
-          borderRadius: radius.sm,
+          paddingHorizontal: spacing.md,
+          borderRadius: radius.md,
           alignItems: "center",
           justifyContent: "center",
           backgroundColor: pressed ? colors.accentSubtle : "transparent",
         })}
       >
-        <Text style={[typography.body, { color: colors.accent, fontWeight: "700" }]}>{actionLabel}</Text>
+        <Text style={[typography.bodyLg, { color: colors.accent, ...semibold }]}>{actionLabel}</Text>
       </Pressable>
     </Animated.View>
   );

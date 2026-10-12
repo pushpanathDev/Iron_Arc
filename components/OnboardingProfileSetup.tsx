@@ -607,7 +607,7 @@ export function OnboardingProfileSetup({
                       style={[
                         styles.unitToggleText,
                         {
-                          color: unit === "cm" ? "#fff" : colors.textSecondary,
+                          color: unit === "cm" ? colors.onAccent : colors.textSecondary,
                           fontWeight: unit === "cm" ? "700" : "500",
                         },
                       ]}
@@ -623,7 +623,7 @@ export function OnboardingProfileSetup({
                       style={[
                         styles.unitToggleText,
                         {
-                          color: unit === "ft" ? "#fff" : colors.textSecondary,
+                          color: unit === "ft" ? colors.onAccent : colors.textSecondary,
                           fontWeight: unit === "ft" ? "700" : "500",
                         },
                       ]}
@@ -813,7 +813,7 @@ export function OnboardingProfileSetup({
                       alignItems: "center",
                     }}
                   >
-                    <Ionicons name="checkmark" size={14} color="#fff" />
+                    <Ionicons name="checkmark" size={14} color={colors.onAccent} />
                   </View>
                 )}
               </Pressable>
@@ -846,14 +846,14 @@ export function OnboardingProfileSetup({
               ]}
             >
               {isLoading ? (
-                <ActivityIndicator color="#fff" size="small" />
+                <ActivityIndicator color={colors.onAccent} size="small" />
               ) : (
                 <>
-                  <Text style={[styles.buttonText, { color: "#fff" }]}>Complete Setup</Text>
+                  <Text style={[styles.buttonText, { color: colors.onAccent }]}>Complete Setup</Text>
                   <Ionicons
                     name="arrow-forward"
                     size={18}
-                    color="#fff"
+                    color={colors.onAccent}
                     style={{ marginLeft: spacing.xs }}
                   />
                 </>

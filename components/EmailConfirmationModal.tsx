@@ -199,10 +199,10 @@ export function EmailConfirmationModal({
                 gap: spacing.sm,
               }}
             >
-              <Ionicons name="checkmark" size={20} color="#fff" />
+              <Ionicons name="checkmark" size={20} color={colors.onAccent} />
               <Text
                 style={{
-                  color: "#fff",
+                  color: colors.onAccent,
                   fontWeight: "600",
                   fontSize: 16,
                 }}

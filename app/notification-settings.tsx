@@ -171,7 +171,7 @@ export default function NotificationSettingsScreen() {
               You will see the system permission prompt only after choosing Enable below.
             </Text>
             <Pressable onPress={requestPermission} style={{ alignSelf: "flex-start", backgroundColor: colors.warning, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm }}>
-              <Text style={{ color: "#fff", fontWeight: "700" }}>Enable</Text>
+              <Text style={{ color: colors.bg, fontWeight: "700" }}>Enable</Text>
             </Pressable>
           </View>
         )}
@@ -211,7 +211,7 @@ export default function NotificationSettingsScreen() {
         )}
         {Platform.OS === "ios" && editingTime && (
           <Pressable onPress={() => setEditingTime(null)} style={{ alignSelf: "flex-end", backgroundColor: colors.accent, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm }}>
-            <Text style={{ color: "#fff", fontWeight: "700" }}>Done</Text>
+            <Text style={{ color: colors.onAccent, fontWeight: "700" }}>Done</Text>
           </Pressable>
         )}
       </ScrollView>

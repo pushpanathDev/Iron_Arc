@@ -31,7 +31,7 @@ export function EmptyState({
   const { colors } = useTheme();
 
   return (
-    <View style={[{ alignItems: "center", paddingVertical: spacing.xl, paddingHorizontal: spacing.lg, gap: spacing.sm }, style]}>
+    <View style={[{ alignItems: "center", paddingVertical: spacing.xxl, paddingHorizontal: spacing.xl, gap: spacing.md }, style]}>
       <View
         style={{
           width: 64,
@@ -46,12 +46,12 @@ export function EmptyState({
       >
         <Ionicons name={icon} size={28} color={colors.textSecondary} />
       </View>
-      <Text accessibilityRole="header" style={[typography.heading, { color: colors.text, textAlign: "center" }]}>
+      <Text accessibilityRole="header" style={[typography.headlineMd, { color: colors.text, textAlign: "center" }]}>
         {title}
       </Text>
-      <Text style={[typography.body, { color: colors.textSecondary, textAlign: "center", maxWidth: 320 }]}>{body}</Text>
+      <Text style={[typography.bodyLg, { color: colors.textSecondary, textAlign: "center", maxWidth: 320 }]}>{body}</Text>
       {actionLabel && onAction && (
-        <Button title={actionLabel} onPress={onAction} loading={actionLoading} style={{ marginTop: spacing.xs, alignSelf: "center" }} />
+        <Button title={actionLabel} onPress={onAction} loading={actionLoading} style={{ marginTop: spacing.sm, alignSelf: "center" }} />
       )}
       {secondaryActionLabel && onSecondaryAction && (
         <Button title={secondaryActionLabel} variant="secondary" onPress={onSecondaryAction} style={{ alignSelf: "center" }} />

@@ -884,7 +884,7 @@ export default function AdminCatalogScreen() {
             <Text
               style={{
                 color: newRemoval.trim() && removalExact
-                  ? "#fff"
+                  ? colors.onDanger
                   : colors.textMuted,
                 fontWeight: "600",
               }}
@@ -1147,9 +1147,9 @@ export default function AdminCatalogScreen() {
           }}
         >
           {saving ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={colors.onAccent} />
           ) : (
-            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 16 }}>
+            <Text style={{ color: colors.onAccent, fontWeight: "700", fontSize: 16 }}>
               Save Catalog
             </Text>
           )}

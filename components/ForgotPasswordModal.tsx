@@ -223,7 +223,7 @@ export function ForgotPasswordModal({
                 >
                   <Text
                     style={{
-                      color: "#fff",
+                      color: colors.onAccent,
                       fontWeight: "600",
                       fontSize: typography.body.fontSize,
                     }}
@@ -322,11 +322,11 @@ export function ForgotPasswordModal({
                     }}
                   >
                     {loading && (
-                      <ActivityIndicator color="#fff" size="small" />
+                      <ActivityIndicator color={colors.onAccent} size="small" />
                     )}
                     <Text
                       style={{
-                        color: "#fff",
+                        color: colors.onAccent,
                         fontWeight: "600",
                         fontSize: typography.body.fontSize,
                       }}

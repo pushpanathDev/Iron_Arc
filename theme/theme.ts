@@ -3,9 +3,7 @@ import {
   darkColors as darkTokens,
   elevation,
   lightColors as lightTokens,
-  radius as radiusTokens,
-  spacing as spacingTokens,
-  typography as typeTokens,
+  fontFamily,
   type ColorTokens,
 } from "./tokens";
 
@@ -104,23 +102,14 @@ const lightPalette: typeof darkPalette = buildPalette(lightTokens, legacyOnly.li
 
 export type ThemeColors = typeof darkPalette;
 
-export const spacing = {
-  ...spacingTokens,
-  /** @deprecated not on the scale; use xl (32) */
-  xxl: 48,
-};
+/**
+ * @deprecated Legacy scale for screens not yet redesigned. Values are pinned so
+ * those layouts don't shift; new code uses `spacing` from ./tokens.
+ */
+export const spacing = { xxs: 4, xs: 8, sm: 12, md: 16, lg: 24, xl: 32, xxl: 48 };
 
-export const radius = {
-  ...radiusTokens,
-  /** @deprecated use sm */
-  xs: 4,
-  /** @deprecated use lg */
-  xl: 20,
-  /** @deprecated use lg */
-  xxl: 28,
-  /** @deprecated use pill */
-  full: 9999,
-};
+/** @deprecated Legacy radii, pinned. New code uses `radius` from ./tokens. */
+export const radius = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 28, full: 9999 };
 
 /** @deprecated use `elevation`; `glow` and `card` resolve to neutral shadows. */
 export const shadows = {
@@ -131,26 +120,26 @@ export const shadows = {
   card: elevation.sm,
 };
 
-const f = typeTokens.body.fontFamily;
-
-/** @deprecated legacy scale kept so existing screens render unchanged; use `typography` from ./tokens. */
+/**
+ * @deprecated Legacy type scale, sizes pinned, now set in Inter / Barlow
+ * Condensed. New code uses `typography` from ./tokens.
+ */
 export const typography = {
-  display: { fontFamily: f, fontSize: 48, fontWeight: "800" as const, lineHeight: 52, letterSpacing: -1 },
-  h1: { fontFamily: f, fontSize: 32, fontWeight: "700" as const, lineHeight: 40, letterSpacing: -0.5 },
-  h2: { fontFamily: f, fontSize: 24, fontWeight: "600" as const, lineHeight: 32, letterSpacing: -0.3 },
-  h3: { fontFamily: f, fontSize: 18, fontWeight: "600" as const, lineHeight: 24, letterSpacing: 0 },
-  body: typeTokens.body,
-  bodyMedium: { fontFamily: f, fontSize: 16, fontWeight: "500" as const, lineHeight: 24, letterSpacing: 0 },
-  caption: { fontFamily: f, fontSize: 14, fontWeight: "500" as const, lineHeight: 20, letterSpacing: 0 },
+  display: { fontFamily: fontFamily.display, fontSize: 48, lineHeight: 52, letterSpacing: -1 },
+  h1: { fontFamily: fontFamily.display, fontSize: 32, lineHeight: 40 },
+  h2: { fontFamily: fontFamily.display, fontSize: 24, lineHeight: 32 },
+  h3: { fontFamily: fontFamily.semibold, fontSize: 18, lineHeight: 24 },
+  body: { fontFamily: fontFamily.regular, fontSize: 16, lineHeight: 24 },
+  bodyMedium: { fontFamily: fontFamily.medium, fontSize: 16, lineHeight: 24 },
+  caption: { fontFamily: fontFamily.medium, fontSize: 14, lineHeight: 20 },
   label: {
-    fontFamily: f,
+    fontFamily: fontFamily.semibold,
     fontSize: 12,
-    fontWeight: "600" as const,
     lineHeight: 16,
     letterSpacing: 0.5,
     textTransform: "uppercase" as const,
   },
-  stat: { fontFamily: f, fontSize: 36, fontWeight: "700" as const, lineHeight: 40, letterSpacing: -0.5 },
+  stat: { fontFamily: fontFamily.display, fontSize: 36, lineHeight: 40 },
 };
 
 export function getPalette(isDark: boolean): ThemeColors {

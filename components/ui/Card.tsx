@@ -30,7 +30,7 @@ export function Card({
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: radii[radius],
-    padding: padded ? spacing.md : 0,
+    padding: padded ? spacing.lg : 0,
   };
 
   if (!onPress) {

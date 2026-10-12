@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { Keyboard, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../../theme/theme";
-import { elevation, spacing, touchTarget, typography } from "../../theme/tokens";
+import { elevation, semibold, spacing, touchTarget, typography } from "../../theme/tokens";
 
 const LOG_SIZE = 56;
 const BAR_HEIGHT = 64;
@@ -70,7 +70,7 @@ export function AppTabBar({ state, descriptors, navigation, onLogPress }: AppTab
         style={styles.tab}
       >
         {options.tabBarIcon?.({ focused, color, size: 24 })}
-        <Text style={[typography.caption, { color, fontWeight: focused ? "600" : "500" }]} numberOfLines={1}>
+        <Text style={[typography.labelMd, { color }, focused && semibold]} numberOfLines={1}>
           {label}
         </Text>
       </Pressable>
@@ -95,7 +95,7 @@ export function AppTabBar({ state, descriptors, navigation, onLogPress }: AppTab
         <Ionicons name="add" size={30} color={colors.onAccent} />
       </Pressable>
       <Text
-        style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}
+        style={[typography.labelMd, { color: colors.textSecondary, marginTop: 2 }]}
         importantForAccessibility="no"
         accessibilityElementsHidden
       >
@@ -114,8 +114,8 @@ export function AppTabBar({ state, descriptors, navigation, onLogPress }: AppTab
         flexDirection: "row",
         alignItems: "flex-end",
         minHeight: BAR_HEIGHT + insets.bottom,
-        paddingBottom: Math.max(spacing.xs, insets.bottom),
-        paddingTop: spacing.xxs,
+        paddingBottom: Math.max(spacing.sm, insets.bottom),
+        paddingTop: spacing.xs,
         backgroundColor: colors.card,
         borderTopWidth: 1,
         borderTopColor: colors.border,

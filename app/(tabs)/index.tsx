@@ -27,7 +27,7 @@ import { useUnitPreference } from "../../hooks/useUnitPreference";
 import { useAllWorkouts } from "../../hooks/useWorkouts";
 import { isNetworkApiError, type Workout } from "../../services/api";
 import { useTheme } from "../../theme/theme";
-import { radius, spacing, touchTarget, typography } from "../../theme/tokens";
+import { radius, spacing, touchTarget, typography, semibold } from "../../theme/tokens";
 import { getInitials } from "../../utils/avatar";
 import { displayWeight, weightLabel } from "../../utils/unitConversion";
 import { formatDate, getWeekStart, parseLocalDate } from "../../utils/weekUtils";
@@ -269,7 +269,7 @@ export default function Home() {
     <>
       <ScrollView
         style={{ flex: 1, backgroundColor: colors.bg }}
-        contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xl, gap: spacing.md }}
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.lg }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -281,13 +281,13 @@ export default function Home() {
         }
       >
         {/* ========== HEADER ========== */}
-        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
           <View style={{ flex: 1 }}>
-            <Text accessibilityRole="header" style={[typography.title, { color: colors.text }]}>
+            <Text accessibilityRole="header" style={[typography.headlineLg, { color: colors.text }]}>
               {getGreeting()}
               {firstName ? `, ${firstName}` : ""}
             </Text>
-            <Text style={[typography.caption, { color: colors.textSecondary, marginTop: spacing.xxs }]}>
+            <Text style={[typography.labelMd, { color: colors.textSecondary, marginTop: spacing.xs }]}>
               {new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}
             </Text>
           </View>
@@ -296,15 +296,15 @@ export default function Home() {
 
         {/* Email verification banner */}
         {user && !user.emailVerified && verificationDaysLeft !== null && !dismissVerificationBanner && (
-          <Card style={{ gap: spacing.xs }}>
-            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.xs }}>
+          <Card style={{ gap: spacing.sm }}>
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
               <Ionicons
                 name="mail-unread-outline"
                 size={20}
                 color={verificationDaysLeft > 0 ? colors.accent : colors.danger}
                 style={{ marginTop: 2 }}
               />
-              <Text style={[typography.body, { color: colors.text, fontWeight: "600", flex: 1 }]}>
+              <Text style={[typography.bodyLg, { color: colors.text, ...semibold, flex: 1 }]}>
                 {verificationDaysLeft > 0
                   ? verificationMessages.bannerTitleSoft(verificationDaysLeft)
                   : verificationMessages.bannerTitleHard}
@@ -313,12 +313,12 @@ export default function Home() {
                 onPress={() => setDismissVerificationBanner(true)}
                 accessibilityRole="button"
                 accessibilityLabel="Dismiss verification reminder"
-                style={{ width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center", marginTop: -spacing.sm, marginRight: -spacing.sm }}
+                style={{ width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center", marginTop: -spacing.md, marginRight: -spacing.md }}
               >
                 <Ionicons name="close" size={20} color={colors.textSecondary} />
               </Pressable>
             </View>
-            <Text style={[typography.bodySmall, { color: colors.textSecondary }]}>{verificationMessages.bannerBody}</Text>
+            <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>{verificationMessages.bannerBody}</Text>
             <Button title={verificationMessages.bannerAction} variant="ghost" onPress={() => setShowVerificationPrompt(true)} />
           </Card>
         )}
@@ -329,11 +329,11 @@ export default function Home() {
             onPress={() => router.navigate("/(tabs)/profile")}
             accessibilityLabel="Set your fitness goal. Needed to create your AI workout plan."
           >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
               <Ionicons name="sparkles" size={20} color={colors.accent} />
               <View style={{ flex: 1 }}>
-                <Text style={[typography.body, { color: colors.text, fontWeight: "600" }]}>Set your fitness goal</Text>
-                <Text style={[typography.bodySmall, { color: colors.textSecondary }]}>
+                <Text style={[typography.bodyLg, { color: colors.text, ...semibold }]}>Set your fitness goal</Text>
+                <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
                   Needed to create your AI workout plan
                 </Text>
               </View>
@@ -381,27 +381,27 @@ export default function Home() {
             )}
 
             {/* ========== THIS WEEK ========== */}
-            <Card style={{ gap: spacing.sm }}>
-              <Text accessibilityRole="header" style={[typography.heading, { color: colors.text }]}>
+            <Card style={{ gap: spacing.md }}>
+              <Text accessibilityRole="header" style={[typography.headlineMd, { color: colors.text }]}>
                 This week
               </Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.md }}>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.lg }}>
                 {weeklyTarget ? (
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexGrow: 1, flexBasis: 180 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, flexGrow: 1, flexBasis: 180 }}>
                     <ProgressRing
                       progress={workoutsThisWeek / weeklyTarget.value}
                       size={80}
                       accessibilityLabel={`${workoutsThisWeek} of ${weeklyTarget.value} workouts this week`}
                     >
-                      <Text style={[typography.bodySmall, { color: colors.text, fontWeight: "700" }]}>
+                      <Text style={[typography.bodyMd, { color: colors.text, ...semibold }]}>
                         {workoutsThisWeek}/{weeklyTarget.value}
                       </Text>
                     </ProgressRing>
                     <View style={{ flex: 1 }} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
-                      <Text style={[typography.body, { color: colors.text, fontWeight: "600" }]}>
+                      <Text style={[typography.bodyLg, { color: colors.text, ...semibold }]}>
                         {workoutsThisWeek} of {weeklyTarget.value} workouts
                       </Text>
-                      <Text style={[typography.caption, { color: colors.textSecondary }]}>{weeklyTarget.source}</Text>
+                      <Text style={[typography.labelMd, { color: colors.textSecondary }]}>{weeklyTarget.source}</Text>
                     </View>
                   </View>
                 ) : (
@@ -430,14 +430,14 @@ export default function Home() {
                 accessibilityLabel={`Suggested next: train ${suggestion.category}. ${suggestion.reason}.`}
                 accessibilityHint="Opens Log workout"
               >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
                   <IconBadge name={suggestion.icon} />
                   <View style={{ flex: 1 }}>
-                    <Text style={[typography.caption, { color: colors.textSecondary }]}>Suggested next</Text>
-                    <Text style={[typography.body, { color: colors.text, fontWeight: "600" }]}>
+                    <Text style={[typography.labelMd, { color: colors.textSecondary }]}>Suggested next</Text>
+                    <Text style={[typography.bodyLg, { color: colors.text, ...semibold }]}>
                       Train {suggestion.category.toLowerCase()}
                     </Text>
-                    <Text style={[typography.bodySmall, { color: colors.textSecondary }]}>{suggestion.reason}</Text>
+                    <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>{suggestion.reason}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
                 </View>
@@ -493,17 +493,17 @@ function TodayCard({ planId, planName, day }: { planId: string; planName: string
     const note = day.recoveryNote?.trim();
     const showNote = !!note && !isRestDayTitle(note);
     return (
-      <Card style={{ gap: spacing.sm }}>
+      <Card style={{ gap: spacing.md }}>
         <View>
-          <Text style={[typography.caption, { color: colors.textSecondary }]}>Today · {planName}</Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+          <Text style={[typography.labelMd, { color: colors.textSecondary }]}>Today · {planName}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <Ionicons name="moon-outline" size={20} color={colors.textSecondary} />
-            <Text accessibilityRole="header" style={[typography.heading, { color: colors.text }]}>
+            <Text accessibilityRole="header" style={[typography.headlineMd, { color: colors.text }]}>
               Rest day
             </Text>
           </View>
           {showNote && (
-            <Text style={[typography.bodySmall, { color: colors.textSecondary, marginTop: spacing.xxs }]}>{note}</Text>
+            <Text style={[typography.bodyMd, { color: colors.textSecondary, marginTop: spacing.xs }]}>{note}</Text>
           )}
         </View>
         <Button title="View plan" variant="secondary" onPress={openPlan} />
@@ -516,22 +516,22 @@ function TodayCard({ planId, planName, day }: { planId: string; planName: string
   const title = day.name || formatMuscles(day.targetMuscles) || "Workout";
 
   return (
-    <Card style={{ gap: spacing.sm }}>
+    <Card style={{ gap: spacing.md }}>
       <View>
-        <Text style={[typography.caption, { color: colors.textSecondary }]}>Today · {planName}</Text>
-        <Text accessibilityRole="header" style={[typography.heading, { color: colors.text }]}>
+        <Text style={[typography.labelMd, { color: colors.textSecondary }]}>Today · {planName}</Text>
+        <Text accessibilityRole="header" style={[typography.headlineMd, { color: colors.text }]}>
           {title}
         </Text>
         {!!day.estimatedDurationMinutes && (
-          <Text style={[typography.bodySmall, { color: colors.textSecondary }]}>
+          <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
             About {day.estimatedDurationMinutes} min
           </Text>
         )}
       </View>
       {shown.length > 0 && (
-        <View style={{ gap: spacing.xxs }}>
+        <View style={{ gap: spacing.xs }}>
           {shown.map((e, i) => (
-            <Text key={`${e.name}-${i}`} style={[typography.bodySmall, { color: colors.text }]}>
+            <Text key={`${e.name}-${i}`} style={[typography.bodyMd, { color: colors.text }]}>
               {e.name}
               {typeof e.sets === "number" && e.reps ? (
                 <Text style={{ color: colors.textSecondary }}>{`  ${e.sets} × ${e.reps}`}</Text>
@@ -539,7 +539,7 @@ function TodayCard({ planId, planName, day }: { planId: string; planName: string
             </Text>
           ))}
           {exercises.length > shown.length && (
-            <Text style={[typography.bodySmall, { color: colors.textSecondary }]}>
+            <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
               +{exercises.length - shown.length} more
             </Text>
           )}
@@ -580,7 +580,7 @@ function Avatar({ photoUri, initials, onPress }: { photoUri: string | null; init
           style={{ width: touchTarget, height: touchTarget }}
         />
       ) : initials ? (
-        <Text style={[typography.body, { color: colors.accent, fontWeight: "700" }]} maxFontSizeMultiplier={1.2}>
+        <Text style={[typography.bodyLg, { color: colors.accent, ...semibold }]} maxFontSizeMultiplier={1.2}>
           {initials}
         </Text>
       ) : (
@@ -619,9 +619,9 @@ function RecentRow({
         minHeight: 64,
         flexDirection: "row",
         alignItems: "center",
-        gap: spacing.sm,
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.sm,
+        gap: spacing.md,
+        paddingHorizontal: spacing.lg,
+        paddingVertical: spacing.md,
         borderTopWidth: showDivider ? 1 : 0,
         borderTopColor: colors.border,
         backgroundColor: pressed ? colors.raised : "transparent",
@@ -629,14 +629,14 @@ function RecentRow({
     >
       <IconBadge name={getCategoryIcon(workout.category)} />
       <View style={{ flex: 1 }}>
-        <Text style={[typography.body, { color: colors.text, fontWeight: "600" }]}>{workout.category}</Text>
-        <Text style={[typography.bodySmall, { color: colors.textSecondary }]} numberOfLines={2}>
+        <Text style={[typography.bodyLg, { color: colors.text, ...semibold }]}>{workout.category}</Text>
+        <Text style={[typography.bodyMd, { color: colors.textSecondary }]} numberOfLines={2}>
           {exerciseSummary}
         </Text>
       </View>
       <View style={{ alignItems: "flex-end", maxWidth: "40%" }}>
-        <Text style={[typography.bodySmall, { color: colors.text }]}>{dateLabel}</Text>
-        <Text style={[typography.caption, { color: colors.textSecondary }]}>{detail}</Text>
+        <Text style={[typography.bodyMd, { color: colors.text }]}>{dateLabel}</Text>
+        <Text style={[typography.labelMd, { color: colors.textSecondary }]}>{detail}</Text>
       </View>
     </Pressable>
   );
@@ -649,7 +649,7 @@ function IconBadge({ name }: { name: IconName }) {
       style={{
         width: 40,
         height: 40,
-        borderRadius: radius.md,
+        borderRadius: radius.lg,
         backgroundColor: colors.accentSubtle,
         alignItems: "center",
         justifyContent: "center",
@@ -662,20 +662,20 @@ function IconBadge({ name }: { name: IconName }) {
 
 function HomeSkeleton() {
   return (
-    <View style={{ gap: spacing.md }}>
-      <Card style={{ gap: spacing.sm }}>
+    <View style={{ gap: spacing.lg }}>
+      <Card style={{ gap: spacing.md }}>
         <Skeleton width="40%" height={14} />
         <Skeleton width="70%" height={24} />
-        <Skeleton height={48} radius="md" />
+        <Skeleton height={48} radius="lg" />
       </Card>
-      <Card style={{ flexDirection: "row", gap: spacing.md, alignItems: "center" }}>
-        <Skeleton width={80} height={80} radius="pill" />
-        <View style={{ flex: 1, gap: spacing.xs }}>
+      <Card style={{ flexDirection: "row", gap: spacing.lg, alignItems: "center" }}>
+        <Skeleton width={80} height={80} radius="full" />
+        <View style={{ flex: 1, gap: spacing.sm }}>
           <Skeleton width="60%" />
           <Skeleton width="40%" height={12} />
         </View>
       </Card>
-      <Card style={{ gap: spacing.sm }}>
+      <Card style={{ gap: spacing.md }}>
         <Skeleton width="30%" height={20} />
         <Skeleton height={40} />
         <Skeleton height={40} />

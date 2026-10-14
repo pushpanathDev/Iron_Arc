@@ -31,6 +31,7 @@ export interface BodyWeight {
 
 export const workoutApi = {
   listAll: jest.fn(),
+  createBatch: jest.fn(),
   list: jest.fn(),
   getById: jest.fn(),
   create: jest.fn(),

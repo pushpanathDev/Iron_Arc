@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
 import type { ReactNode } from "react";
 import { ActivityIndicator, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { useTheme } from "../../theme/theme";
@@ -8,7 +9,10 @@ import type { IconName } from "./iconName";
 import { PressableScale } from "./PressableScale";
 
 /** `tonal`: filled with surfaceContainerHigh, no border (e.g. "Continue with Google"). */
-export type ButtonVariant = "primary" | "secondary" | "tonal" | "ghost" | "destructive";
+/** `ghostDanger`: text-only in the error colour (e.g. "Delete set"). */
+/** `dangerTonal`: soft red gradient, red label (the delete dialog's confirm). */
+/** `neutral`: soft grey gradient, for the calm choice beside a destructive one (Cancel). */
+export type ButtonVariant = "primary" | "secondary" | "tonal" | "ghost" | "destructive" | "ghostDanger" | "dangerTonal" | "neutral";
 
 export type ButtonProps = {
   title: string;
@@ -19,6 +23,8 @@ export type ButtonProps = {
   icon?: IconName;
   /** Custom leading element, e.g. a brand logo. Overrides `icon`. */
   leading?: ReactNode;
+  /** Icon after the label, e.g. an arrow on a "Continue" button. */
+  trailingIcon?: IconName;
   fullWidth?: boolean;
   uppercase?: boolean;
   /** Light haptic tap on press. */
@@ -37,6 +43,7 @@ export function Button({
   disabled = false,
   icon,
   leading,
+  trailingIcon,
   fullWidth = false,
   uppercase = false,
   haptic = false,
@@ -59,7 +66,17 @@ export function Button({
     },
     ghost: { bg: "transparent", pressed: colors.accentSubtle, fg: colors.accent, border: "transparent" },
     destructive: { bg: colors.danger, pressed: colors.dangerPressed, fg: colors.onDanger, border: colors.danger },
+    ghostDanger: { bg: "transparent", pressed: colors.surfaceContainerHigh, fg: colors.danger, border: "transparent" },
+    dangerTonal: { bg: colors.dangerGradientBottom, pressed: colors.dangerGradientBottom, fg: colors.danger, border: colors.dangerGradientTop },
+    neutral: { bg: colors.surfaceContainerHigh, pressed: colors.surfaceContainerHighest, fg: colors.text, border: colors.border },
   }[variant];
+  const gradient = disabled
+    ? null
+    : variant === "neutral"
+      ? ([colors.surfaceContainerHighest, colors.surfaceContainerHigh] as const)
+      : variant === "dangerTonal"
+        ? ([colors.dangerGradientTop, colors.dangerGradientBottom] as const)
+        : null;
 
   const showDisabledLook = disabled && !loading;
   const fg = showDisabledLook ? colors.textMuted : palette.fg;
@@ -86,19 +103,31 @@ export function Button({
           justifyContent: "center",
           alignSelf: fullWidth ? "stretch" : "flex-start",
           backgroundColor: showDisabledLook
-            ? variant === "ghost"
+            ? variant === "ghost" || variant === "ghostDanger"
               ? "transparent"
               : colors.raised
             : pressed
               ? palette.pressed
               : palette.bg,
-          borderColor: showDisabledLook && variant !== "ghost" ? colors.border : palette.border,
+          borderColor: showDisabledLook && variant !== "ghost" && variant !== "ghostDanger" ? colors.border : pressed && variant === "dangerTonal" ? colors.danger : palette.border,
+          overflow: gradient ? "hidden" : undefined,
         },
         style,
       ]}
     >
-      {/* The label stays laid out (invisible) while loading so the button never changes size. */}
+      {gradient && (
+        <LinearGradient
+          pointerEvents="none"
+          colors={gradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
+        />
+      )}
+      {/* The label stays laid out (invisible) while loading so the button never changes size.
+          Content never takes touches: the whole button box is the tap target. */}
       <View
+        pointerEvents="none"
         style={{ flexDirection: "row", alignItems: "center", gap: leading ? spacing.md : spacing.sm, opacity: loading ? 0 : 1 }}
       >
         {leading ?? (icon && <Ionicons name={icon} size={size.icon} color={fg} />)}
@@ -111,9 +140,10 @@ export function Button({
         >
           {title}
         </Text>
+        {trailingIcon && <Ionicons name={trailingIcon} size={size.icon} color={fg} />}
       </View>
       {loading && (
-        <View style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, alignItems: "center", justifyContent: "center" }}>
+        <View pointerEvents="none" style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, alignItems: "center", justifyContent: "center" }}>
           <ActivityIndicator color={fg} />
         </View>
       )}

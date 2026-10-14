@@ -17,7 +17,6 @@ const legacyOnly = {
   dark: {
     secondary: "#818CF8",
     secondaryLight: "#312E81",
-    warning: "#FBBF24",
     warningLight: "#78350F",
     chartSecondary: "#818CF8",
     chartTertiary: "#FBBF24",
@@ -32,7 +31,6 @@ const legacyOnly = {
   light: {
     secondary: "#4F46E5",
     secondaryLight: "#E0E7FF",
-    warning: "#B45309",
     warningLight: "#FEF3C7",
     chartSecondary: "#4F46E5",
     chartTertiary: "#F59E0B",

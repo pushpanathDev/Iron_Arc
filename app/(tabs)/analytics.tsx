@@ -1,1317 +1,261 @@
-import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  Text,
-  View,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, {
-  FadeInDown,
-  FadeInUp,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from "react-native-reanimated";
-import Svg, { Circle, G, Path } from "react-native-svg";
-
-import { useTheme } from "../../theme/theme";
-
+import { useMemo, useState, type ComponentProps } from "react";
+import { RefreshControl, ScrollView, Text, View } from "react-native";
+import { ActivityChart } from "../../components/analytics/ActivityChart";
+import { BestLiftsCard } from "../../components/analytics/BestLiftsCard";
+import { HeadlineCard } from "../../components/analytics/HeadlineCard";
+import { MuscleBalance } from "../../components/analytics/MuscleBalance";
+import { RecordsCard } from "../../components/analytics/RecordsCard";
+import { useAuth } from "../../auth/AuthContext";
+import { Avatar } from "../../components/ui/Avatar";
+import { Button } from "../../components/ui/Button";
+import { FilterChip } from "../../components/ui/FilterChip";
+import { Reveal } from "../../components/ui/Reveal";
+import { SkeletonBlock } from "../../components/ui/Skeleton";
+import { effectiveWeeklyGoal } from "../../constants/trainingProfile";
 import { useProfile } from "../../hooks/useProfile";
-import { useAllWeights } from "../../hooks/useWeights";
+import { useUnitPreference } from "../../hooks/useUnitPreference";
 import { useAllWorkouts } from "../../hooks/useWorkouts";
-import {
-  calculateAnalyticsStats,
-  generateInsights,
-} from "../../insights/insightEngine";
+import { useTheme } from "../../theme/theme";
+import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
+import { analyzePeriod, bestLifts, exercisesByCategory, headlineFor, MAIN_GROUPS, muscleWeeks, PERIODS, prsInRange, withinReach, type AnalyticsPeriod } from "../../utils/analytics";
+import { getInitials } from "../../utils/avatar";
+import { exerciseIndexFor, prEventsFor } from "../../utils/exerciseHistory";
+import { perfStart } from "../../utils/perf";
+import { toKg, weightLabel, weightStep } from "../../utils/unitConversion";
+import { formatDate, parseLocalDate } from "../../utils/weekUtils";
+
+const NO_WORKOUTS: never[] = [];
+
+/** Label over the hero card. */
+const OVERLINE: Record<AnalyticsPeriod, string> = { week: "This week", month: "This month", quarter: "Last 3 months", all: "All time" };
+
+/** How each period reads in a sentence ("52 sets this week"). */
+const PHRASE: Record<AnalyticsPeriod, string> = {
+  week: "this week",
+  month: "this month",
+  quarter: "in the last 3 months",
+  all: "so far",
+};
+
+/* ==============================
+   ANALYTICS
+   ============================== */
 
 export default function Analytics() {
-  const { colors, spacing, radius, typography, shadows } = useTheme();
-  const insets = useSafeAreaInsets();
-
-  const { data: workouts = [], refetch: refetchWorkouts } = useAllWorkouts();
-  const { data: rawWeights = [], refetch: refetchWeights } = useAllWeights();
+  const { colors } = useTheme();
+  const { user } = useAuth();
   const { data: profile } = useProfile();
+  const { unit } = useUnitPreference();
+  const query = useAllWorkouts();
+  const workouts = query.data ?? NO_WORKOUTS;
+  const todayKey = formatDate(new Date());
 
+  const [period, setPeriod] = useState<AnalyticsPeriod>("week");
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedPeriod, setSelectedPeriod] = useState<"week" | "month" | "all">("week");
-  const [selectedWeightIndex, setSelectedWeightIndex] = useState<number | null>(null);
 
-  const weeklyGoal = profile?.weeklyGoal ?? 1;
-  const insights = useMemo(() => generateInsights(workouts, rawWeights), [workouts, rawWeights]);
+  const stats = useMemo(() => analyzePeriod(workouts, period, todayKey), [workouts, period, todayKey]);
+  const lifts = useMemo(() => bestLifts(exerciseIndexFor(workouts).index, stats.start, stats.end), [workouts, stats.start, stats.end]);
+  const records = useMemo(() => prsInRange(prEventsFor(workouts), stats.start, stats.end), [workouts, stats.start, stats.end]);
+  const reach = useMemo(() => withinReach(exerciseIndexFor(workouts).index, todayKey, toKg(weightStep(unit), unit)), [workouts, todayKey, unit]);
+  const muscles = useMemo(() => muscleWeeks(workouts, stats, todayKey), [workouts, stats, todayKey]);
+  const groupExercises = useMemo(() => exercisesByCategory(workouts, stats.start, stats.end), [workouts, stats.start, stats.end]);
+  const headline = useMemo(() => headlineFor(workouts, period, stats, records, todayKey, PHRASE[period], unit), [workouts, period, stats, records, todayKey, unit]);
 
-  const handleRefresh = useCallback(async () => {
+  const onRefresh = async () => {
     setRefreshing(true);
     try {
-      await Promise.all([refetchWorkouts(), refetchWeights()]);
+      await query.refetch();
     } finally {
       setRefreshing(false);
     }
-  }, [refetchWorkouts, refetchWeights]);
+  };
 
-  const stats = useMemo(
-    () => calculateAnalyticsStats(workouts, rawWeights, selectedPeriod, weeklyGoal),
-    [workouts, rawWeights, selectedPeriod, weeklyGoal],
-  );
+  const phrase = PHRASE[period];
+  const goal = effectiveWeeklyGoal(profile);
+  // Planned weekdays (ISO 1 = Monday) marked on the week chart.
+  const plannedDays = useMemo(() => {
+    const days = profile?.trainingDays ?? [];
+    return period === "week" ? new Set(stats.buckets.filter((_, i) => days.includes(i + 1)).map((b) => b.key)) : undefined;
+  }, [profile?.trainingDays, period, stats.buckets]);
+  const openExercise = (name: string) => router.push({ pathname: "/exercise/[name]", params: { name } });
+  const chartSubtitle =
+    period === "week" && goal
+      ? `${stats.trainingDays} of ${goal} planned ${goal === 1 ? "day" : "days"} · ${stats.sets} ${stats.sets === 1 ? "set" : "sets"}`
+      : `${stats.sessions} ${stats.sessions === 1 ? "workout" : "workouts"} · ${stats.sets} ${stats.sets === 1 ? "set" : "sets"} ${phrase}`;
+  const chartNote =
+    period !== "all"
+      ? null
+      : stats.chartTruncated
+        ? "The chart shows the last 12 months; totals cover everything."
+        : `Since ${parseLocalDate(stats.start).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`;
 
-  const { personalRecords, muscleHeatmap } = stats;
-
-  useEffect(() => {
-    if (stats.weightValues.length > 0) {
-      setSelectedWeightIndex(stats.weightValues.length - 1);
-    } else {
-      setSelectedWeightIndex(null);
-    }
-  }, [stats.weightValues.length]);
-
-  /* =========================
-     PERIOD SELECTOR
-     ========================= */
-  const PeriodSelector = () => (
-    <View
-      style={{
-        flexDirection: "row",
-        backgroundColor: colors.surface,
-        borderRadius: radius.lg,
-        padding: spacing.xxs,
-        marginBottom: spacing.lg,
-      }}
-    >
-      {(["week", "month", "all"] as const).map((period) => (
-        <Pressable
-          key={period}
-          onPress={() => setSelectedPeriod(period)}
-          style={{
-            flex: 1,
-            paddingVertical: spacing.sm,
-            paddingHorizontal: spacing.md,
-            borderRadius: radius.md,
-            backgroundColor:
-              selectedPeriod === period ? colors.accent : "transparent",
-          }}
-        >
-          <Text
-            style={{
-              textAlign: "center",
-              fontSize: typography.caption.fontSize,
-              fontWeight: selectedPeriod === period ? "600" : "400",
-              color: selectedPeriod === period ? colors.onAccent : colors.textSecondary,
-            }}
-          >
-            {period === "week"
-              ? "Week"
-              : period === "month"
-                ? "Month"
-                : "All Time"}
-          </Text>
-        </Pressable>
-      ))}
-    </View>
-  );
+  const nameSource = profile?.displayName || user?.displayName || profile?.email || user?.email || "";
+  const avatarPhoto = profile?.avatarUrl || user?.photoURL || null;
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={{
-        padding: spacing.md,
-        paddingBottom: insets.bottom + spacing.xxl,
-      }}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-          tintColor={colors.accent}
-        />
-      }
-    >
-      {/* HEADER */}
-      <Animated.View entering={FadeInDown.duration(400)}>
-        <Text
-          style={{
-            ...typography.h1,
-            color: colors.textPrimary,
-            marginBottom: spacing.xs,
-          }}
-        >
-          Analytics
-        </Text>
-        <Text
-          style={{
-            ...typography.body,
-            color: colors.textSecondary,
-            marginBottom: spacing.lg,
-          }}
-        >
-          Your fitness journey at a glance • Pull to refresh
-        </Text>
-      </Animated.View>
-
-      {/* PERIOD SELECTOR */}
-      <PeriodSelector />
-
-      {/* HERO STATS ROW */}
-      <Animated.View
-        entering={FadeInUp.delay(100).duration(400)}
-        style={{
-          flexDirection: "row",
-          gap: spacing.sm,
-          marginBottom: spacing.md,
-        }}
-      >
-        {/* WORKOUTS CARD */}
-        <LinearGradient
-          colors={[colors.gradientStart, colors.gradientEnd]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={{
-            flex: 1,
-            borderRadius: radius.xl,
-            padding: spacing.lg,
-            ...shadows.md,
-          }}
-        >
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              marginBottom: spacing.sm,
-            }}
-          >
-            <View
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: radius.full,
-                backgroundColor: "rgba(255,255,255,0.2)",
-                justifyContent: "center",
-                alignItems: "center",
-              }}
-            >
-              <Ionicons name="barbell-outline" size={18} color={colors.onAccent} />
-            </View>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      {/* Header */}
+      <View style={{ height: size.appBar, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingLeft: spacing.screen, paddingRight: spacing.sm }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+          <View style={{ width: size.tileSm, height: size.tileSm, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh }}>
+            <MaterialIcons name="insights" size={size.icon} color={colors.accent} />
           </View>
-          <Text style={{ ...typography.display, color: colors.onAccent }}>
-            {stats.totalWorkouts}
-          </Text>
-          <Text
-            style={{ ...typography.caption, color: colors.onAccent }}
-          >
-            Workouts
-          </Text>
-        </LinearGradient>
-
-        {/* STREAK CARD */}
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: colors.surface,
-            borderRadius: radius.xl,
-            padding: spacing.lg,
-            borderWidth: 1,
-            borderColor: colors.cardBorder,
-            ...shadows.sm,
-          }}
-        >
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              marginBottom: spacing.sm,
-            }}
-          >
-            <View
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: radius.full,
-                backgroundColor:
-                  stats.streak > 0
-                    ? colors.warningLight
-                    : colors.surfaceElevated,
-                justifyContent: "center",
-                alignItems: "center",
-              }}
-            >
-              <Ionicons
-                name="flame"
-                size={18}
-                color={stats.streak > 0 ? colors.warning : colors.textMuted}
-              />
-            </View>
-          </View>
-          <Text style={{ ...typography.display, color: colors.textPrimary }}>
-            {stats.streak}
-          </Text>
-          <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-            Day Streak
+          <Text style={[typography.headlineMd, { color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]} accessibilityRole="header">
+            Analytics
           </Text>
         </View>
-      </Animated.View>
+        <Avatar key={avatarPhoto ?? "initials"} photoUri={avatarPhoto} initials={nameSource ? getInitials(nameSource) : ""} onPress={() => router.navigate("/(tabs)/profile")} />
+      </View>
 
-      {/* WEEKLY GOAL PROGRESS */}
-      <Animated.View
-        entering={FadeInUp.delay(200).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          padding: spacing.lg,
-          marginBottom: spacing.md,
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.sm,
-        }}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: spacing.xxl, gap: spacing.md }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} progressBackgroundColor={colors.card} />}
       >
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <View style={{ flex: 1 }}>
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: spacing.xs,
-              }}
-            >
-              <Text style={{ ...typography.label, color: colors.textMuted }}>
-                {"TODAY'S GOAL"}
-              </Text>
-              <Pressable
-                onPress={() => router.push("/(tabs)/profile")}
-                style={{ marginLeft: spacing.xs, padding: spacing.xxs }}
-              >
-                <Ionicons name="pencil" size={12} color={colors.textMuted} />
-              </Pressable>
-            </View>
-            <Text style={{ ...typography.h2, color: colors.textPrimary }}>
-              {stats.todayWorkouts}/{weeklyGoal} workouts
-            </Text>
-            <Text
-              style={{
-                ...typography.caption,
-                color: colors.textSecondary,
-                marginTop: spacing.xxs,
-              }}
-            >
-              {stats.goalProgress >= 100
-                ? "Daily goal achieved! 🎉"
-                : `${Math.round(100 - stats.goalProgress)}% to go`}
-            </Text>
-          </View>
-          <ProgressRing
-            progress={stats.goalProgress}
-            size={80}
-            strokeWidth={8}
-            color={colors.accent}
-            bgColor={colors.surfaceElevated}
-          />
-        </View>
-      </Animated.View>
-
-      {/* STATS GRID */}
-      <Animated.View
-        entering={FadeInUp.delay(300).duration(400)}
-        style={{
-          flexDirection: "row",
-          flexWrap: "wrap",
-          gap: spacing.sm,
-          marginBottom: spacing.md,
-        }}
-      >
-        <StatCard
-          icon="layers-outline"
-          label="Total Sets"
-          value={stats.totalSets.toString()}
-          colors={colors}
-          spacing={spacing}
-          radius={radius}
-          shadows={shadows}
-        />
-        <StatCard
-          icon="repeat-outline"
-          label="Total Reps"
-          value={stats.totalReps.toLocaleString()}
-          colors={colors}
-          spacing={spacing}
-          radius={radius}
-          shadows={shadows}
-        />
-        <StatCard
-          icon="trending-up-outline"
-          label="Volume"
-          value={`${(stats.totalVolume / 1000).toFixed(1)}k`}
-          suffix="kg"
-          colors={colors}
-          spacing={spacing}
-          radius={radius}
-          shadows={shadows}
-        />
-        <StatCard
-          icon="scale-outline"
-          label="Avg Weight"
-          value={stats.avgWeight.toFixed(1)}
-          suffix="kg"
-          colors={colors}
-          spacing={spacing}
-          radius={radius}
-          shadows={shadows}
-        />
-      </Animated.View>
-
-      {/* WEEKLY ACTIVITY CHART */}
-      <Animated.View
-        entering={FadeInUp.delay(400).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          padding: spacing.lg,
-          marginBottom: spacing.md,
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.sm,
-        }}
-      >
-        <Text
-          style={{
-            ...typography.h3,
-            color: colors.textPrimary,
-            marginBottom: spacing.md,
-          }}
-        >
-          Weekly Activity
-        </Text>
-        <WeeklyBarChart
-          data={stats.weeklyData}
-          colors={colors}
-          spacing={spacing}
-          radius={radius}
-        />
-      </Animated.View>
-
-      {/* BODY WEIGHT CARD */}
-      {stats.weightValues.length > 0 && (
-        <Animated.View
-          entering={FadeInUp.delay(500).duration(400)}
-          style={{
-            backgroundColor: colors.surface,
-            borderRadius: radius.xl,
-            padding: spacing.lg,
-            marginBottom: spacing.md,
-            borderWidth: 1,
-            borderColor: colors.cardBorder,
-            ...shadows.sm,
-          }}
-        >
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-            }}
-          >
-            <View>
-              <Text
-                style={{
-                  ...typography.label,
-                  color: colors.textMuted,
-                  marginBottom: spacing.xs,
-                }}
-              >
-                BODY WEIGHT
-              </Text>
-              <Text style={{ ...typography.stat, color: colors.textPrimary }}>
-                {stats.latestWeight.toFixed(1)}
-                <Text
-                  style={{ ...typography.body, color: colors.textSecondary }}
-                >
-                  {" "}
-                  kg
-                </Text>
-              </Text>
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  marginTop: spacing.xxs,
-                }}
-              >
-                <Ionicons
-                  name={stats.weightDelta >= 0 ? "arrow-up" : "arrow-down"}
-                  size={14}
-                  color={stats.weightDelta > 0 ? colors.error : colors.success}
-                />
-                <Text
-                  style={{
-                    ...typography.caption,
-                    color:
-                      stats.weightDelta > 0 ? colors.error : colors.success,
-                    marginLeft: spacing.xxs,
-                  }}
-                >
-                  {Math.abs(stats.weightDelta).toFixed(1)} kg
-                </Text>
-              </View>
-              {stats.weightSeries?.length > 0 && selectedWeightIndex !== null && (
-                <Text
-                  style={{
-                    ...typography.caption,
-                    color: colors.textSecondary,
-                    marginTop: spacing.xxs,
-                  }}
-                >
-                  Selected:{" "}
-                  {stats.weightSeries[selectedWeightIndex]?.weight.toFixed(1)} kg
-                  {" • "}
-                  {stats.weightSeries[selectedWeightIndex]?.date}
-                </Text>
-              )}
-            </View>
-            <View style={{ width: 100, height: 40 }}>
-              <MiniSparkline
-                data={stats.weightSeries}
-                color={colors.secondary}
-                selectedIndex={selectedWeightIndex}
-                onPointPress={setSelectedWeightIndex}
-              />
-            </View>
-          </View>
-        </Animated.View>
-      )}
-
-      {/* CATEGORY BREAKDOWN */}
-      {stats.categories.length > 0 && (
-        <Animated.View
-          entering={FadeInUp.delay(600).duration(400)}
-          style={{
-            backgroundColor: colors.surface,
-            borderRadius: radius.xl,
-            padding: spacing.lg,
-            borderWidth: 1,
-            borderColor: colors.cardBorder,
-            marginBottom: spacing.md,
-            ...shadows.sm,
-          }}
-        >
-          <Text
-            style={{
-              ...typography.h3,
-              color: colors.textPrimary,
-              marginBottom: spacing.md,
-            }}
-          >
-            Top Categories
-          </Text>
-          {stats.categories.map(([cat, count], i) => {
-            const maxCount = stats.categories[0][1];
-            const percentage = (count / maxCount) * 100;
-            return (
-              <View
-                key={cat}
-                style={{
-                  marginBottom:
-                    i < stats.categories.length - 1 ? spacing.sm : 0,
-                }}
-              >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    marginBottom: spacing.xxs,
-                  }}
-                >
-                  <Text
-                    style={{
-                      ...typography.bodyMedium,
-                      color: colors.textPrimary,
-                    }}
-                  >
-                    {cat}
-                  </Text>
-                  <Text
-                    style={{
-                      ...typography.caption,
-                      color: colors.textSecondary,
-                    }}
-                  >
-                    {count}
-                  </Text>
-                </View>
-                <View
-                  style={{
-                    height: 6,
-                    backgroundColor: colors.surfaceElevated,
-                    borderRadius: radius.full,
-                    overflow: "hidden",
-                  }}
-                >
-                  <View
-                    style={{
-                      width: `${percentage}%`,
-                      height: "100%",
-                      backgroundColor: colors.accent,
-                      borderRadius: radius.full,
-                    }}
-                  />
-                </View>
-              </View>
-            );
-          })}
-        </Animated.View>
-      )}
-
-      {/* PERSONAL RECORDS */}
-      {personalRecords.length > 0 && (
-        <Animated.View
-          entering={FadeInUp.delay(650).duration(400)}
-          style={{
-            backgroundColor: colors.surface,
-            borderRadius: radius.xl,
-            padding: spacing.lg,
-            borderWidth: 1,
-            borderColor: colors.cardBorder,
-            marginBottom: spacing.md,
-            ...shadows.sm,
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}>
-            <Ionicons name="trophy" size={18} color={colors.warning} />
-            <Text style={{ ...typography.h3, color: colors.textPrimary, marginLeft: spacing.xs }}>
-              Personal Records
-            </Text>
-          </View>
-          {personalRecords.map((pr, i) => (
-            <View
-              key={pr.exercise}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                paddingVertical: spacing.sm,
-                borderTopWidth: i > 0 ? 1 : 0,
-                borderTopColor: colors.cardBorder,
-              }}
-            >
-              <View
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: radius.full,
-                  backgroundColor: i === 0 ? colors.warning + "22" : colors.surfaceElevated,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: spacing.sm,
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 12,
-                    fontWeight: "700",
-                    color: i === 0 ? colors.warning : colors.textMuted,
-                  }}
-                >
-                  #{i + 1}
-                </Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text
-                  style={{ ...typography.bodyMedium, color: colors.textPrimary }}
-                  numberOfLines={1}
-                >
-                  {pr.exercise}
-                </Text>
-                <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-                  {pr.date}
-                </Text>
-              </View>
-              <View style={{ alignItems: "flex-end" }}>
-                <Text style={{ ...typography.bodyMedium, color: colors.accent, fontWeight: "700" }}>
-                  {pr.weight} kg
-                </Text>
-                <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-                  {pr.reps} reps
-                </Text>
-              </View>
-            </View>
-          ))}
-        </Animated.View>
-      )}
-
-      {/* MUSCLE GROUP HEATMAP */}
-      {muscleHeatmap.length > 0 && (
-        <Animated.View
-          entering={FadeInUp.delay(670).duration(400)}
-          style={{
-            backgroundColor: colors.surface,
-            borderRadius: radius.xl,
-            padding: spacing.lg,
-            borderWidth: 1,
-            borderColor: colors.cardBorder,
-            marginBottom: spacing.md,
-            ...shadows.sm,
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.xs }}>
-            <Ionicons name="body" size={18} color={colors.accent} />
-            <Text style={{ ...typography.h3, color: colors.textPrimary, marginLeft: spacing.xs }}>
-              Muscle Heatmap
-            </Text>
-          </View>
-          <Text style={{ ...typography.caption, color: colors.textSecondary, marginBottom: spacing.md }}>
-            Training frequency — last 28 days
-          </Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-            {muscleHeatmap.map(({ muscle, count, intensity }) => {
-              const alpha = Math.round(40 + intensity * 180).toString(16).padStart(2, "0");
-              return (
-                <View
-                  key={muscle}
-                  style={{
-                    paddingVertical: spacing.sm,
-                    paddingHorizontal: spacing.md,
-                    borderRadius: radius.lg,
-                    backgroundColor: colors.accent + alpha,
-                    borderWidth: 1,
-                    borderColor: colors.accent + "40",
-                    alignItems: "center",
-                    minWidth: 90,
-                  }}
-                >
-                  <Text
-                    style={{
-                      ...typography.bodyMedium,
-                      color: intensity > 0.5 ? colors.onAccent : colors.textPrimary,
-                      fontWeight: "600",
-                    }}
-                  >
-                    {muscle}
-                  </Text>
-                  <Text
-                    style={{
-                      ...typography.caption,
-                      color: intensity > 0.5 ? colors.onAccent : colors.textSecondary,
-                    }}
-                  >
-                    {count}×
-                  </Text>
-                </View>
-              );
-            })}
-          </View>
-        </Animated.View>
-      )}
-
-      {/* AI INSIGHTS SECTION */}
-      <Animated.View
-        entering={FadeInUp.delay(700).duration(400)}
-        style={{ marginBottom: spacing.xl }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            marginBottom: spacing.md,
-          }}
-        >
-          <Ionicons name="bulb" size={20} color={colors.accent} />
-          <Text
-            style={{
-              ...typography.h3,
-              color: colors.textPrimary,
-              marginLeft: spacing.xs,
-            }}
-          >
-            Smart Insights
-          </Text>
-          {insights.length > 0 && (
-            <View
-              style={{
-                backgroundColor: colors.accentDim,
-                borderRadius: radius.full,
-                paddingHorizontal: spacing.sm,
-                paddingVertical: 2,
-                marginLeft: spacing.sm,
-              }}
-            >
-              <Text
-                style={{
-                  ...typography.caption,
-                  color: colors.accent,
-                  fontWeight: "600",
-                }}
-              >
-                {insights.length}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {insights.length === 0 ? (
-          <View
-            style={{
-              backgroundColor: colors.surface,
-              borderRadius: radius.xl,
-              padding: spacing.xl,
-              borderWidth: 1,
-              borderColor: colors.cardBorder,
-              alignItems: "center",
-              ...shadows.sm,
-            }}
-          >
-            <View
-              style={{
-                width: 60,
-                height: 60,
-                borderRadius: radius.full,
-                backgroundColor: colors.surfaceElevated,
-                justifyContent: "center",
-                alignItems: "center",
-                marginBottom: spacing.md,
-              }}
-            >
-              <Ionicons name="sparkles" size={28} color={colors.textMuted} />
-            </View>
-            <Text
-              style={{
-                ...typography.bodyMedium,
-                color: colors.textPrimary,
-                marginBottom: spacing.xs,
-              }}
-            >
-              No Insights Yet
-            </Text>
-            <Text
-              style={{
-                ...typography.caption,
-                color: colors.textSecondary,
-                textAlign: "center",
-              }}
-            >
-              Log more workouts and body weights to unlock personalized insights
-            </Text>
-          </View>
+        {query.isLoading && workouts.length === 0 ? (
+          <AnalyticsSkeleton />
+        ) : workouts.length === 0 ? (
+          <AnalyticsEmpty />
         ) : (
-          <View style={{ gap: spacing.sm }}>
-            {insights.map((insight, index) => (
-              <InsightCardComponent
-                key={insight.id}
-                insight={insight}
-                index={index}
-                colors={colors}
-                spacing={spacing}
-                radius={radius}
-                typography={typography}
-                shadows={shadows}
+          <>
+            {/* Period */}
+            <Reveal index={0}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+                {PERIODS.map((p) => (
+                  <FilterChip key={p.key} label={p.label} active={period === p.key} onPress={() => setPeriod(p.key)} />
+                ))}
+              </ScrollView>
+            </Reveal>
+
+            <Reveal index={1}>
+              <HeadlineCard
+                headline={headline}
+                overline={OVERLINE[period]}
+                workouts={stats.sessions}
+                records={records.length}
+                sets={stats.sets}
+                plan={period === "week" && goal ? { done: stats.trainingDays, goal } : null}
               />
-            ))}
+            </Reveal>
+
+            <Reveal index={3}>
+              <ActivityChart
+                title="Activity"
+                subtitle={chartSubtitle}
+                plannedDays={plannedDays}
+                buckets={stats.buckets}
+                unit={stats.bucketUnit}
+                compare={stats.compare}
+                note={chartNote}
+                onOpenDay={(date) => router.navigate({ pathname: "/(tabs)/history", params: { date } })}
+              />
+            </Reveal>
+
+            <Reveal index={4}>
+              <RecordsCard records={records} reach={reach} unit={unit} periodPhrase={period === "all" ? null : phrase} onOpenExercise={openExercise} />
+            </Reveal>
+
+            <Reveal index={5}>
+              <MuscleBalance rows={muscles} average={period !== "week"} others={stats.balance.filter((r) => r.sets > 0 && !(MAIN_GROUPS as readonly string[]).includes(r.category))}
+                exercises={groupExercises}
+                onOpenExercise={openExercise}
+              />
+            </Reveal>
+
+            <Reveal index={6}>
+              <BestLiftsCard lifts={lifts} unit={unit} periodPhrase={period === "all" ? null : phrase} onOpenExercise={openExercise} />
+            </Reveal>
+          </>
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
+/* ==============================
+   PIECES
+   ============================== */
+
+const PREVIEWS: { icon: ComponentProps<typeof MaterialIcons>["name"]; title: string; value: string; body: string }[] = [
+  { icon: "bar-chart", title: "Volume & load", value: "--", body: "Total weight lifted each week, across all exercises" },
+  { icon: "pie-chart-outline", title: "Muscle balance", value: "-- %", body: "How your sets split across chest, back, legs and more" },
+  { icon: "workspace-premium", title: "Personal records", value: "Pending", body: "Your heaviest lift for every exercise, new records starred" },
+];
+
+/** No workouts at all (Analytics_Empty_Data mockup). */
+function AnalyticsEmpty() {
+  const { colors } = useTheme();
+  const { unit } = useUnitPreference();
+  return (
+    <>
+      <Reveal index={0}>
+        <View style={{ alignItems: "center", gap: spacing.md, padding: spacing.xl, borderRadius: radius.xl, backgroundColor: colors.raised }}>
+          <View style={{ width: size.iconBadge, height: size.iconBadge, borderRadius: radius.lg, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh }}>
+            <MaterialIcons name="insights" size={size.iconLg} color={colors.accent} />
           </View>
-        )}
-      </Animated.View>
-    </ScrollView>
-  );
-}
-
-/* =========================
-   HELPER COMPONENTS
-   ========================= */
-
-function ProgressRing({
-  progress,
-  size,
-  strokeWidth,
-  color,
-  bgColor,
-}: {
-  progress: number;
-  size: number;
-  strokeWidth: number;
-  color: string;
-  bgColor: string;
-}) {
-  const center = size / 2;
-  const r = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * r;
-  const strokeDashoffset = circumference - (progress / 100) * circumference;
-
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        justifyContent: "center",
-        alignItems: "center",
-      }}
-    >
-      <Svg width={size} height={size} style={{ position: "absolute" }}>
-        <Circle
-          cx={center}
-          cy={center}
-          r={r}
-          stroke={bgColor}
-          strokeWidth={strokeWidth}
-          fill="transparent"
-        />
-        <Circle
-          cx={center}
-          cy={center}
-          r={r}
-          stroke={color}
-          strokeWidth={strokeWidth}
-          fill="transparent"
-          strokeDasharray={circumference}
-          strokeDashoffset={strokeDashoffset}
-          strokeLinecap="round"
-          transform={`rotate(-90 ${center} ${center})`}
-        />
-      </Svg>
-      <Text style={{ fontSize: 16, fontWeight: "700", color }}>
-        {Math.round(progress)}%
-      </Text>
-    </View>
-  );
-}
-
-function StatCard({
-  icon,
-  label,
-  value,
-  suffix,
-  colors,
-  spacing,
-  radius,
-  shadows,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  value: string;
-  suffix?: string;
-  colors: any;
-  spacing: any;
-  radius: any;
-  shadows: any;
-}) {
-  return (
-    <View
-      style={{
-        flex: 1,
-        minWidth: "45%",
-        backgroundColor: colors.surface,
-        borderRadius: radius.lg,
-        padding: spacing.md,
-        borderWidth: 1,
-        borderColor: colors.cardBorder,
-        ...shadows.sm,
-      }}
-    >
-      <Ionicons name={icon} size={20} color={colors.accent} />
-      <Text
-        style={{
-          fontSize: 24,
-          fontWeight: "700",
-          color: colors.textPrimary,
-          marginTop: spacing.xs,
-        }}
-      >
-        {value}
-        {suffix && (
-          <Text style={{ fontSize: 14, color: colors.textSecondary }}>
-            {" "}
-            {suffix}
-          </Text>
-        )}
-      </Text>
-      <Text
-        style={{
-          fontSize: 12,
-          color: colors.textSecondary,
-          textTransform: "uppercase",
-          letterSpacing: 0.5,
-        }}
-      >
-        {label}
-      </Text>
-    </View>
-  );
-}
-
-function WeeklyBarChart({
-  data,
-  colors,
-  spacing,
-  radius,
-}: {
-  data: number[];
-  colors: any;
-  spacing: any;
-  radius: any;
-}) {
-  const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const maxVal = Math.max(...data, 1);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-
-  // Calculate what day of week each bar represents
-  // data[0] = 6 days ago, data[6] = today
-  const today = new Date();
-  const todayDayOfWeek = today.getDay(); // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, etc.
-
-  // Build labels in the correct order matching data array
-  const weekDays: string[] = [];
-  for (let i = 0; i < 7; i++) {
-    const daysAgo = 6 - i;
-    const dayNumber = (todayDayOfWeek - daysAgo + 7) % 7;
-    weekDays.push(dayLabels[dayNumber]);
-  }
-
-  return (
-    <View>
-      <View
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "flex-end",
-          height: 110,
-        }}
-      >
-        {data.map((val, i) => {
-          const height = (val / maxVal) * 70 + 10;
-          const isToday = i === 6; // Last index is always today
-          const hasWorkouts = val > 0;
-          const fillColor = isToday
-            ? colors.accent
-            : hasWorkouts
-              ? colors.accentLight
-              : colors.surfaceElevated;
-
-          return (
-            <WeeklyBarItem
-              key={i}
-              label={weekDays[i]}
-              height={height}
-              color={fillColor}
-              radius={radius}
-              spacing={spacing}
-              isToday={isToday}
-              isSelected={selectedIndex === i}
-              onPress={() => setSelectedIndex(i)}
-              textColor={isToday ? colors.accent : colors.textMuted}
-              highlightColor={colors.accent}
-            />
-          );
-        })}
-      </View>
-
-      {selectedIndex !== null && (
-        <Text
-          style={{
-            marginTop: spacing.xs,
-            fontSize: 12,
-            color: colors.textSecondary,
-            textAlign: "center",
-          }}
-        >
-          {weekDays[selectedIndex]} • {data[selectedIndex]} workout
-          {data[selectedIndex] === 1 ? "" : "s"}
-        </Text>
-      )}
-    </View>
-  );
-}
-
-function WeeklyBarItem({
-  label,
-  height,
-  color,
-  radius,
-  spacing,
-  isToday,
-  isSelected,
-  onPress,
-  textColor,
-  highlightColor,
-}: {
-  label: string;
-  height: number;
-  color: string;
-  radius: any;
-  spacing: any;
-  isToday: boolean;
-  isSelected: boolean;
-  onPress: () => void;
-  textColor: string;
-  highlightColor: string;
-}) {
-  const animatedHeight = useSharedValue(height);
-
-  useEffect(() => {
-    animatedHeight.value = withTiming(isSelected ? height + 8 : height, {
-      duration: 180,
-    });
-  }, [animatedHeight, height, isSelected]);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    height: animatedHeight.value,
-  }));
-
-  return (
-    <Pressable onPress={onPress} style={{ alignItems: "center", flex: 1 }}>
-      <View style={{ height: 90, justifyContent: "flex-end" }}>
-        <Animated.View
-          style={[
-            {
-              width: 24,
-              backgroundColor: color,
-              borderRadius: radius.sm,
-              marginBottom: spacing.xs,
-            },
-            animatedStyle,
-            isSelected && {
-              shadowColor: highlightColor,
-              shadowOpacity: 0.25,
-              shadowRadius: 6,
-              shadowOffset: { width: 0, height: 2 },
-              elevation: 3,
-            },
-          ]}
-        />
-      </View>
-      <Text
-        style={{
-          fontSize: 11,
-          fontWeight: isToday || isSelected ? "600" : "400",
-          color: isToday || isSelected ? highlightColor : textColor,
-        }}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-function MiniSparkline({
-  data,
-  color,
-  selectedIndex,
-  onPointPress,
-}: {
-  data: BodyWeight[];
-  color: string;
-  selectedIndex: number | null;
-  onPointPress?: (index: number) => void;
-}) {
-  if (data.length < 2) return null;
-
-  const width = 100;
-  const height = 40;
-  const padding = 4;
-
-  const values = data.map((d) => d.weight);
-  const minVal = Math.min(...values);
-  const maxVal = Math.max(...values);
-  const range = maxVal - minVal || 1;
-
-  const points = values.map((val, i) => {
-    const x = padding + (i / (data.length - 1)) * (width - padding * 2);
-    const y =
-      height - padding - ((val - minVal) / range) * (height - padding * 2);
-    return `${x},${y}`;
-  });
-
-  const pathD = `M ${points.join(" L ")}`;
-
-  return (
-    <Svg width={width} height={height}>
-      <Path
-        d={pathD}
-        stroke={color}
-        strokeWidth={2}
-        fill="transparent"
-        strokeLinecap="round"
-      />
-      {points.map((p, i) => {
-        const [cx, cy] = p.split(",").map((v) => Number(v));
-        const isSelected = i === selectedIndex;
-        return (
-          <G key={i}>
-            <Circle
-              cx={cx}
-              cy={cy}
-              r={isSelected ? 3.5 : 2.5}
-              fill={color}
-              stroke={isSelected ? "#fff" : "transparent"}
-              strokeWidth={isSelected ? 1.5 : 0}
-              onPress={() => onPointPress?.(i)}
-            />
-            <Circle
-              cx={cx}
-              cy={cy}
-              r={10}
-              fill="transparent"
-              onPress={() => onPointPress?.(i)}
-            />
-          </G>
-        );
-      })}
-    </Svg>
-  );
-}
-
-function InsightCardComponent({
-  insight,
-  index,
-  colors,
-  spacing,
-  radius,
-  typography,
-  shadows,
-}: {
-  insight: Insight;
-  index: number;
-  colors: any;
-  spacing: any;
-  radius: any;
-  typography: any;
-  shadows: any;
-}) {
-  const getIconColor = (priority: InsightPriority) => {
-    switch (priority) {
-      case "high":
-        return colors.accent;
-      case "medium":
-        return colors.secondary;
-      default:
-        return colors.textSecondary;
-    }
-  };
-
-  const getIconBgColor = (priority: InsightPriority) => {
-    switch (priority) {
-      case "high":
-        return colors.accentLight || colors.accentDim;
-      case "medium":
-        return colors.secondaryLight || colors.surfaceElevated;
-      default:
-        return colors.surfaceElevated;
-    }
-  };
-
-  const getPriorityLabel = (priority: InsightPriority) => {
-    switch (priority) {
-      case "high":
-        return { text: "Important", color: colors.accent };
-      case "medium":
-        return { text: "Notable", color: colors.secondary };
-      default:
-        return { text: "Tip", color: colors.textMuted };
-    }
-  };
-
-  const priorityInfo = getPriorityLabel(insight.priority);
-
-  return (
-    <Animated.View entering={FadeInUp.delay(100 + index * 50).duration(300)}>
-      <View
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          borderWidth: 1,
-          borderColor:
-            insight.priority === "high" ? colors.accentDim : colors.cardBorder,
-          overflow: "hidden",
-          ...shadows.sm,
-        }}
-      >
-        <LinearGradient
-          colors={
-            insight.priority === "high"
-              ? [colors.accentDim || colors.surface, colors.surface]
-              : [colors.surface, colors.surface]
-          }
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={{ padding: spacing.md }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
-            {/* Icon */}
-            <View
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: radius.lg,
-                backgroundColor: getIconBgColor(insight.priority),
-                justifyContent: "center",
-                alignItems: "center",
-                marginRight: spacing.md,
+          <View style={{ alignItems: "center", gap: spacing.xs }}>
+            <Text style={[typography.headlineSm, { color: colors.text, textAlign: "center", textTransform: "uppercase", letterSpacing: tracking.headlineWide }]}>No workout data yet</Text>
+            <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center" }]}>
+              Log a few workouts to see your weekly volume, consistency and progress.
+            </Text>
+          </View>
+          <View style={{ alignSelf: "stretch" }}>
+            <Button
+              title="Log workout"
+              icon="barbell-outline"
+              onPress={() => {
+                perfStart("open picker");
+                router.push("/log/pick");
               }}
-            >
-              <Ionicons
-                name={insight.icon as any}
-                size={22}
-                color={getIconColor(insight.priority)}
-              />
-            </View>
+              fullWidth
+            />
+          </View>
+        </View>
+      </Reveal>
 
-            {/* Content */}
-            <View style={{ flex: 1 }}>
-              {/* Priority Badge */}
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  marginBottom: spacing.xxs,
-                }}
-              >
-                <View
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: 3,
-                    backgroundColor: priorityInfo.color,
-                    marginRight: spacing.xs,
-                  }}
-                />
-                <Text
-                  style={{
-                    fontSize: 10,
-                    fontWeight: "600",
-                    color: priorityInfo.color,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  {priorityInfo.text}
+      <Reveal index={1} style={{ gap: spacing.sm }}>
+        <Text style={[typography.labelMd, { color: colors.textSecondary, textTransform: "uppercase", letterSpacing: tracking.overline }]}>What you&apos;ll see here</Text>
+        {PREVIEWS.map((p) => (
+          <View key={p.title} style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.lg, borderRadius: radius.xl, backgroundColor: colors.raised }}>
+            <View style={{ width: size.rowIcon, height: size.rowIcon, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh }}>
+              <MaterialIcons name={p.icon} size={size.icon} color={colors.textSecondary} />
+            </View>
+            <View style={{ flex: 1, gap: spacing.xxs }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", gap: spacing.sm }}>
+                <Text style={[typography.bodyMdMedium, { color: colors.text }]}>{p.title}</Text>
+                <Text style={[typography.labelMd, { color: p.value === "Pending" ? colors.warning : colors.textSecondary }]}>
+                  {p.value === "--" ? `-- ${weightLabel(unit)}` : p.value}
                 </Text>
               </View>
-
-              {/* Title */}
-              <Text
-                style={{
-                  ...typography.bodyMedium,
-                  color: colors.textPrimary,
-                  marginBottom: spacing.xxs,
-                }}
-              >
-                {insight.title}
-              </Text>
-
-              {/* Message */}
-              <Text
-                style={{
-                  ...typography.body,
-                  color: colors.textSecondary,
-                  lineHeight: 20,
-                }}
-              >
-                {insight.message}
-              </Text>
+              <Text style={[typography.labelSm, { color: colors.textSecondary }]}>{p.body}</Text>
             </View>
           </View>
-        </LinearGradient>
+        ))}
+      </Reveal>
+
+      <Reveal index={2} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.md }}>
+        <MaterialIcons name="info-outline" size={size.iconSm} color={colors.textSecondary} />
+        <Text style={[typography.labelSm, { flex: 1, color: colors.textSecondary }]}>Numbers fill in automatically after your first logged workout.</Text>
+      </Reveal>
+    </>
+  );
+}
+
+function AnalyticsSkeleton() {
+  return (
+    <View style={{ gap: spacing.md }} accessibilityLabel="Loading analytics">
+      <SkeletonBlock height={size.control} radius="lg" />
+      <View style={{ flexDirection: "row", gap: spacing.sm }}>
+        {[0, 1, 2].map((k) => (
+          <View key={k} style={{ flex: 1 }}>
+            <SkeletonBlock height={size.statTile} radius="xl" />
+          </View>
+        ))}
       </View>
-    </Animated.View>
+      <SkeletonBlock height={size.trendChart + size.goalCard} radius="xl" />
+      <SkeletonBlock height={size.goalCard * 2} radius="xl" />
+    </View>
   );
 }

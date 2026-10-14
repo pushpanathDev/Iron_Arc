@@ -1,1807 +1,622 @@
-import { Ionicons } from "@expo/vector-icons";
-import { router, useFocusEffect } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
-import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
-import { EmailAuthProvider, GoogleAuthProvider, reauthenticateWithCredential } from "firebase/auth";
+import { MaterialIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as SecureStore from "expo-secure-store";
-import { useAuth } from "../../auth/AuthContext";
-import { auth } from "../../firebase/config";
-import { SyncBadge } from "../../components/SyncBadge";
-import { ProfileCompletionPrompt } from "../../components/ProfileCompletionPrompt";
-import { EmailVerificationPrompt } from "../../components/EmailVerificationPrompt";
-import { ProfileStatus } from "../../components/ProfileStatus";
 import { useQueryClient } from "@tanstack/react-query";
+import * as Notifications from "expo-notifications";
+import { router, useFocusEffect } from "expo-router";
+import * as SecureStore from "expo-secure-store";
+import { EmailAuthProvider, GoogleAuthProvider, reauthenticateWithCredential } from "firebase/auth";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { useAuth } from "../../auth/AuthContext";
+import { EmailVerificationPrompt } from "../../components/EmailVerificationPrompt";
+import { ExportSheet } from "../../components/ExportSheet";
+import { GOALS, type FitnessGoal } from "../../components/OnboardingProfileSetup";
+import { DaysSheet, HeightSheet, NumberSheet, OptionsSheet } from "../../components/profile/EditSheets";
+import { ProfileHeader } from "../../components/profile/ProfileHeader";
+import { SettingsGroup, SettingsRow } from "../../components/profile/Settings";
+import { ProfileStatus } from "../../components/ProfileStatus";
+import { OfflineState } from "../../components/ui";
+import { Button } from "../../components/ui/Button";
+import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
+import { Reveal } from "../../components/ui/Reveal";
+import { Sheet } from "../../components/ui/Sheet";
+import { SkeletonBlock } from "../../components/ui/Skeleton";
+import { TextField } from "../../components/ui/TextField";
+import { verificationMessages } from "../../constants/verificationMessages";
+import {
+  AVOID_OPTIONS,
+  effectiveWeeklyGoal,
+  EQUIPMENT_OPTIONS,
+  EXPERIENCE_OPTIONS,
+  formatDays,
+  SESSION_OPTIONS,
+  type AvoidArea,
+  type Equipment,
+  type ExperienceLevel,
+  type SessionMinutes,
+  type Weekday,
+} from "../../constants/trainingProfile";
+import { useConnection } from "../../context/ConnectionContext";
+import { useToast } from "../../context/ToastContext";
+import { clearEmailVerificationStart, getEmailVerificationStart, setEmailVerificationStart } from "../../db/syncMeta";
+import { auth } from "../../firebase/config";
+import { useAchievements } from "../../hooks/useAchievements";
+import { usePlans } from "../../hooks/usePlan";
 import { useProfile, useUpdateProfile } from "../../hooks/useProfile";
-import { userApi } from "../../services/api";
 import { useUnitPreference } from "../../hooks/useUnitPreference";
 import { useLatestWeight } from "../../hooks/useWeights";
-import {
-  clearEmailVerificationStart,
-  getEmailVerificationStart,
-  setEmailVerificationStart,
-} from "../../db/syncMeta";
+import { groupSessions, useWorkoutSummary } from "../../hooks/useWorkoutSummary";
+import { getNotificationPreferences } from "../../notifications/notificationService";
+import { userApi, type User } from "../../services/api";
 import { useTheme } from "../../theme/theme";
-import {
-  useThemeContext,
-  type ThemePreference,
-} from "../../context/ThemeContext";
-import { formatAccountDate, getAvatarUrl } from "../../utils/avatar";
-import { exportToCSV, exportToPDF } from "../../utils/exportData";
-import { createPageLogger } from "../../utils/logger";
-import { getGoogleSignin } from "../../utils/googleSignin";
-import { verificationMessages } from "../../constants/verificationMessages";
-import { clearVerificationSent } from "../../utils/verificationService";
+import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import { getVersionLabel } from "../../utils/appVersion";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getInitials } from "../../utils/avatar";
+import { getGoogleSignin } from "../../utils/googleSignin";
+import { createPageLogger } from "../../utils/logger";
+import { displayWeight, weightLabel } from "../../utils/unitConversion";
+import { clearVerificationSent } from "../../utils/verificationService";
 
 const log = createPageLogger("Profile");
+const NO_WORKOUTS: never[] = [];
+const VERIFICATION_GRACE_DAYS = 7;
+const HEIGHT = { fallback: 170 };
+const AGE = { min: 13, max: 100, fallback: 25 };
+
+type EditKey = "days" | "experience" | "session" | "equipment" | "avoid" | "goal" | "height" | "age";
+type ProfileUpdate = Parameters<typeof userApi.updateProfile>[0];
+
+/** Every updated field came back with the value sent (lists compared in any order). */
+function keptAll(updates: ProfileUpdate, saved: User | undefined) {
+  if (!saved) return false;
+  return Object.entries(updates).every(([k, v]) => {
+    const got = (saved as unknown as Record<string, unknown>)[k];
+    if (Array.isArray(v)) return Array.isArray(got) && got.length === v.length && v.every((x) => (got as unknown[]).includes(x));
+    return (got ?? null) === (v ?? null);
+  });
+}
+
+const labelOf = <T,>(options: { value: T; label: string }[], v: T | null | undefined) => options.find((o) => o.value === v)?.label ?? null;
+
+/* ==============================
+   PROFILE & SETTINGS
+   ============================== */
 
 export default function ProfileScreen() {
-  const { colors, spacing, radius, typography, shadows } = useTheme();
-  const { preference: themePreference, setPreference: setThemePreference } = useThemeContext();
-  const { user, logout } = useAuth();
-  const insets = useSafeAreaInsets();
-
+  const { colors } = useTheme();
+  const { user, logout, profile: authProfile } = useAuth();
+  const connection = useConnection();
   const queryClient = useQueryClient();
-  const {
-    data: profile,
-    isLoading,
-    isError,
-    error,
-    refetch: refetchProfile,
-  } = useProfile();
+  const { showToast } = useToast();
+
+  const { data: queriedProfile, isLoading, isError, error, refetch: refetchProfile } = useProfile();
+  // Fall back to the profile AuthContext already has, so a slow server never leaves this spinning.
+  const profile: User | undefined = queriedProfile ?? authProfile ?? undefined;
   const updateProfile = useUpdateProfile();
   const { data: latestWeightEntry } = useLatestWeight();
-  const { unit: weightUnit, setUnit: setWeightUnit } = useUnitPreference();
-  const latestWeight = latestWeightEntry?.weight ?? null;
-  const isAdmin = profile?.isAdmin ?? false;
+  const { unit, setUnit } = useUnitPreference();
+  const goal = effectiveWeeklyGoal(profile);
+  const { query: workoutsQuery, streak } = useWorkoutSummary(goal);
+  const { data: achievements } = useAchievements();
+  const { data: plans } = usePlans();
 
-  const [isSaving, setIsSaving] = useState(false);
-  const [displayName, setDisplayName] = useState("");
-  const [height, setHeight] = useState("");
-  const [age, setAge] = useState("");
-  const [fitnessGoal, setFitnessGoal] = useState<string | null>(null);
-  const [weeklyGoal, setWeeklyGoal] = useState("1");
-  const [hasChanges, setHasChanges] = useState(false);
+  const [editing, setEditing] = useState<EditKey | null>(null);
+  const [saving, setSaving] = useState<EditKey | "name" | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [showProfileCompletion, setShowProfileCompletion] = useState(false);
-  const [profilePromptMode, setProfilePromptMode] = useState<"missing" | "age">("missing");
+  const [exportOpen, setExportOpen] = useState(false);
+  const [confirm, setConfirm] = useState<"logout" | "delete" | null>(null);
+  const [notifStatus, setNotifStatus] = useState<string | null>(null);
+
+  /* ---------- numbers ---------- */
+  const workouts = workoutsQuery.data ?? NO_WORKOUTS;
+  const sessions = useMemo(() => groupSessions(workouts).length, [workouts]);
+  const unlocked = achievements ? achievements.filter((a) => a.unlockedAt).length : null;
+  const activePlan = plans?.find((p) => p.isActive) ?? null;
+
+  /* ---------- notifications: the real state (setting + system permission) ---------- */
+  const loadNotifStatus = useCallback(async () => {
+    try {
+      const [prefs, perm] = await Promise.all([getNotificationPreferences(), Notifications.getPermissionsAsync()]);
+      const anyOn = prefs.dailyReminder || prefs.streakReminders || prefs.inactivityReminders || prefs.weeklySummary || prefs.weighIn;
+      setNotifStatus(perm.status !== "granted" ? "Not allowed" : anyOn ? "On" : "Off");
+    } catch {
+      setNotifStatus(null);
+    }
+  }, []);
+
+  /* ---------- email verification (grace period) ---------- */
   const [verificationDaysLeft, setVerificationDaysLeft] = useState<number | null>(null);
   const [showVerificationPrompt, setShowVerificationPrompt] = useState(false);
-  const [dismissVerificationBanner, setDismissVerificationBanner] = useState(false);
-  const [showDeleteReauthentication, setShowDeleteReauthentication] = useState(false);
-  const [deletePassword, setDeletePassword] = useState("");
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
-
-  const verificationGraceDays = 7;
-
-  const clearLocalAccountData = async () => {
-    const uid = user?.uid;
-
-    queryClient.cancelQueries();
-    queryClient.clear();
-
-    try {
-      try { await getGoogleSignin()?.GoogleSignin.signOut(); } catch {}
-      await logout();
-    } finally {
-      await AsyncStorage.clear();
-      if (uid) {
-        await Promise.allSettled([
-          SecureStore.deleteItemAsync(`evs_${uid}`),
-          clearVerificationSent(uid),
-        ]);
-      }
-    }
-  };
-
-  const deleteAccount = async () => {
-    setIsDeletingAccount(true);
-    setDeleteError(null);
-
-    try {
-      await userApi.deleteAccount();
-      await clearLocalAccountData();
-      router.replace("/login");
-    } catch (error: any) {
-      if (error?.code === "REAUTHENTICATION_REQUIRED") {
-        const providerId = user?.providerData[0]?.providerId;
-        const google = getGoogleSignin();
-        if (providerId === "google.com" && !google) {
-          Alert.alert(
-            "Sign in again to delete",
-            "Google sign-in isn't available in this preview. Use the full app to delete this account.",
-          );
-        } else if (providerId === "google.com" && google) {
-          const { GoogleSignin, isSuccessResponse } = google;
-          try {
-            const response = await GoogleSignin.signIn();
-            if (isSuccessResponse(response)) {
-              const idToken = response.data.idToken;
-              if (idToken && auth.currentUser) {
-                await reauthenticateWithCredential(
-                  auth.currentUser,
-                  GoogleAuthProvider.credential(idToken),
-                );
-                await deleteAccountRef.current();
-                return;
-              }
-            }
-          } catch (reAuthErr: any) {
-            setDeleteError(reAuthErr?.message || "Google reauthentication failed.");
-          }
-        } else {
-          setShowDeleteReauthentication(true);
-        }
-      } else {
-        log.error(`Account deletion failed: ${error}`);
-        Alert.alert("Could not delete account", error?.message || "Please try again.");
-      }
-    } finally {
-      setIsDeletingAccount(false);
-    }
-  };
-
-  const deleteAccountRef = useRef(deleteAccount);
-  deleteAccountRef.current = deleteAccount;
-
-  const handleDeleteAccount = () => {
-    Alert.alert(
-      "Delete account?",
-      "This permanently deletes your profile, workouts, plans, weights, and achievements.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete account", style: "destructive", onPress: deleteAccount },
-      ],
-    );
-  };
-
-  const handleEmailReauthentication = async () => {
-    if (!auth.currentUser?.email || !deletePassword) {
-      setDeleteError("Enter your password to continue.");
-      return;
-    }
-
-    setIsDeletingAccount(true);
-    setDeleteError(null);
-    try {
-      const credential = EmailAuthProvider.credential(
-        auth.currentUser.email,
-        deletePassword,
-      );
-      await reauthenticateWithCredential(auth.currentUser, credential);
-      setShowDeleteReauthentication(false);
-      setDeletePassword("");
-      await deleteAccount();
-    } catch (error: any) {
-      setDeleteError(error?.message || "Reauthentication failed.");
-      setIsDeletingAccount(false);
-    }
-  };
-
-  // Initialize form when profile loads
-  useEffect(() => {
-    if (profile) {
-      setDisplayName(profile.displayName || "");
-      setHeight(profile.height ? String(profile.height) : "");
-      setAge(profile.age ? String(profile.age) : "");
-      setFitnessGoal(profile.fitnessGoal || null);
-      setWeeklyGoal(profile.weeklyGoal ? String(profile.weeklyGoal) : "1");
-    }
-  }, [profile?.id]);
-
   const loadVerificationStatus = useCallback(async () => {
     if (!user) return;
-    try { await user.reload(); } catch {}
-
+    try {
+      await user.reload();
+    } catch {}
     if (user.emailVerified) {
       setVerificationDaysLeft(null);
-      setDismissVerificationBanner(false);
       await clearEmailVerificationStart(user.uid);
       return;
     }
-
     let start = await getEmailVerificationStart(user.uid);
     if (!start) {
       start = Date.now();
       await setEmailVerificationStart(user.uid, start);
     }
-    const elapsedDays = Math.floor((Date.now() - start) / (24 * 60 * 60 * 1000));
-    setVerificationDaysLeft(Math.max(0, verificationGraceDays - elapsedDays));
+    const elapsedDays = Math.floor((Date.now() - start) / 86_400_000);
+    setVerificationDaysLeft(Math.max(0, VERIFICATION_GRACE_DAYS - elapsedDays));
   }, [user]);
 
   useEffect(() => {
-    if (!user || user.emailVerified) return;
-    if (verificationDaysLeft === 0 && !showVerificationPrompt) {
-      setShowVerificationPrompt(true);
-    }
-  }, [user, verificationDaysLeft, showVerificationPrompt]);
+    if (user && !user.emailVerified && verificationDaysLeft === 0) setShowVerificationPrompt(true);
+  }, [user, verificationDaysLeft]);
 
   useFocusEffect(
     useCallback(() => {
-      loadVerificationStatus();
-    }, [loadVerificationStatus]),
+      void loadVerificationStatus();
+      void loadNotifStatus();
+    }, [loadVerificationStatus, loadNotifStatus]),
   );
 
-  // Show profile completion if data is missing
-  useEffect(() => {
-    if (profile && !isLoading) {
-      const needsCompletion = !profile.weight && !latestWeight && !profile.age;
-      setShowProfileCompletion(needsCompletion);
-    }
-  }, [profile, latestWeight, isLoading]);
-
-  /* =========================
-     PULL-TO-REFRESH
-     ========================= */
-  const handleRefresh = async () => {
+  const onRefresh = async () => {
     setRefreshing(true);
     try {
-      await Promise.all([refetchProfile(), loadVerificationStatus()]);
-      log.success("Profile refreshed");
-    } catch (error) {
-      log.error(`Failed to refresh profile: ${error}`);
+      await Promise.all([refetchProfile(), loadVerificationStatus(), loadNotifStatus()]);
     } finally {
       setRefreshing(false);
     }
   };
 
-  /* =========================
-     DETECT CHANGES
-     ========================= */
-  useEffect(() => {
-    if (!profile) return;
-    const nameChanged = displayName !== (profile.displayName || "");
-    const heightChanged = height !== (profile.height ? String(profile.height) : "");
-    const ageChanged = age !== (profile.age ? String(profile.age) : "");
-    const goalChanged = weeklyGoal !== (profile.weeklyGoal ? String(profile.weeklyGoal) : "1");
-    const fitnessGoalChanged = fitnessGoal !== (profile.fitnessGoal || null);
-    setHasChanges(nameChanged || heightChanged || ageChanged || goalChanged || fitnessGoalChanged);
-  }, [displayName, height, age, fitnessGoal, weeklyGoal, profile]);
-
-  /* =========================
-     SAVE PROFILE
-     ========================= */
-  const handleSaveProfile = async () => {
-    if (!profile) return;
-
-    setIsSaving(true);
+  /* ---------- save one field (instant save, small toast) ---------- */
+  const save = async (key: EditKey | "name", updates: ProfileUpdate, label: string) => {
+    setSaving(key);
     try {
-      const updates: any = {};
-
-      if (displayName !== (profile.displayName || "")) {
-        updates.displayName = displayName || null;
+      const saved = await updateProfile.mutateAsync(updates);
+      // Only say "saved" if the server really kept it (an outdated server drops fields it doesn't know).
+      if (!keptAll(updates, saved)) {
+        log.warn(`Server didn't keep ${Object.keys(updates).join(", ")}`);
+        showToast({ type: "error", message: `${label} wasn't saved`, subtitle: "The server didn't keep this change. It may need updating; try again later." });
+        return false;
       }
-      if (height && height !== String(profile.height || "")) {
-        updates.height = parseFloat(height) || null;
-      } else if (!height && profile.height) {
-        updates.height = null;
-      }
-      const parsedAge = parseInt(age) || null;
-      if (parsedAge !== (profile.age || null)) {
-        updates.age = parsedAge && parsedAge > 0 && parsedAge < 120 ? parsedAge : null;
-      }
-      if (fitnessGoal !== (profile.fitnessGoal || null)) {
-        updates.fitnessGoal = fitnessGoal;
-      }
-      const goalNum = parseInt(weeklyGoal) || 1;
-      if (goalNum !== (profile.weeklyGoal || 1)) {
-        updates.weeklyGoal = Math.max(1, Math.min(7, goalNum));
-      }
-
-      log.debug("Saving profile update", {
-        userId: user?.uid,
-        updates,
-      });
-
-      await updateProfile.mutateAsync(updates);
-      setHasChanges(false);
-      log.success("Profile saved");
-      Alert.alert("Success", "Profile updated");
-    } catch (error) {
-      if (error && typeof error === "object" && "status" in error) {
-        const apiError = error as {
-          status?: number;
-          message?: string;
-          errors?: { field: string; message: string }[];
-        };
-        log.error(
-          "Failed to save profile",
-          `status=${apiError.status ?? "unknown"}`,
-          {
-            message: apiError.message,
-            errors: apiError.errors,
-          }
-        );
-      } else {
-        log.error(`Failed to save profile: ${error}`);
-      }
-      Alert.alert("Error", "Failed to save profile");
+      showToast({ type: "success", message: `${label} saved` });
+      setEditing(null);
+      return true;
+    } catch (e) {
+      log.error(`Failed to save ${label}: ${e}`);
+      showToast({ type: "error", message: `Couldn't save ${label.toLowerCase()}`, subtitle: "Check your connection and try again." });
+      return false;
     } finally {
-      setIsSaving(false);
+      setSaving(null);
     }
   };
 
-  /* =========================
-     PROFILE COMPLETION
-     ========================= */
-  const handleProfileCompletion = async (
-    weight: number | null,
-    age: number | null
-  ) => {
+  /* ---------- logout ---------- */
+  const doLogout = async () => {
     try {
-      const updates: any = {};
-      if (weight !== null && weight !== profile?.weight) updates.weight = weight;
-      if (age !== null && age !== profile?.age) updates.age = age;
-
-      if (Object.keys(updates).length > 0) {
-        await updateProfile.mutateAsync(updates);
-      }
-      setShowProfileCompletion(false);
-      log.success("Profile completion saved");
-    } catch (error) {
-      log.error(`Failed to save profile completion: ${error}`);
-      throw error;
+      // No stale data or background refetches after sign-out.
+      queryClient.cancelQueries();
+      queryClient.clear();
+      await logout();
+      router.replace("/login");
+    } catch (e) {
+      log.error(`Logout failed: ${e}`);
+      showToast({ type: "error", message: "Couldn't log out", subtitle: "Please try again." });
     }
   };
 
-  /* =========================
-     LOGOUT
-     ========================= */
-  const handleLogout = async () => {
-    Alert.alert(
-      "Log Out?",
-      "Your data is safely stored in the cloud. You can log back in at any time.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Log Out",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              // Clear React Query cache so no stale data or background refetches
-              // fire unauthenticated requests after sign-out
-              queryClient.cancelQueries();
-              queryClient.clear();
+  /* ---------- delete account (with sign-in again when Firebase asks) ---------- */
+  const [deleting, setDeleting] = useState(false);
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [reauthError, setReauthError] = useState<string | null>(null);
 
-              await logout();
-              log.info("User logged out");
-
-              // Explicitly navigate to login instead of relying only on the auth guard
-              router.replace("/login");
-            } catch (error) {
-              log.error(`Logout failed: ${error}`);
-              Alert.alert("Error", "Failed to log out. Please try again.");
-            }
-          },
-        },
-      ],
-    );
+  const clearLocalAccountData = async () => {
+    const uid = user?.uid;
+    queryClient.cancelQueries();
+    queryClient.clear();
+    try {
+      try {
+        await getGoogleSignin()?.GoogleSignin.signOut();
+      } catch {}
+      await logout();
+    } finally {
+      await AsyncStorage.clear();
+      if (uid) await Promise.allSettled([SecureStore.deleteItemAsync(`evs_${uid}`), clearVerificationSent(uid)]);
+    }
   };
 
-  /* =========================
-     EXPORT DATA
-     ========================= */
-  const handleExport = (format: "csv" | "pdf") => {
-    Alert.alert(
-      `Export as ${format.toUpperCase()}`,
-      `This will export all your workouts and body weight records as a ${format.toUpperCase()} file.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Export",
-          onPress: async () => {
-            setIsExporting(true);
-            try {
-              log.info(`Starting ${format.toUpperCase()} export...`);
-              if (format === "csv") {
-                await exportToCSV();
-              } else {
-                await exportToPDF();
-              }
-              log.success(`${format.toUpperCase()} export completed`);
-            } catch (error) {
-              log.error(`Export failed: ${error}`);
-              Alert.alert(
-                "Export Failed",
-                error instanceof Error ? error.message : "An unknown error occurred",
-              );
-            } finally {
-              setIsExporting(false);
-            }
-          },
-        },
-      ],
-    );
+  const deleteAccount = async () => {
+    setDeleting(true);
+    setReauthError(null);
+    try {
+      await userApi.deleteAccount();
+      await clearLocalAccountData();
+      router.replace("/login");
+    } catch (e: unknown) {
+      const err = e as { code?: string; message?: string };
+      if (err?.code !== "REAUTHENTICATION_REQUIRED") {
+        log.error(`Account deletion failed: ${e}`);
+        showToast({ type: "error", message: "Couldn't delete account", subtitle: err?.message || "Please try again." });
+        return;
+      }
+      const providerId = user?.providerData[0]?.providerId;
+      const google = getGoogleSignin();
+      if (providerId === "google.com" && !google) {
+        showToast({ type: "error", message: "Sign in again to delete", subtitle: "Google sign-in isn't available in this preview. Use the full app." });
+      } else if (providerId === "google.com" && google) {
+        try {
+          const response = await google.GoogleSignin.signIn();
+          const idToken = google.isSuccessResponse(response) ? response.data.idToken : null;
+          if (idToken && auth.currentUser) {
+            await reauthenticateWithCredential(auth.currentUser, GoogleAuthProvider.credential(idToken));
+            await deleteAccountRef.current();
+            return;
+          }
+        } catch (reAuthErr: unknown) {
+          showToast({ type: "error", message: "Google sign-in failed", subtitle: (reAuthErr as Error)?.message });
+        }
+      } else {
+        setReauthOpen(true);
+      }
+    } finally {
+      setDeleting(false);
+    }
+  };
+  const deleteAccountRef = useRef(deleteAccount);
+  deleteAccountRef.current = deleteAccount;
+
+  const reauthWithPassword = async () => {
+    if (!auth.currentUser?.email || !password) {
+      setReauthError("Enter your password to continue.");
+      return;
+    }
+    setDeleting(true);
+    setReauthError(null);
+    try {
+      await reauthenticateWithCredential(auth.currentUser, EmailAuthProvider.credential(auth.currentUser.email, password));
+      setReauthOpen(false);
+      setPassword("");
+      await deleteAccount();
+    } catch (e: unknown) {
+      setReauthError((e as Error)?.message || "That password didn't work.");
+      setDeleting(false);
+    }
   };
 
-  if (isLoading && !profile) {
+  /* ---------- states before the profile is available ---------- */
+  if (!profile && connection.state !== "online") {
     return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: colors.background,
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
-        <ActivityIndicator size="large" color={colors.accent} />
-      </View>
-    );
-  }
-
-  if (!profile && isError) {
-    return (
-      <View style={{ flex: 1, backgroundColor: colors.background, padding: spacing.md, paddingTop: insets.top + spacing.md }}>
-        <ProfileStatus
-          title="Profile unavailable"
-          message={error instanceof Error ? error.message : "Can't load your profile right now."}
-          onRetry={() => void refetchProfile()}
+      <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: "center", padding: spacing.screen }}>
+        <OfflineState
+          mode={connection.state === "waking" ? "waking" : "offline"}
+          onRetry={() => {
+            connection.retry();
+            void refetchProfile();
+          }}
+          retrying={connection.checking}
         />
       </View>
     );
   }
-
+  if (isLoading && !profile) return <ProfileSkeleton />;
   if (!profile) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.background, padding: spacing.md, paddingTop: insets.top + spacing.md }}>
+      <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing.screen }}>
         <ProfileStatus
-          title="Profile not available"
-          message="Your account profile has not been created yet."
+          title={isError ? "Profile unavailable" : "Profile not available"}
+          message={isError && error instanceof Error ? error.message : "Your account profile has not been created yet."}
           onRetry={() => void refetchProfile()}
         />
       </View>
     );
   }
 
+  /* ---------- values ---------- */
+  const days = (profile.trainingDays ?? []) as Weekday[];
+  const avoid = (profile.avoidAreas ?? []) as AvoidArea[];
+  const goalTitle = GOALS.find((g) => g.id === profile.fitnessGoal)?.title ?? null;
+  const latestKg = latestWeightEntry?.weight ?? profile.weight ?? null;
+  const nameSource = profile.displayName || user?.displayName || profile.email || user?.email || "";
+  const memberSince = profile.createdAt ? new Date(profile.createdAt).toLocaleDateString(undefined, { month: "long", year: "numeric" }) : null;
+  const showVerifyBanner = !!user && !user.emailVerified && verificationDaysLeft !== null;
+
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={insets.top + 12}
-    >
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      {/* Header */}
+      <View style={{ height: size.appBar, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.screen }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+          <View style={{ width: size.tileSm, height: size.tileSm, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh }}>
+            <MaterialIcons name="person" size={size.icon} color={colors.accent} />
+          </View>
+          <Text style={[typography.headlineMd, { color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]} accessibilityRole="header">
+            Profile
+          </Text>
+        </View>
+        <View style={{ paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: radius.md, backgroundColor: colors.surfaceContainerHigh }}>
+          <Text style={[typography.labelSm, { color: colors.textSecondary }]}>{getVersionLabel()}</Text>
+        </View>
+      </View>
+
       <ScrollView
-        style={{ flex: 1, backgroundColor: colors.background }}
+        style={{ flex: 1 }}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        contentContainerStyle={{
-          padding: spacing.md,
-          paddingBottom: insets.bottom + spacing.xxl,
-        }}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor={colors.accent}
-          />
-        }
+        contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: spacing.xxl, gap: spacing.xl }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} progressBackgroundColor={colors.card} />}
       >
-      {isError && (
-        <ProfileStatus
-          compact
-          title="Showing cached profile"
-          message="The server is unavailable. Changes may not sync until you reconnect."
-          onRetry={() => void refetchProfile()}
-        />
-      )}
-      {/* HEADER */}
-      <Animated.View entering={FadeInDown.duration(400)}>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: spacing.xs,
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Pressable
-              onPress={() => router.navigate("/(tabs)")}
-              style={{ marginRight: spacing.sm }}
-            >
-              <Ionicons
-                name="arrow-back"
-                size={24}
-                color={colors.textPrimary}
-              />
-            </Pressable>
-            <Text style={{ ...typography.h1, color: colors.textPrimary }}>
-              Profile
-            </Text>
-          </View>
-          {/* Data is always in sync with the backend */}
-          <SyncBadge state="synced" pendingCount={0} compact />
-        </View>
-        <Text
-          style={{
-            ...typography.body,
-            color: colors.textSecondary,
-            marginBottom: spacing.lg,
-          }}
-        >
-          Manage your account
-        </Text>
-      </Animated.View>
+        {isError && (
+          <ProfileStatus compact title="Showing saved profile" message="The server is unavailable. Changes may not save until you reconnect." onRetry={() => void refetchProfile()} />
+        )}
 
-      {/* Email Verification Banner */}
-      {user &&
-        !user.emailVerified &&
-        verificationDaysLeft !== null &&
-        !dismissVerificationBanner && (
-        <Animated.View
-          entering={FadeInDown.delay(120).duration(400)}
-          style={{ marginBottom: spacing.lg }}
-        >
-          <View
-            style={{
-              backgroundColor:
-                verificationDaysLeft > 0 ? colors.warning + "15" : colors.error + "15",
-              borderRadius: radius.lg,
-              padding: spacing.md,
-              borderLeftWidth: 4,
-              borderLeftColor:
-                verificationDaysLeft > 0 ? colors.warning : colors.error,
-            }}
-          >
-            <View
-              style={{
+        <Reveal index={0} style={{ gap: spacing.md }}>
+          <ProfileHeader
+            name={profile.displayName ?? ""}
+            email={profile.email || user?.email || ""}
+            photoUri={profile.avatarUrl || user?.photoURL || null}
+            initials={nameSource ? getInitials(nameSource) : ""}
+            verified={!!user?.emailVerified}
+            google={profile.authProvider === "google"}
+            memberSince={memberSince}
+            workouts={sessions}
+            streak={goal ? streak.current : null}
+            badges={unlocked}
+            savingName={saving === "name"}
+            onSaveName={(name) => save("name", { displayName: name }, "Name")}
+            onVerify={() => setShowVerificationPrompt(true)}
+            onOpenBadges={() => router.push("/achievements")}
+          />
+
+          {showVerifyBanner && (
+            <Pressable
+              onPress={() => setShowVerificationPrompt(true)}
+              accessibilityRole="button"
+              style={({ pressed }) => ({
                 flexDirection: "row",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
-              }}
+                alignItems: "center",
+                gap: spacing.md,
+                padding: spacing.lg,
+                borderRadius: radius.xl,
+                borderWidth: 1,
+                borderColor: verificationDaysLeft! > 0 ? colors.warning : colors.danger,
+                backgroundColor: pressed ? colors.surfaceContainerHigh : colors.raised,
+              })}
             >
-              <View style={{ flex: 1, paddingRight: spacing.sm }}>
-                <Text
-                  style={{
-                    ...typography.caption,
-                    color: verificationDaysLeft > 0 ? colors.warning : colors.error,
-                    marginBottom: spacing.xs,
-                    fontWeight: "600",
-                  }}
-                >
-                  {verificationDaysLeft > 0
-                    ? verificationMessages.bannerTitleSoft(verificationDaysLeft)
-                    : verificationMessages.bannerTitleHard}
+              <MaterialIcons name="mark-email-unread" size={size.iconLg} color={verificationDaysLeft! > 0 ? colors.warning : colors.danger} />
+              <View style={{ flex: 1, gap: spacing.xxs }}>
+                <Text style={[typography.bodyMdMedium, { color: colors.text }]}>
+                  {verificationDaysLeft! > 0 ? verificationMessages.bannerTitleSoft(verificationDaysLeft!) : verificationMessages.bannerTitleHard}
                 </Text>
-                <Text style={{ ...typography.body, color: colors.textPrimary }}>
-                  {verificationMessages.bannerBody}
-                </Text>
-                <Pressable
-                  onPress={() => setShowVerificationPrompt(true)}
-                  style={{ marginTop: spacing.sm, alignSelf: "flex-start" }}
-                >
-                  <Text style={{ color: colors.accent, fontWeight: "600" }}>
-                    {verificationMessages.bannerAction}
-                  </Text>
-                </Pressable>
+                <Text style={[typography.labelSm, { color: colors.textSecondary }]}>{verificationMessages.bannerBody}</Text>
               </View>
-              <Pressable
-                onPress={() => setDismissVerificationBanner(true)}
-                style={{ paddingLeft: spacing.sm }}
-              >
-                <Ionicons name="close" size={18} color={colors.textMuted} />
-              </Pressable>
-            </View>
-          </View>
-        </Animated.View>
-      )}
-
-      {/* AVATAR & NAME HERO */}
-      <Animated.View
-        entering={FadeInUp.delay(100).duration(400)}
-        style={{
-          alignItems: "center",
-          marginBottom: spacing.xl,
-        }}
-      >
-        {/* Avatar - Generated or from Google */}
-        <View
-          style={{
-            borderRadius: radius.full,
-            marginBottom: spacing.md,
-            ...shadows.lg,
-          }}
-        >
-          <Image
-            source={{
-              uri: getAvatarUrl({
-                avatarUrl: profile?.avatarUrl,
-                displayName: displayName || profile?.displayName,
-                email: profile?.email || user?.email,
-                userId: user?.uid || "default",
-              }),
-            }}
-            style={{
-              width: 100,
-              height: 100,
-              borderRadius: radius.full,
-              backgroundColor: colors.surfaceElevated,
-            }}
-          />
-          {/* Auth provider badge */}
-          {profile?.authProvider === "google" && (
-            <View
-              style={{
-                position: "absolute",
-                bottom: 0,
-                right: 0,
-                backgroundColor: colors.surface,
-                borderRadius: radius.full,
-                padding: 4,
-                ...shadows.sm,
-              }}
-            >
-              <Ionicons name="logo-google" size={18} color="#4285F4" />
-            </View>
+              <MaterialIcons name="chevron-right" size={size.iconSm} color={colors.textMuted} />
+            </Pressable>
           )}
-        </View>
+        </Reveal>
 
-        <Text
-          style={{
-            ...typography.h2,
-            color: colors.textPrimary,
-            marginBottom: spacing.xxs,
-          }}
-        >
-          {displayName || "Set your name"}
-        </Text>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            flexWrap: "wrap",
-            justifyContent: "center",
-          }}
-        >
-          <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-            {profile?.email || user?.email || "No email"}
-          </Text>
-          {user?.emailVerified ? (
-            <View
-              style={{
-                marginLeft: spacing.xs,
-                backgroundColor: colors.success + "20",
-                borderRadius: radius.full,
-                paddingHorizontal: spacing.xs,
-                paddingVertical: 2,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: spacing.xxs,
-              }}
-            >
-              <Ionicons
-                name="checkmark-circle"
-                size={12}
-                color={colors.success}
-              />
-              <Text style={{ ...typography.label, color: colors.success }}>
-                {verificationMessages.badgeVerified}
-              </Text>
-            </View>
-          ) : (
-            <View
-              style={{
-                marginLeft: spacing.xs,
-                backgroundColor: colors.warning + "20",
-                borderRadius: radius.full,
-                paddingHorizontal: spacing.xs,
-                paddingVertical: 2,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: spacing.xxs,
-              }}
-            >
-              <Ionicons name="alert-circle" size={12} color={colors.warning} />
-              <Text style={{ ...typography.label, color: colors.warning }}>
-                {verificationMessages.badgeUnverified}
-              </Text>
-            </View>
-          )}
-          {profile?.authProvider === "google" && (
-            <View
-              style={{
-                marginLeft: spacing.xs,
-                backgroundColor: colors.surfaceElevated,
-                borderRadius: radius.sm,
-                paddingHorizontal: spacing.xs,
-                paddingVertical: 2,
-              }}
-            >
-              <Text style={{ ...typography.label, color: colors.textMuted }}>
-                Google
-              </Text>
-            </View>
-          )}
-        </View>
+        {/* Training: what the AI plan, Home and reminders use */}
+        <Reveal index={1}>
+          <SettingsGroup title="Training" note="Used by your plan and reminders">
+            <SettingsRow
+              icon="calendar-today"
+              label="Training days"
+              detail={days.length ? `${days.length} ${days.length === 1 ? "day" : "days"} a week · your weekly goal` : undefined}
+              value={days.length ? formatDays(days) : "Add"}
+              missing={!days.length}
+              kind="edit"
+              onPress={() => setEditing("days")}
+            />
+            <SettingsRow icon="track-changes" label="Fitness goal" value={goalTitle ?? "Add"} missing={!goalTitle} kind="edit" onPress={() => setEditing("goal")} />
+            <SettingsRow
+              icon="military-tech"
+              label="Experience"
+              value={labelOf(EXPERIENCE_OPTIONS, profile.experienceLevel) ?? "Add"}
+              missing={!profile.experienceLevel}
+              kind="edit"
+              onPress={() => setEditing("experience")}
+            />
+            <SettingsRow
+              icon="timer"
+              label="Session length"
+              value={labelOf(SESSION_OPTIONS, profile.sessionMinutes) ?? "Add"}
+              missing={!profile.sessionMinutes}
+              kind="edit"
+              onPress={() => setEditing("session")}
+            />
+            <SettingsRow icon="fitness-center" label="Equipment" value={labelOf(EQUIPMENT_OPTIONS, profile.equipment) ?? "Add"} missing={!profile.equipment} kind="edit" onPress={() => setEditing("equipment")} />
+            <SettingsRow
+              icon="healing"
+              label="Go easy on"
+              detail="Your plan avoids loading these heavily"
+              value={avoid.length ? avoid.map((a) => labelOf(AVOID_OPTIONS, a)).join(", ") : "None"}
+              kind="edit"
+              onPress={() => setEditing("avoid")}
+            />
+          </SettingsGroup>
+        </Reveal>
 
-        {/* Account created date */}
-        <Text
-          style={{
-            ...typography.caption,
-            color: colors.textMuted,
-            marginTop: spacing.xs,
-          }}
-        >
-          Member since {profile?.createdAt ? formatAccountDate(new Date(profile.createdAt).getTime()) : "—"}
-        </Text>
-      </Animated.View>
+        {/* Body */}
+        <Reveal index={2}>
+          <SettingsGroup title="Body">
+            <SettingsRow icon="height" label="Height" value={profile.height ? `${profile.height} cm` : "Add"} missing={!profile.height} kind="edit" onPress={() => setEditing("height")} />
+            <SettingsRow icon="cake" label="Age" value={profile.age ? String(profile.age) : "Add"} missing={!profile.age} kind="edit" onPress={() => setEditing("age")} />
+            <SettingsRow
+              icon="monitor-weight"
+              label="Body weight"
+              detail="Log and track it on the Weight tab"
+              value={latestKg ? `${Math.round(displayWeight(latestKg, unit) * 10) / 10} ${weightLabel(unit)}` : "Log"}
+              missing={!latestKg}
+              onPress={() => router.navigate("/(tabs)/body-weight")}
+            />
+            <SettingsRow icon="straighten" label="Weight unit" trailing={<UnitSwitch unit={unit} onChange={setUnit} />} />
+          </SettingsGroup>
+        </Reveal>
 
-      {/* Legacy Profile Completion (missing age/weight) */}
-      {(!profile?.age || (!profile?.weight && !latestWeight)) && (
-        <Animated.View
-          entering={FadeInUp.delay(170).duration(400)}
-          style={{ marginBottom: spacing.lg }}
-        >
-          <View
-            style={{
-              backgroundColor: colors.surface,
-              borderRadius: radius.lg,
-              padding: spacing.md,
-              borderWidth: 1,
-              borderColor: colors.cardBorder,
-            }}
-          >
-            <Text
-              style={{
-                ...typography.bodyMedium,
-                color: colors.textPrimary,
-                marginBottom: spacing.xs,
-              }}
-            >
-              Complete your profile
-            </Text>
-            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-              Add your age and weight so your insights are accurate.
-            </Text>
-            <Pressable
-              onPress={() => {
-                setProfilePromptMode("missing");
-                setShowProfileCompletion(true);
-              }}
-              style={{ marginTop: spacing.sm, alignSelf: "flex-start" }}
-            >
-              <Text style={{ color: colors.accent, fontWeight: "600" }}>
-                Add missing details
-              </Text>
-            </Pressable>
-          </View>
-        </Animated.View>
-      )}
+        {/* AI plan */}
+        <Reveal index={3}>
+          <SettingsGroup title="AI plan">
+            <SettingsRow
+              icon="auto-awesome"
+              label={activePlan ? activePlan.name : "AI workout plan"}
+              detail={activePlan ? "Your active plan" : "Built from your training answers above"}
+              value={activePlan ? "Active" : "Not created"}
+              missing={!activePlan}
+              onPress={() => router.push("/ai-plan")}
+            />
+          </SettingsGroup>
+        </Reveal>
 
-      {/* PROFILE FIELDS */}
-      <Animated.View
-        entering={FadeInUp.delay(200).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          padding: spacing.lg,
-          marginBottom: spacing.md,
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.sm,
-        }}
-      >
-        <Text
-          style={{
-            ...typography.label,
-            color: colors.textMuted,
-            marginBottom: spacing.lg,
-          }}
-        >
-          PERSONAL INFO
-        </Text>
+        {/* Activity & alerts */}
+        <Reveal index={4}>
+          <SettingsGroup title="Activity & alerts">
+            <SettingsRow icon="emoji-events" label="Achievements" value={unlocked != null ? `${unlocked} unlocked` : undefined} onPress={() => router.push("/achievements")} />
+            <SettingsRow
+              icon="notifications"
+              label="Notifications"
+              detail="Workout reminders and streak nudges"
+              value={notifStatus ?? undefined}
+              missing={notifStatus === "Not allowed"}
+              onPress={() => router.push("/notification-settings")}
+            />
+          </SettingsGroup>
+        </Reveal>
 
-        {/* Display Name */}
-        <View style={{ marginBottom: spacing.lg }}>
-          <Text
-            style={{
-              ...typography.caption,
-              color: colors.textSecondary,
-              marginBottom: spacing.xs,
-            }}
-          >
-            Display Name (Optional)
-          </Text>
-          <TextInput
-            placeholder="Your name (set during onboarding)"
-            placeholderTextColor={colors.textMuted}
-            value={displayName}
-            onChangeText={setDisplayName}
-            style={{
-              padding: spacing.md,
-              borderRadius: radius.md,
-              backgroundColor: colors.surfaceElevated,
-              color: colors.textPrimary,
-              fontSize: typography.body.fontSize,
-            }}
-          />
-        </View>
+        {/* Account */}
+        <Reveal index={5} style={{ gap: spacing.md }}>
+          <SettingsGroup title="Account">
+            <SettingsRow icon="ios-share" label="Export your data" detail="Workouts and body weight as CSV or PDF" kind="action" onPress={() => setExportOpen(true)} />
+            {profile.isAdmin ? <SettingsRow icon="admin-panel-settings" label="Admin: exercise catalog" detail="Manage remote additions and removals" onPress={() => router.push("/admin-catalog")} /> : null}
+            <SettingsRow icon="logout" label="Log out" value={profile.displayName || undefined} kind="action" onPress={() => setConfirm("logout")} />
+          </SettingsGroup>
+          <SettingsGroup>
+            <SettingsRow icon="delete-forever" label="Delete account" value="Irreversible" tone="danger" busy={deleting} kind="action" onPress={() => setConfirm("delete")} />
+          </SettingsGroup>
+        </Reveal>
 
-        {/* Height */}
-        <View style={{ marginBottom: spacing.lg }}>
-          <Text
-            style={{
-              ...typography.caption,
-              color: colors.textSecondary,
-              marginBottom: spacing.xs,
-            }}
-          >
-            Height (cm)
-          </Text>
-          <TextInput
-            placeholder="Your height"
-            placeholderTextColor={colors.textMuted}
-            value={height}
-            onChangeText={setHeight}
-            keyboardType="decimal-pad"
-            style={{
-              padding: spacing.md,
-              borderRadius: radius.md,
-              backgroundColor: colors.surfaceElevated,
-              color: colors.textPrimary,
-              fontSize: typography.body.fontSize,
-            }}
-          />
-        </View>
-
-        {/* Weight */}
-        <View style={{ marginBottom: spacing.lg }}>
-          <Text
-            style={{
-              ...typography.caption,
-              color: colors.textSecondary,
-              marginBottom: spacing.xs,
-            }}
-          >
-            Weight (kg)
-          </Text>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              backgroundColor: colors.surfaceElevated,
-              borderRadius: radius.md,
-              paddingHorizontal: spacing.md,
-            }}
-          >
-            <Text style={{ ...typography.body, color: colors.textPrimary }}>
-              {latestWeight ? `${latestWeight} kg` : profile?.weight ? `${profile.weight} kg` : "Not set"}
-            </Text>
-            <Pressable
-              onPress={() => router.push("/body-weight")}
-              style={{ marginLeft: "auto", paddingVertical: spacing.md }}
-            >
-              <Text style={{ color: colors.accent, fontWeight: "600" }}>
-                Log
-              </Text>
-            </Pressable>
-          </View>
-        </View>
-
-        {/* Age */}
-        <View style={{ marginBottom: spacing.lg }}>
-          <Text
-            style={{
-              ...typography.caption,
-              color: colors.textSecondary,
-              marginBottom: spacing.xs,
-            }}
-          >
-            Age
-          </Text>
-          <TextInput
-            value={age}
-            onChangeText={setAge}
-            placeholder="e.g. 25"
-            placeholderTextColor={colors.textMuted}
-            keyboardType="number-pad"
-            style={{
-              backgroundColor: colors.surfaceElevated,
-              borderRadius: radius.md,
-              paddingHorizontal: spacing.md,
-              paddingVertical: spacing.md,
-              color: colors.textPrimary,
-              ...typography.body,
-            }}
-          />
-        </View>
-
-        {/* Fitness Goal */}
-        <View style={{ marginBottom: spacing.lg }}>
-          <Text
-            style={{
-              ...typography.caption,
-              color: colors.textSecondary,
-              marginBottom: spacing.sm,
-            }}
-          >
-            Fitness Goal
-          </Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-            {[
-              { id: "strength", label: "Strength", emoji: "🏋️" },
-              { id: "muscle", label: "Muscle Gain", emoji: "💪" },
-              { id: "endurance", label: "Endurance", emoji: "🏃" },
-              { id: "weight-loss", label: "Weight Loss", emoji: "⚖️" },
-              { id: "general", label: "General", emoji: "🎯" },
-            ].map((goal) => {
-              const selected = fitnessGoal === goal.id;
-              return (
-                <Pressable
-                  key={goal.id}
-                  onPress={() => setFitnessGoal(goal.id)}
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    paddingVertical: spacing.sm,
-                    paddingHorizontal: spacing.md,
-                    borderRadius: radius.lg,
-                    backgroundColor: selected ? colors.accent : colors.surfaceElevated,
-                    borderWidth: 1,
-                    borderColor: selected ? colors.accent : colors.cardBorder,
-                  }}
-                >
-                  <Text style={{ fontSize: 14, marginRight: 4 }}>{goal.emoji}</Text>
-                  <Text
-                    style={{
-                      ...typography.caption,
-                      color: selected ? colors.onAccent : colors.textPrimary,
-                      fontWeight: selected ? "700" : "500",
-                    }}
-                  >
-                    {goal.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Daily Goal */}
-        <View
-          style={{
-            paddingHorizontal: spacing.xs,
-            paddingVertical: spacing.md,
-            backgroundColor: colors.surfaceElevated,
-            borderRadius: radius.lg,
-          }}
-        >
-          <Text
-            style={{
-              ...typography.caption,
-              color: colors.textSecondary,
-              marginBottom: spacing.md,
-              fontWeight: "600",
-              textTransform: "uppercase",
-              letterSpacing: 0.5,
-            }}
-          >
-            Daily Workout Goal
-          </Text>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: spacing.md,
-              marginBottom: spacing.lg,
-            }}
-          >
-            {[1, 2, 3, 4, 5, 6, 7].map((num) => (
-              <Pressable
-                key={num}
-                onPress={() => setWeeklyGoal(String(num))}
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: radius.md,
-                  backgroundColor:
-                    weeklyGoal === String(num)
-                      ? colors.accent
-                      : colors.surface,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderWidth: weeklyGoal === String(num) ? 0 : 1,
-                  borderColor: colors.cardBorder,
-                }}
-              >
-                <Text
-                  style={{
-                    color:
-                      weeklyGoal === String(num) ? colors.onAccent : colors.textPrimary,
-                    fontWeight: weeklyGoal === String(num) ? "600" : "500",
-                    fontSize: 14,
-                  }}
-                >
-                  {num}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-          <Text
-            style={{
-              ...typography.caption,
-              color: colors.textMuted,
-              fontSize: 12,
-              fontStyle: "italic",
-            }}
-          >
-            How many workouts do you aim to complete each day?
-          </Text>
-        </View>
-      </Animated.View>
-
-      {/* WEIGHT UNIT PREFERENCE */}
-      <Animated.View
-        entering={FadeInUp.delay(480).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          padding: spacing.lg,
-          marginBottom: spacing.md,
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.sm,
-        }}
-      >
-        <Text
-          style={{
-            ...typography.label,
-            color: colors.textMuted,
-            marginBottom: spacing.md,
-          }}
-        >
-          WEIGHT UNIT
-        </Text>
-        <View
-          style={{
-            flexDirection: "row",
-            gap: spacing.sm,
-          }}
-        >
-          {(["kg", "lbs"] as const).map((u) => (
-            <Pressable
-              key={u}
-              onPress={() => setWeightUnit(u)}
-              style={{
-                flex: 1,
-                paddingVertical: spacing.md,
-                borderRadius: radius.lg,
-                backgroundColor:
-                  weightUnit === u ? colors.accent : colors.surfaceElevated,
-                alignItems: "center",
-                borderWidth: weightUnit === u ? 0 : 1,
-                borderColor: colors.cardBorder,
-              }}
-            >
-              <Text
-                style={{
-                  color: weightUnit === u ? colors.onAccent : colors.textPrimary,
-                  fontWeight: "700",
-                  fontSize: 16,
-                }}
-              >
-                {u.toUpperCase()}
-              </Text>
-              <Text
-                style={{
-                  color: weightUnit === u ? colors.onAccent : colors.textMuted,
-                  fontSize: 12,
-                  marginTop: 2,
-                }}
-              >
-                {u === "kg" ? "Kilograms" : "Pounds"}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </Animated.View>
-
-      {/* SAVE BUTTON */}
-      {hasChanges && (
-        <Animated.View entering={FadeInUp.duration(300)}>
-          <Pressable
-            onPress={handleSaveProfile}
-            disabled={isSaving}
-            style={{
-              backgroundColor: colors.accent,
-              padding: spacing.md,
-              borderRadius: radius.lg,
-              alignItems: "center",
-              marginBottom: spacing.md,
-              opacity: isSaving ? 0.6 : 1,
-              ...shadows.md,
-            }}
-          >
-            {isSaving ? (
-              <ActivityIndicator color={colors.onAccent} />
-            ) : (
-              <Text style={{ color: colors.onAccent, fontWeight: "600", fontSize: 16 }}>
-                Save Changes
-              </Text>
-            )}
-          </Pressable>
-        </Animated.View>
-      )}
-
-      {/* ACCOUNT INFO - Hidden for cleaner profile
-      <Animated.View
-        entering={FadeInUp.delay(300).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          padding: spacing.lg,
-          marginBottom: spacing.md,
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.sm,
-        }}
-      >
-        <Text
-          style={{
-            ...typography.label,
-            color: colors.textMuted,
-            marginBottom: spacing.lg,
-          }}
-        >
-          ACCOUNT
-        </Text>
-
-        <InfoRow
-          label="User ID"
-          value={user?.uid?.slice(0, 16) + "..."}
-          colors={colors}
-          spacing={spacing}
-          typography={typography}
-        />
-        <View
-          style={{
-            height: 1,
-            backgroundColor: colors.divider,
-            marginVertical: spacing.md,
-          }}
-        />
-        <InfoRow
-          label="Member Since"
-          value={
-            profile?.createdAt
-              ? new Date(profile.createdAt).toLocaleDateString()
-              : "N/A"
-          }
-          colors={colors}
-          spacing={spacing}
-          typography={typography}
-        />
-        <View
-          style={{
-            height: 1,
-            backgroundColor: colors.divider,
-            marginVertical: spacing.md,
-          }}
-        />
-        <InfoRow
-          label="Last Updated"
-          value={
-            profile?.updatedAt
-              ? new Date(profile.updatedAt).toLocaleDateString()
-              : "N/A"
-          }
-          colors={colors}
-          spacing={spacing}
-          typography={typography}
-        />
-      </Animated.View>
-      */}
-
-      {/* DATA STATUS SECTION */}
-      <Animated.View
-        entering={FadeInUp.delay(400).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          padding: spacing.lg,
-          marginBottom: spacing.md,
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.sm,
-        }}
-      >
-        <Text
-          style={{
-            ...typography.label,
-            color: colors.textMuted,
-            marginBottom: spacing.lg,
-          }}
-        >
-          DATA
-        </Text>
-
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <View
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: radius.md,
-              backgroundColor: colors.successLight,
-              justifyContent: "center",
-              alignItems: "center",
-              marginRight: spacing.sm,
-            }}
-          >
-            <Ionicons name="cloud-done-outline" size={20} color={colors.success} />
-          </View>
-          <View>
-            <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
-              All data synced
-            </Text>
-            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-              Stored securely in the cloud
-            </Text>
-          </View>
-        </View>
-      </Animated.View>
-
-      {/* AI WORKOUT PLAN */}
-      <Animated.View
-        entering={FadeInUp.delay(430).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          overflow: "hidden",
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.sm,
-          marginBottom: spacing.md,
-        }}
-      >
-        <Pressable
-          onPress={() => router.push("/ai-plan")}
-          style={{ flexDirection: "row", alignItems: "center", padding: spacing.lg }}
-        >
-          <View
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: radius.md,
-              backgroundColor: colors.accentLight,
-              justifyContent: "center",
-              alignItems: "center",
-              marginRight: spacing.sm,
-            }}
-          >
-            <Ionicons name="sparkles" size={20} color={colors.accent} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
-              AI Workout Plan
-            </Text>
-            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-              {profile?.activePlan ? "View & manage your plan" : "Generate with Gemini AI"}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-        </Pressable>
-      </Animated.View>
-
-      {/* ACHIEVEMENTS */}
-      <Animated.View
-        entering={FadeInUp.delay(435).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          overflow: "hidden",
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.sm,
-          marginBottom: spacing.md,
-        }}
-      >
-        <Pressable
-          onPress={() => router.push("/achievements")}
-          accessibilityRole="button"
-          accessibilityLabel="Achievements"
-          style={{ flexDirection: "row", alignItems: "center", padding: spacing.lg }}
-        >
-          <View
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: radius.md,
-              backgroundColor: colors.accentLight,
-              justifyContent: "center",
-              alignItems: "center",
-              marginRight: spacing.sm,
-            }}
-          >
-            <Ionicons name="trophy" size={20} color={colors.accent} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
-              Achievements
-            </Text>
-            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-              Badges and progress
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-        </Pressable>
-      </Animated.View>
-
-      {/* NOTIFICATION SETTINGS */}
-      <Animated.View
-        entering={FadeInUp.delay(440).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          overflow: "hidden",
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.sm,
-          marginBottom: spacing.md,
-        }}
-      >
-        <Pressable
-          onPress={() => router.push("/notification-settings")}
-          style={{ flexDirection: "row", alignItems: "center", padding: spacing.lg }}
-        >
-          <View
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: radius.md,
-              backgroundColor: colors.secondaryLight,
-              justifyContent: "center",
-              alignItems: "center",
-              marginRight: spacing.sm,
-            }}
-          >
-            <Ionicons name="notifications-outline" size={20} color={colors.secondary} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
-              Notification Settings
-            </Text>
-            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-              Daily workout reminder
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-        </Pressable>
-      </Animated.View>
-
-      {/* APPEARANCE */}
-      <Animated.View
-        entering={FadeInUp.delay(445).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          overflow: "hidden",
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.sm,
-          marginBottom: spacing.md,
-        }}
-      >
-        <View style={{ padding: spacing.lg }}>
-          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}>
-            <View
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: radius.md,
-                backgroundColor: "#78350F20",
-                justifyContent: "center",
-                alignItems: "center",
-                marginRight: spacing.sm,
-              }}
-            >
-              <Ionicons name="color-palette-outline" size={20} color="#92400E" />
-            </View>
-            <View>
-              <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>Appearance</Text>
-              <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-                Choose your preferred theme
-              </Text>
-            </View>
-          </View>
-
-          {/* Three-way toggle */}
-          <View
-            style={{
-              flexDirection: "row",
-              backgroundColor: colors.surfaceElevated,
-              borderRadius: radius.lg,
-              padding: 3,
-              borderWidth: 1,
-              borderColor: colors.cardBorder,
-            }}
-          >
-            {(
-              [
-                { value: "system" as ThemePreference, label: "System", icon: "phone-portrait-outline" as const },
-                { value: "light" as ThemePreference, label: "Light", icon: "sunny-outline" as const },
-                { value: "dark" as ThemePreference, label: "Dark", icon: "moon-outline" as const },
-              ]
-            ).map((opt) => {
-              const active = themePreference === opt.value;
-              return (
-                <Pressable
-                  key={opt.value}
-                  onPress={() => setThemePreference(opt.value)}
-                  style={{
-                    flex: 1,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    paddingVertical: spacing.sm,
-                    borderRadius: radius.md,
-                    backgroundColor: active ? colors.surface : "transparent",
-                    gap: 5,
-                    borderWidth: active ? 1 : 0,
-                    borderColor: active ? colors.cardBorder : "transparent",
-                  }}
-                >
-                  <Ionicons
-                    name={opt.icon}
-                    size={15}
-                    color={active ? colors.accent : colors.textMuted}
-                  />
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      fontWeight: active ? "700" : "500",
-                      color: active ? colors.accent : colors.textMuted,
-                    }}
-                  >
-                    {opt.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-      </Animated.View>
-
-      {/* EXPORT DATA SECTION */}
-      <Animated.View
-        entering={FadeInUp.delay(450).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          overflow: "hidden",
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.sm,
-          opacity: isExporting ? 0.7 : 1,
-        }}
-      >
-        <View style={{ padding: spacing.lg }}>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              marginBottom: spacing.md,
-            }}
-          >
-            <View
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: radius.md,
-                backgroundColor: colors.accentLight,
-                justifyContent: "center",
-                alignItems: "center",
-                marginRight: spacing.sm,
-              }}
-            >
-              <Ionicons
-                name="download-outline"
-                size={20}
-                color={colors.accent}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text
-                style={{ ...typography.bodyMedium, color: colors.textPrimary }}
-              >
-                Export Data
-              </Text>
-              <Text
-                style={{ ...typography.caption, color: colors.textSecondary }}
-              >
-                Download your workout history
-              </Text>
-            </View>
-          </View>
-
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            <Pressable
-              onPress={() => handleExport("csv")}
-              disabled={isExporting}
-              style={{
-                flex: 1,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: colors.surfaceElevated,
-                padding: spacing.md,
-                borderRadius: radius.lg,
-                borderWidth: 1,
-                borderColor: colors.cardBorder,
-              }}
-            >
-              {isExporting ? (
-                <ActivityIndicator size="small" color={colors.accent} />
-              ) : (
-                <>
-                  <Ionicons
-                    name="document-text-outline"
-                    size={18}
-                    color={colors.textPrimary}
-                    style={{ marginRight: spacing.xs }}
-                  />
-                  <Text
-                    style={{
-                      ...typography.bodyMedium,
-                      color: colors.textPrimary,
-                    }}
-                  >
-                    CSV
-                  </Text>
-                </>
-              )}
-            </Pressable>
-
-            <Pressable
-              onPress={() => handleExport("pdf")}
-              disabled={isExporting}
-              style={{
-                flex: 1,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: colors.surfaceElevated,
-                padding: spacing.md,
-                borderRadius: radius.lg,
-                borderWidth: 1,
-                borderColor: colors.cardBorder,
-              }}
-            >
-              {isExporting ? (
-                <ActivityIndicator size="small" color={colors.accent} />
-              ) : (
-                <>
-                  <Ionicons
-                    name="document-outline"
-                    size={18}
-                    color={colors.textPrimary}
-                    style={{ marginRight: spacing.xs }}
-                  />
-                  <Text
-                    style={{
-                      ...typography.bodyMedium,
-                      color: colors.textPrimary,
-                    }}
-                  >
-                    PDF
-                  </Text>
-                </>
-              )}
-            </Pressable>
-          </View>
-        </View>
-      </Animated.View>
-
-      {/* ADMIN TOOLS */}
-      {isAdmin && (
-        <Animated.View
-          entering={FadeInUp.delay(520).duration(400)}
-          style={{
-            backgroundColor: colors.surface,
-            borderRadius: radius.xl,
-            overflow: "hidden",
-            borderWidth: 1,
-            borderColor: colors.cardBorder,
-            ...shadows.sm,
-            marginBottom: spacing.md,
-          }}
-        >
-          <Pressable
-            onPress={() => router.push("/admin-catalog")}
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              padding: spacing.lg,
-            }}
-          >
-            <View
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: radius.md,
-                backgroundColor: colors.accentLight,
-                justifyContent: "center",
-                alignItems: "center",
-                marginRight: spacing.sm,
-              }}
-            >
-              <Ionicons name="settings-outline" size={20} color={colors.accent} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text
-                style={{
-                  ...typography.bodyMedium,
-                  color: colors.textPrimary,
-                }}
-              >
-                Admin: Exercise Catalog
-              </Text>
-              <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-                Manage remote additions and removals
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-          </Pressable>
-        </Animated.View>
-      )}
-
-      {/* DELETE ACCOUNT SECTION */}
-      <Animated.View
-        entering={FadeInUp.delay(520).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          overflow: "hidden",
-          borderWidth: 1,
-          borderColor: colors.error + "55",
-          ...shadows.sm,
-          marginBottom: spacing.md,
-        }}
-      >
-        <Pressable
-          onPress={handleDeleteAccount}
-          disabled={isDeletingAccount}
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            padding: spacing.lg,
-            opacity: isDeletingAccount ? 0.6 : 1,
-          }}
-        >
-          <View
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: radius.md,
-              backgroundColor: colors.errorLight,
-              justifyContent: "center",
-              alignItems: "center",
-              marginRight: spacing.sm,
-            }}
-          >
-            <Ionicons name="trash-outline" size={20} color={colors.error} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ ...typography.bodyMedium, color: colors.error }}>
-              Delete Account
-            </Text>
-            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-              Permanently remove your account and data
-            </Text>
-          </View>
-          {isDeletingAccount ? (
-            <ActivityIndicator size="small" color={colors.error} />
-          ) : (
-            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-          )}
-        </Pressable>
-      </Animated.View>
-
-      {/* LOGOUT SECTION */}
-      <Animated.View
-        entering={FadeInUp.delay(550).duration(400)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          overflow: "hidden",
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          ...shadows.sm,
-        }}
-      >
-        <Pressable
-          onPress={handleLogout}
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            padding: spacing.lg,
-          }}
-        >
-          <View
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: radius.md,
-              backgroundColor: colors.errorLight,
-              justifyContent: "center",
-              alignItems: "center",
-              marginRight: spacing.sm,
-            }}
-          >
-            <Ionicons name="log-out-outline" size={20} color={colors.error} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ ...typography.bodyMedium, color: colors.error }}>
-              Log Out
-            </Text>
-            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-              Sign out of your account
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-        </Pressable>
-      </Animated.View>
-
-      {/* APP INFO / CREDITS */}
-      <Animated.View
-        entering={FadeInUp.delay(600).duration(400)}
-        style={{
-          alignItems: "center",
-          marginTop: spacing.xl,
-          paddingBottom: spacing.lg,
-        }}
-      >
-        <Image
-          source={require("../../assets/images/icon.png")}
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: radius.md,
-            marginBottom: spacing.sm,
-          }}
-        />
-        <Text
-          style={{
-            ...typography.bodyMedium,
-            color: colors.textPrimary,
-            marginBottom: spacing.xs,
-          }}
-        >
-          Iron Arc {getVersionLabel()}
-        </Text>
-        <Text style={{ ...typography.caption, color: colors.textMuted }}>
-          Designed & Built by Pushpanath
-        </Text>
-      </Animated.View>
+        <Text style={[typography.labelSm, { color: colors.textMuted, textAlign: "center" }]}>Iron Arc {getVersionLabel()}</Text>
       </ScrollView>
 
-      {/* Profile Completion Prompt */}
-      <ProfileCompletionPrompt
-        visible={showProfileCompletion}
-        onDismiss={() => setShowProfileCompletion(false)}
-        onSave={handleProfileCompletion}
-        currentWeight={profile?.weight}
-        currentAge={profile?.age}
-        isLoading={isSaving}
-        allowWeightEdit={profilePromptMode === "missing"}
+      {/* ---------- edit sheets (each saves on its own) ---------- */}
+      <DaysSheet
+        visible={editing === "days"}
+        value={days}
+        saving={saving === "days"}
+        onSave={(d) => void save("days", { trainingDays: d }, "Training days")}
+        onClose={() => setEditing(null)}
       />
+      <OptionsSheet<FitnessGoal>
+        visible={editing === "goal"}
+        title="Fitness goal"
+        subtitle="Shapes your AI plan's reps, sets and exercise choice."
+        options={GOALS.map((g) => ({ value: g.id, label: g.title, hint: g.description }))}
+        value={profile.fitnessGoal ? [profile.fitnessGoal as FitnessGoal] : []}
+        saving={saving === "goal"}
+        onSave={([v]) => void save("goal", { fitnessGoal: v }, "Fitness goal")}
+        onClose={() => setEditing(null)}
+      />
+      <OptionsSheet<ExperienceLevel>
+        visible={editing === "experience"}
+        title="Experience"
+        options={EXPERIENCE_OPTIONS}
+        value={profile.experienceLevel ? [profile.experienceLevel] : []}
+        saving={saving === "experience"}
+        onSave={([v]) => void save("experience", { experienceLevel: v }, "Experience")}
+        onClose={() => setEditing(null)}
+      />
+      <OptionsSheet<SessionMinutes>
+        visible={editing === "session"}
+        title="Session length"
+        subtitle="How long a usual workout takes you."
+        options={SESSION_OPTIONS}
+        value={profile.sessionMinutes ? [profile.sessionMinutes] : []}
+        saving={saving === "session"}
+        onSave={([v]) => void save("session", { sessionMinutes: v }, "Session length")}
+        onClose={() => setEditing(null)}
+      />
+      <OptionsSheet<Equipment>
+        visible={editing === "equipment"}
+        title="Equipment"
+        options={EQUIPMENT_OPTIONS}
+        value={profile.equipment ? [profile.equipment] : []}
+        saving={saving === "equipment"}
+        onSave={([v]) => void save("equipment", { equipment: v }, "Equipment")}
+        onClose={() => setEditing(null)}
+      />
+      <OptionsSheet<AvoidArea>
+        visible={editing === "avoid"}
+        title="Go easy on"
+        subtitle="Your plan avoids exercises that load these areas heavily. Leave all off if none."
+        options={AVOID_OPTIONS}
+        value={avoid}
+        multiple
+        saving={saving === "avoid"}
+        onSave={(v) => void save("avoid", { avoidAreas: v }, "Areas")}
+        onClose={() => setEditing(null)}
+      />
+      <HeightSheet
+        visible={editing === "height"}
+        value={profile.height ?? null}
+        fallback={HEIGHT.fallback}
+        saving={saving === "height"}
+        onSave={(v) => void save("height", { height: v }, "Height")}
+        onClose={() => setEditing(null)}
+      />
+      <NumberSheet
+        visible={editing === "age"}
+        title="Age"
+        subtitle="Helps your AI plan pick sensible volume and recovery."
+        label="Age"
+        value={profile.age ?? null}
+        fallback={AGE.fallback}
+        min={AGE.min}
+        max={AGE.max}
+        saving={saving === "age"}
+        onSave={(v) => void save("age", { age: v }, "Age")}
+        onClose={() => setEditing(null)}
+      />
+
+      <ExportSheet visible={exportOpen} onClose={() => setExportOpen(false)} displayName={profile.displayName ?? ""} />
+
+      <ConfirmDialog
+        visible={confirm === "logout"}
+        icon="logout"
+        title="Log out?"
+        message="Your workouts are saved to your account. Sign back in any time to pick up where you left off."
+        confirmLabel="Log out"
+        onConfirm={() => {
+          setConfirm(null);
+          void doLogout();
+        }}
+        onCancel={() => setConfirm(null)}
+      />
+      <ConfirmDialog
+        visible={confirm === "delete"}
+        destructive
+        title="Delete your account?"
+        message="This permanently deletes your profile, workouts, plans, body weights and achievements. It can't be undone. Export your data first if you want a copy."
+        confirmLabel="Delete account"
+        onConfirm={() => {
+          setConfirm(null);
+          void deleteAccount();
+        }}
+        onCancel={() => setConfirm(null)}
+      />
+
+      {/* Firebase asks for a recent sign-in before deleting (email accounts) */}
+      <Sheet
+        visible={reauthOpen}
+        onClose={
+          deleting
+            ? undefined
+            : () => {
+                setReauthOpen(false);
+                setPassword("");
+                setReauthError(null);
+              }
+        }
+        title="Confirm your password"
+        subtitle="For your security, sign in again before deleting this account."
+      >
+        <TextField label="Password" variant="password" value={password} onChangeText={setPassword} autoCapitalize="none" autoCorrect={false} error={reauthError} autoFocus />
+        <Button title="Delete account" icon="trash-outline" variant="dangerTonal" onPress={() => void reauthWithPassword()} loading={deleting} disabled={deleting || !password} fullWidth />
+      </Sheet>
 
       <EmailVerificationPrompt
         visible={showVerificationPrompt}
@@ -1810,141 +625,50 @@ export default function ProfileScreen() {
         onSkip={() => setShowVerificationPrompt(false)}
         onVerified={async () => {
           setShowVerificationPrompt(false);
-          if (user) {
-            await clearEmailVerificationStart(user.uid);
-          }
+          if (user) await clearEmailVerificationStart(user.uid);
           await loadVerificationStatus();
         }}
       />
-
-      <Modal
-        visible={showDeleteReauthentication}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowDeleteReauthentication(false)}
-      >
-        <View
-          style={{
-            flex: 1,
-            justifyContent: "center",
-            padding: spacing.lg,
-            backgroundColor: "rgba(0, 0, 0, 0.55)",
-          }}
-        >
-          <View
-            style={{
-              backgroundColor: colors.surface,
-              borderRadius: radius.lg,
-              padding: spacing.lg,
-            }}
-          >
-            <Text style={{ ...typography.h2, color: colors.textPrimary }}>
-              Confirm your password
-            </Text>
-            <Text
-              style={{
-                ...typography.body,
-                color: colors.textSecondary,
-                marginTop: spacing.xs,
-                marginBottom: spacing.md,
-              }}
-            >
-              For your security, sign in again before deleting this account.
-            </Text>
-            <TextInput
-              value={deletePassword}
-              onChangeText={setDeletePassword}
-              placeholder="Password"
-              placeholderTextColor={colors.textMuted}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={{
-                color: colors.textPrimary,
-                borderWidth: 1,
-                borderColor: colors.cardBorder,
-                borderRadius: radius.md,
-                paddingHorizontal: spacing.md,
-                paddingVertical: spacing.sm,
-                marginBottom: spacing.xs,
-              }}
-            />
-            {deleteError && (
-              <Text style={{ ...typography.caption, color: colors.error, marginBottom: spacing.sm }}>
-                {deleteError}
-              </Text>
-            )}
-            <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm }}>
-              <Pressable
-                onPress={() => {
-                  setShowDeleteReauthentication(false);
-                  setDeletePassword("");
-                  setDeleteError(null);
-                }}
-                disabled={isDeletingAccount}
-                style={{ padding: spacing.sm }}
-              >
-                <Text style={{ ...typography.bodyMedium, color: colors.textSecondary }}>
-                  Cancel
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={handleEmailReauthentication}
-                disabled={isDeletingAccount}
-                style={{
-                  paddingHorizontal: spacing.md,
-                  paddingVertical: spacing.sm,
-                  borderRadius: radius.md,
-                  backgroundColor: colors.error,
-                }}
-              >
-                {isDeletingAccount ? (
-                  <ActivityIndicator size="small" color={colors.onDanger} />
-                ) : (
-                  <Text style={{ ...typography.bodyMedium, color: colors.onDanger }}>
-                    Continue
-                  </Text>
-                )}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
-/* =========================
-   HELPER COMPONENTS
-   ========================= */
+/* ==============================
+   PIECES
+   ============================== */
 
-function InfoRow({
-  label,
-  value,
-  colors,
-  spacing,
-  typography,
-}: {
-  label: string;
-  value: string;
-  colors: any;
-  spacing: any;
-  typography: any;
-}) {
+/** kg / lb segmented switch; each half takes the tap across its box. */
+function UnitSwitch({ unit, onChange }: { unit: "kg" | "lbs"; onChange: (u: "kg" | "lbs") => void }) {
+  const { colors } = useTheme();
   return (
-    <View
-      style={{
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-      }}
-    >
-      <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-        {label}
-      </Text>
-      <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
-        {value}
-      </Text>
+    <View accessibilityRole="radiogroup" accessibilityLabel="Weight unit" style={{ flexDirection: "row", padding: spacing.xxs, borderRadius: radius.lg, backgroundColor: colors.surfaceContainerHigh }}>
+      {(["kg", "lbs"] as const).map((u) => {
+        const on = unit === u;
+        return (
+          <Pressable
+            key={u}
+            onPress={() => onChange(u)}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: on }}
+            accessibilityLabel={u === "kg" ? "Kilograms" : "Pounds"}
+            style={{ minWidth: size.control, minHeight: size.control - spacing.sm, paddingHorizontal: spacing.md, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: on ? colors.accent : "transparent" }}
+          >
+            <Text style={[typography.labelLg, { color: on ? colors.onAccent : colors.textSecondary }]}>{u === "kg" ? "kg" : "lb"}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function ProfileSkeleton() {
+  const { colors } = useTheme();
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing.screen, gap: spacing.xl }} accessibilityLabel="Loading profile">
+      <SkeletonBlock height={size.appBar} radius="lg" />
+      <SkeletonBlock height={size.goalCard * 1.8} radius="xl" />
+      <SkeletonBlock height={size.exerciseRow * 4} radius="xl" />
+      <SkeletonBlock height={size.exerciseRow * 3} radius="xl" />
     </View>
   );
 }

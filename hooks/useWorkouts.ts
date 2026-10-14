@@ -1,16 +1,36 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { workoutApi, Workout } from "../services/api";
-import { useToast } from "../context/ToastContext";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
+import { useToast } from "../context/ToastContext";
+import { workoutApi, type Workout } from "../services/api";
 import { ACHIEVEMENTS_KEY, useAchievementUnlockHandler } from "./useAchievements";
+import {
+  beginWorkoutDelete,
+  cancelWorkoutDelete,
+  finishWorkoutDelete,
+  hidePendingDeletes,
+  logWorkoutListResponse,
+  workoutKeys,
+} from "./workoutCache";
+
+export {
+  beginWorkoutDelete,
+  cancelWorkoutDelete,
+  finishWorkoutDelete,
+  workoutKeys,
+} from "./workoutCache";
 
 export function useAllWorkouts() {
   const { user } = useAuth();
 
   return useQuery({
-    queryKey: ["workouts", "all"],
-    queryFn: () => workoutApi.listAll(),
+    queryKey: workoutKeys.list(),
+    queryFn: async () => {
+      const rows = await workoutApi.listAll();
+      logWorkoutListResponse(rows);
+      return rows;
+    },
     enabled: !!user,
+    select: hidePendingDeletes,
   });
 }
 
@@ -23,7 +43,7 @@ export function useWorkoutStats() {
   const { user } = useAuth();
 
   return useQuery({
-    queryKey: ["workouts", "stats"],
+    queryKey: workoutKeys.stats(),
     queryFn: () => workoutApi.stats(),
     enabled: !!user,
   });
@@ -39,7 +59,7 @@ export function useWorkouts(params?: {
   const { user } = useAuth();
 
   return useQuery({
-    queryKey: ["workouts", params],
+    queryKey: workoutKeys.page(params),
     queryFn: () => workoutApi.list(params),
     enabled: !!user,
   });
@@ -49,7 +69,7 @@ export function useWorkout(id: string) {
   const { user } = useAuth();
 
   return useQuery({
-    queryKey: ["workout", id],
+    queryKey: workoutKeys.detail(id),
     queryFn: () => workoutApi.getById(id),
     enabled: !!id && !!user,
   });
@@ -63,9 +83,9 @@ export function useCreateWorkout() {
   return useMutation({
     mutationFn: workoutApi.create,
     onMutate: async (newWorkout) => {
-      await queryClient.cancelQueries({ queryKey: ["workouts"] });
+      await queryClient.cancelQueries({ queryKey: workoutKeys.all });
 
-      const previousAll = queryClient.getQueryData<Workout[]>(["workouts", "all"]);
+      const previousAll = queryClient.getQueryData<Workout[]>(workoutKeys.list());
 
       const optimistic: Workout = {
         id: `temp-${Date.now()}`,
@@ -86,17 +106,14 @@ export function useCreateWorkout() {
       };
 
       if (previousAll) {
-        queryClient.setQueryData<Workout[]>(
-          ["workouts", "all"],
-          [optimistic, ...previousAll],
-        );
+        queryClient.setQueryData<Workout[]>(workoutKeys.list(), [optimistic, ...previousAll]);
       }
 
       return { previousAll };
     },
     onError: (_err, _newWorkout, context) => {
       if (context?.previousAll) {
-        queryClient.setQueryData(["workouts", "all"], context.previousAll);
+        queryClient.setQueryData(workoutKeys.list(), context.previousAll);
       }
       showToast({ message: "Failed to save workout. Please try again.", type: "error" });
       queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
@@ -105,7 +122,7 @@ export function useCreateWorkout() {
       void handleUnlocks(result.newlyUnlocked);
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["workouts"] });
+      queryClient.invalidateQueries({ queryKey: workoutKeys.all });
     },
   });
 }
@@ -119,23 +136,20 @@ export function useUpdateWorkout() {
     mutationFn: ({ id, data }: { id: string; data: Parameters<typeof workoutApi.update>[1] }) =>
       workoutApi.update(id, data),
     onMutate: async ({ id, data }) => {
-      await queryClient.cancelQueries({ queryKey: ["workouts"] });
-      await queryClient.cancelQueries({ queryKey: ["workout", id] });
+      await queryClient.cancelQueries({ queryKey: workoutKeys.all });
 
-      const previousAll = queryClient.getQueryData<Workout[]>(["workouts", "all"]);
-      const previousOne = queryClient.getQueryData<Workout>(["workout", id]);
+      const previousAll = queryClient.getQueryData<Workout[]>(workoutKeys.list());
+      const previousOne = queryClient.getQueryData<Workout>(workoutKeys.detail(id));
 
       if (previousAll) {
         queryClient.setQueryData<Workout[]>(
-          ["workouts", "all"],
-          previousAll.map((w) =>
-            w.id === id ? { ...w, ...data, updatedAt: new Date().toISOString() } : w,
-          ),
+          workoutKeys.list(),
+          previousAll.map((w) => (w.id === id ? { ...w, ...data, updatedAt: new Date().toISOString() } : w)),
         );
       }
 
       if (previousOne) {
-        queryClient.setQueryData<Workout>(["workout", id], {
+        queryClient.setQueryData<Workout>(workoutKeys.detail(id), {
           ...previousOne,
           ...data,
           updatedAt: new Date().toISOString(),
@@ -146,10 +160,10 @@ export function useUpdateWorkout() {
     },
     onError: (_err, variables, context) => {
       if (context?.previousAll) {
-        queryClient.setQueryData(["workouts", "all"], context.previousAll);
+        queryClient.setQueryData(workoutKeys.list(), context.previousAll);
       }
       if (context?.previousOne) {
-        queryClient.setQueryData(["workout", variables.id], context.previousOne);
+        queryClient.setQueryData(workoutKeys.detail(variables.id), context.previousOne);
       }
       showToast({ message: "Failed to update workout. Changes reverted.", type: "error" });
       queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
@@ -157,9 +171,8 @@ export function useUpdateWorkout() {
     onSuccess: (result) => {
       void handleUnlocks(result.newlyUnlocked);
     },
-    onSettled: (_data, _err, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["workouts"] });
-      queryClient.invalidateQueries({ queryKey: ["workout", variables.id] });
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: workoutKeys.all });
     },
   });
 }
@@ -172,31 +185,17 @@ export function useDeleteWorkout() {
   return useMutation({
     mutationFn: workoutApi.delete,
     onMutate: async (deletedId) => {
-      await queryClient.cancelQueries({ queryKey: ["workouts"] });
-
-      const previousAll = queryClient.getQueryData<Workout[]>(["workouts", "all"]);
-
-      if (previousAll) {
-        queryClient.setQueryData<Workout[]>(
-          ["workouts", "all"],
-          previousAll.filter((w) => w.id !== deletedId),
-        );
-      }
-
-      return { previousAll };
+      await queryClient.cancelQueries({ queryKey: workoutKeys.all });
+      beginWorkoutDelete(queryClient, deletedId);
     },
-    onError: (_err, _deletedId, context) => {
-      if (context?.previousAll) {
-        queryClient.setQueryData(["workouts", "all"], context.previousAll);
-      }
+    onError: (_err, deletedId) => {
+      cancelWorkoutDelete(queryClient, deletedId);
       showToast({ message: "Failed to delete workout. Please try again.", type: "error" });
       queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
     },
-    onSuccess: (result) => {
+    onSuccess: (result, deletedId) => {
+      finishWorkoutDelete(queryClient, deletedId);
       void handleUnlocks(result.newlyUnlocked);
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["workouts"] });
     },
   });
 }

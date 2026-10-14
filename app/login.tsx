@@ -1,3 +1,4 @@
+import * as Haptics from "expo-haptics";
 import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
@@ -16,6 +17,7 @@ import {
   View,
 } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
+import { Reveal } from "../components/ui/Reveal";
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -23,28 +25,50 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import * as Haptics from "expo-haptics";
 import { useAuth } from "../auth/AuthContext";
-import { auth } from "../firebase/config";
-import { useTheme } from "../theme/theme";
-import { alpha, motion, radius, size, spacing, touchTarget, tracking, typography, withAlpha } from "../theme/tokens";
-import { ForgotPasswordModal } from "../components/ForgotPasswordModal";
-import { EmailVerificationPrompt } from "../components/EmailVerificationPrompt";
 import { EmailConfirmationModal } from "../components/EmailConfirmationModal";
-import { sendVerificationEmail } from "../utils/verificationService";
-import { userApi } from "../services/api";
-import { getVersionLabel } from "../utils/appVersion";
-import { Button, FadingMessage, GoogleLogo, PressableScale, TextField } from "../components/ui";
-import { getGoogleSignin, isGoogleSignInAvailable } from "../utils/googleSignin";
+import { EmailVerificationPrompt } from "../components/EmailVerificationPrompt";
+import { ForgotPasswordModal } from "../components/ForgotPasswordModal";
 import {
+  Button,
+  FadingMessage,
+  GoogleLogo,
+  PressableScale,
+  TextField,
+} from "../components/ui";
+import { auth } from "../firebase/config";
+import { userApi } from "../services/api";
+import { useTheme } from "../theme/theme";
+import {
+  alpha,
+  motion,
+  radius,
+  size,
+  spacing,
+  touchTarget,
+  tracking,
+  typography,
+  withAlpha,
+} from "../theme/tokens";
+import { getVersionLabel } from "../utils/appVersion";
+import {
+  getEmailValidationMessage,
+  sanitizeEmail,
   validateEmail,
   validatePasswordStrength,
-  sanitizeEmail,
-  getEmailValidationMessage,
 } from "../utils/emailPasswordValidation";
+import {
+  getGoogleSignin,
+  isGoogleSignInAvailable,
+} from "../utils/googleSignin";
+import {
+  getResendAvailableAt,
+  sendVerificationEmail,
+} from "../utils/verificationService";
 
 const APP_LOGO = require("../assets/images/icon.png");
-const PASSWORD_RULES = "At least 8 characters, with upper and lower case letters and a number.";
+const PASSWORD_RULES =
+  "At least 8 characters, with upper and lower case letters and a number.";
 
 export default function LoginScreen() {
   const { colors } = useTheme();
@@ -80,7 +104,9 @@ export default function LoginScreen() {
     string | null
   >(null);
   // Which button started the current request, so only that one shows a spinner.
-  const [pendingAction, setPendingAction] = useState<"email" | "google" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"email" | "google" | null>(
+    null,
+  );
   const submittingRef = useRef(false);
 
   /* Email input: errors clear on edit and come back on blur or submit; warnings stay live. */
@@ -91,7 +117,11 @@ export default function LoginScreen() {
 
     if (text.length > 5) {
       const validation = validateEmail(text);
-      setEmailValidationWarning(validation.isValid && validation.warnings.length > 0 ? validation.warnings[0] : null);
+      setEmailValidationWarning(
+        validation.isValid && validation.warnings.length > 0
+          ? validation.warnings[0]
+          : null,
+      );
     } else {
       setEmailValidationWarning(null);
     }
@@ -140,7 +170,10 @@ export default function LoginScreen() {
   }, [isSignup, switchMode]);
 
   /* One request at a time: ignores taps that land before the loading state re-renders. */
-  const runOnce = async (action: "email" | "google", task: () => Promise<void>) => {
+  const runOnce = async (
+    action: "email" | "google",
+    task: () => Promise<void>,
+  ) => {
     if (submittingRef.current) return;
     submittingRef.current = true;
     setPendingAction(action);
@@ -201,9 +234,7 @@ export default function LoginScreen() {
       if (!passwordValidation.isValid) {
         const errors = passwordValidation.errors.join(", ");
         setError(`Password is too weak: ${errors}`);
-        Haptics.notificationAsync(
-          Haptics.NotificationFeedbackType.Error
-        );
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         return;
       }
 
@@ -224,11 +255,7 @@ export default function LoginScreen() {
       const sanitizedEmail = sanitizeEmail(email);
 
       // Sign in with email/password
-      await signInWithEmailAndPassword(
-        auth,
-        sanitizedEmail,
-        password
-      );
+      await signInWithEmailAndPassword(auth, sanitizedEmail, password);
 
       const currentUser = auth.currentUser;
       if (currentUser && !currentUser.emailVerified) {
@@ -237,7 +264,7 @@ export default function LoginScreen() {
         if (!auth.currentUser?.emailVerified) {
           console.warn(
             "⚠️ User signed in but email not yet verified:",
-            sanitizedEmail
+            sanitizedEmail,
           );
           setAwaitingEmailVerification(true, auth.currentUser?.uid);
           setVerificationUser(auth.currentUser);
@@ -262,14 +289,16 @@ export default function LoginScreen() {
       let userMessage = "Authentication failed";
 
       if (err.code === "auth/email-already-in-use") {
-        userMessage = "This email is already registered. Try logging in instead.";
+        userMessage =
+          "This email is already registered. Try logging in instead.";
       } else if (err.code === "auth/invalid-email") {
         userMessage = "Invalid email address. Please check and try again.";
       } else if (err.code === "auth/weak-password") {
         userMessage =
           "Password too weak. Use at least 8 characters with uppercase, lowercase, and numbers.";
       } else if (err.code === "auth/user-not-found") {
-        userMessage = "No account found with this email. Create a new one instead.";
+        userMessage =
+          "No account found with this email. Create a new one instead.";
       } else if (err.code === "auth/wrong-password") {
         userMessage = "Incorrect password. Please try again.";
       } else if (err.code === "auth/invalid-credential") {
@@ -307,7 +336,7 @@ export default function LoginScreen() {
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         pendingSignupEmail,
-        pendingSignupPassword
+        pendingSignupPassword,
       );
 
       // Persist verification pending state so app restart doesn't bypass it
@@ -320,20 +349,22 @@ export default function LoginScreen() {
 
         // Show verification prompt
         setVerificationUser(userCredential.user);
-        console.log("🔐 Showing EmailVerificationPrompt for:", pendingSignupEmail);
+        console.log(
+          "🔐 Showing EmailVerificationPrompt for:",
+          pendingSignupEmail,
+        );
         setVerificationOrigin("signup");
         setShowEmailVerification(true);
         setError(null);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (verificationError: any) {
-        console.warn(
-          "Verification email send failed:",
-          verificationError
-        );
+        console.warn("Verification email send failed:", verificationError);
         // Still show verification prompt even if email send fails
         // User can resend from the prompt
         setVerificationUser(userCredential.user);
-        console.log("🔐 Showing EmailVerificationPrompt (resend will be available)");
+        console.log(
+          "🔐 Showing EmailVerificationPrompt (resend will be available)",
+        );
         setVerificationOrigin("signup");
         setShowEmailVerification(true);
         setError("Verification email may not have been sent. Click Resend.");
@@ -354,12 +385,21 @@ export default function LoginScreen() {
           await existingCredential.user.reload();
 
           if (!existingCredential.user.emailVerified) {
-            await setAwaitingEmailVerification(true, existingCredential.user.uid);
-            await sendVerificationEmail(existingCredential.user);
+            await setAwaitingEmailVerification(
+              true,
+              existingCredential.user.uid,
+            );
+            // Only re-send if this address is out of its cooldown; otherwise the
+            // earlier email is still valid and the inbox screen shows the wait.
+            if (!(await getResendAvailableAt(pendingSignupEmail))) {
+              await sendVerificationEmail(existingCredential.user).catch(() => {});
+            }
             setVerificationUser(existingCredential.user);
             setVerificationOrigin("signup");
             setShowEmailVerification(true);
-            setError("This account already exists and still needs email verification.");
+            setError(
+              "This account already exists and still needs email verification.",
+            );
             return;
           }
 
@@ -367,9 +407,10 @@ export default function LoginScreen() {
           setError("This account already existed, so you have been signed in.");
           return;
         } catch (existingAccountError: any) {
-          userMessage = existingAccountError.code === "auth/wrong-password"
-            ? "This email is already registered. Sign in with the correct password."
-            : "This email is already registered. Try logging in instead.";
+          userMessage =
+            existingAccountError.code === "auth/wrong-password"
+              ? "This email is already registered. Sign in with the correct password."
+              : "This email is already registered. Try logging in instead.";
           setIsSignup(false);
           setShowEmailConfirmation(false);
         }
@@ -409,18 +450,28 @@ export default function LoginScreen() {
       if (isSuccessResponse(response)) {
         const idToken = response.data.idToken;
         if (!idToken) {
-          setError("Google Sign-In failed — no token received. Please try again.");
+          setError(
+            "Google Sign-In failed — no token received. Please try again.",
+          );
           setLoading(false);
           return;
         }
         const credential = GoogleAuthProvider.credential(idToken);
-        await signInWithCredential(auth, credential);
+        const result = await signInWithCredential(auth, credential);
+        // Keep the server in step with Google: a link to Google's copy of the photo (no image is
+        // stored), refreshed on every Google sign-in so a changed photo carries over.
+        const photo = result.user.photoURL ?? response.data.user.photo ?? null;
+        void userApi
+          .updateProfile({ authProvider: "google", ...(photo ? { avatarUrl: photo } : {}) })
+          .catch((e) => console.warn("[login] Couldn't save the Google photo link:", e));
       }
     } catch (err: any) {
       if (err.code === statusCodes.SIGN_IN_CANCELLED) return;
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       if (err.code === "auth/account-exists-with-different-credential") {
-        setError("An account already exists with the same email but different sign-in credentials.");
+        setError(
+          "An account already exists with the same email but different sign-in credentials.",
+        );
       } else {
         console.error("Google Sign-In error:", err);
         setError("Google Sign-In failed. Please try again.");
@@ -435,7 +486,12 @@ export default function LoginScreen() {
   if ((user || authLoading) && !awaitingEmailVerification) {
     return (
       <View
-        style={{ flex: 1, backgroundColor: colors.bg, justifyContent: "center", alignItems: "center" }}
+        style={{
+          flex: 1,
+          backgroundColor: colors.bg,
+          justifyContent: "center",
+          alignItems: "center",
+        }}
         accessibilityLabel="Signing in"
       >
         <ActivityIndicator size="large" color={colors.accent} />
@@ -443,9 +499,13 @@ export default function LoginScreen() {
     );
   }
 
-  const passwordRuleError = isSignup && password ? validatePasswordStrength(password).errors[0] : undefined;
+  const passwordRuleError =
+    isSignup && password
+      ? validatePasswordStrength(password).errors[0]
+      : undefined;
   const passwordHelper = isSignup
-    ? passwordRuleError ?? (password ? "Password meets the requirements." : PASSWORD_RULES)
+    ? (passwordRuleError ??
+      (password ? "Password meets the requirements." : PASSWORD_RULES))
     : undefined;
   const subtle = withAlpha(colors.textSecondary, alpha.muted);
   const busy = loading || pendingAction !== null;
@@ -453,20 +513,35 @@ export default function LoginScreen() {
   const onGoogle = () => runOnce("google", handleGoogleSignIn);
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top, paddingBottom: insets.bottom }}>
-        <KeyboardAwareScrollView
-          contentContainerStyle={{ flexGrow: 1, paddingHorizontal: spacing.screen }}
-          bottomOffset={size.keyboardClearance}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: colors.bg,
+        paddingTop: insets.top,
+        paddingBottom: insets.bottom,
+      }}
+    >
+      <KeyboardAwareScrollView
+        contentContainerStyle={{
+          flexGrow: 1,
+          paddingHorizontal: spacing.screen,
+        }}
+        bottomOffset={size.keyboardClearance}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
+        <Pressable
+          onPress={Keyboard.dismiss}
+          accessible={false}
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            paddingVertical: spacing.xl,
+          }}
         >
-          <Pressable
-            onPress={Keyboard.dismiss}
-            accessible={false}
-            style={{ flex: 1, justifyContent: "center", paddingVertical: spacing.xl }}
-          >
           <Animated.View style={modeStyle}>
             {/* Header */}
+            <Reveal index={0}>
             <View style={{ alignItems: "center", marginBottom: spacing.xxl }}>
               <View
                 style={{
@@ -502,14 +577,25 @@ export default function LoginScreen() {
               >
                 Iron Arc
               </Text>
-              <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center", maxWidth: size.textNarrow }]}>
+              <Text
+                style={[
+                  typography.bodyMd,
+                  {
+                    color: colors.textSecondary,
+                    textAlign: "center",
+                    maxWidth: size.textNarrow,
+                  },
+                ]}
+              >
                 {isSignup
                   ? "Begin your training log.\nCreate your account."
-                  : "Welcome back.\nSign in to your training log."}
+                  : "Welcome back \nSign in to your training log"}
               </Text>
             </View>
+            </Reveal>
 
             {/* Form */}
+            <Reveal index={1}>
             <View style={{ gap: spacing.form }}>
               <TextField
                 onBlur={handleEmailBlur}
@@ -517,7 +603,7 @@ export default function LoginScreen() {
                 labelHint="Required"
                 value={email}
                 onChangeText={handleEmailChange}
-                placeholder="you@example.com"
+                placeholder="you@gmail.com"
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -546,23 +632,50 @@ export default function LoginScreen() {
                   helperText={passwordHelper}
                 />
                 {/* Fixed-height row: the sign-in error fades in on the left without moving anything. */}
-                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.md }}>
-                  <FadingMessage message={error} color={colors.danger} reserveLines={2} live style={{ flex: 1 }} />
-                {!isSignup && (
-                  <PressableScale
-                    onPress={() => setShowForgotPassword(true)}
-                    hitSlop={{ top: (touchTarget - size.linkMin) / 2, bottom: (touchTarget - size.linkMin) / 2 }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Forgot password"
-                    style={{ minHeight: size.linkMin, justifyContent: "center" }}
-                  >
-                    {({ pressed }) => (
-                      <Text style={[typography.labelMd, { color: pressed ? colors.text : colors.textSecondary }]}>
-                        Forgot password?
-                      </Text>
-                    )}
-                  </PressableScale>
-                )}
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "flex-start",
+                    gap: spacing.md,
+                  }}
+                >
+                  <FadingMessage
+                    message={error}
+                    color={colors.danger}
+                    reserveLines={2}
+                    live
+                    style={{ flex: 1 }}
+                  />
+                  {!isSignup && (
+                    <PressableScale
+                      onPress={() => setShowForgotPassword(true)}
+                      hitSlop={{
+                        top: (touchTarget - size.linkMin) / 2,
+                        bottom: (touchTarget - size.linkMin) / 2,
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Forgot password"
+                      style={{
+                        minHeight: size.linkMin,
+                        justifyContent: "center",
+                      }}
+                    >
+                      {({ pressed }) => (
+                        <Text
+                          style={[
+                            typography.labelMd,
+                            {
+                              color: pressed
+                                ? colors.text
+                                : colors.textSecondary,
+                            },
+                          ]}
+                        >
+                          Forgot password?
+                        </Text>
+                      )}
+                    </PressableScale>
+                  )}
                 </View>
               </View>
 
@@ -581,11 +694,22 @@ export default function LoginScreen() {
               {googleAvailable ? (
                 <View style={{ gap: spacing.form }}>
                   <View
-                    style={{ flexDirection: "row", alignItems: "center", gap: spacing.lg, marginVertical: spacing.sm }}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: spacing.lg,
+                      marginVertical: spacing.sm,
+                    }}
                     importantForAccessibility="no-hide-descendants"
                     accessibilityElementsHidden
                   >
-                    <View style={{ flex: 1, height: size.divider, backgroundColor: colors.surfaceContainerHigh }} />
+                    <View
+                      style={{
+                        flex: 1,
+                        height: size.divider,
+                        backgroundColor: colors.surfaceContainerHigh,
+                      }}
+                    />
                     <Text
                       style={[
                         typography.labelSm,
@@ -598,7 +722,13 @@ export default function LoginScreen() {
                     >
                       or
                     </Text>
-                    <View style={{ flex: 1, height: size.divider, backgroundColor: colors.surfaceContainerHigh }} />
+                    <View
+                      style={{
+                        flex: 1,
+                        height: size.divider,
+                        backgroundColor: colors.surfaceContainerHigh,
+                      }}
+                    />
                   </View>
                   <Button
                     title="Continue with Google"
@@ -612,13 +742,20 @@ export default function LoginScreen() {
                   />
                 </View>
               ) : (
-                <Text style={[typography.labelSm, { color: colors.textSecondary, textAlign: "center" }]}>
+                <Text
+                  style={[
+                    typography.labelSm,
+                    { color: colors.textSecondary, textAlign: "center" },
+                  ]}
+                >
                   Google sign-in isn&apos;t available in this preview.
                 </Text>
               )}
             </View>
+            </Reveal>
 
             {/* Mode switch */}
+            <Reveal index={2}>
             <View
               style={{
                 marginTop: spacing.xxl,
@@ -630,36 +767,52 @@ export default function LoginScreen() {
                 gap: spacing.inline,
               }}
             >
-              <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
-                {isSignup ? "Already have an account?" : "Don't have an account?"}
+              <Text
+                style={[typography.bodyMd, { color: colors.textSecondary }]}
+              >
+                {isSignup
+                  ? "Already have an account?"
+                  : "Don't have an account?"}
               </Text>
               <PressableScale
                 onPress={() => switchMode(!isSignup)}
                 accessibilityRole="button"
-                accessibilityLabel={isSignup ? "Sign in instead" : "Create account"}
+                accessibilityLabel={
+                  isSignup ? "Sign in instead" : "Create account"
+                }
                 disabled={busy}
-                style={{ minHeight: touchTarget, justifyContent: "center", paddingHorizontal: spacing.xs }}
+                style={{
+                  minHeight: touchTarget,
+                  justifyContent: "center",
+                  paddingHorizontal: spacing.xs,
+                }}
               >
                 {({ pressed }) => (
-                  <Text style={[typography.bodyMdMedium, { color: pressed ? colors.accentPressed : colors.accent }]}>
+                  <Text
+                    style={[
+                      typography.bodyMdMedium,
+                      { color: pressed ? colors.accentPressed : colors.accent },
+                    ]}
+                  >
                     {isSignup ? "Sign in" : "Create account"}
                   </Text>
                 )}
               </PressableScale>
             </View>
+            </Reveal>
           </Animated.View>
-          </Pressable>
+        </Pressable>
 
-          {/* Footer */}
-          <Text
-            style={[
-              typography.labelSm,
-              { color: subtle, textAlign: "center", paddingBottom: spacing.md },
-            ]}
-          >
-            Designed & built by Pushpanath · {getVersionLabel()}
-          </Text>
-        </KeyboardAwareScrollView>
+        {/* Footer */}
+        <Text
+          style={[
+            typography.labelSm,
+            { color: subtle, textAlign: "center", paddingBottom: spacing.md },
+          ]}
+        >
+          Designed & built by Pushpanath · {getVersionLabel()}
+        </Text>
+      </KeyboardAwareScrollView>
 
       {/* Forgot Password Modal */}
       <ForgotPasswordModal

@@ -1,34 +1,30 @@
 /**
- * Full-screen email verification: resend (with cooldown), change email,
- * "I've verified", and an optional sign-out.
+ * Full-screen email verification: resend (one persisted cooldown per email),
+ * change email, "I've verified", and an optional sign-out.
  */
 
 import { Ionicons } from "@expo/vector-icons";
-import { User, verifyBeforeUpdateEmail } from "firebase/auth";
-import { StatusBar } from "expo-status-bar";
-import { useEffect, useRef, useState } from "react";
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useTheme } from "../theme/theme";
-import { radius, spacing, touchTarget, typography, semibold } from "../theme/tokens";
-import { Button, Card, TextField } from "./ui";
 import * as Haptics from "expo-haptics";
+import { StatusBar } from "expo-status-bar";
+import { User, verifyBeforeUpdateEmail } from "firebase/auth";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Alert, Modal, Pressable, Text, View } from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { verificationMessages } from "../constants/verificationMessages";
+import { auth } from "../firebase/config";
+import { useTheme } from "../theme/theme";
+import { radius, semibold, size, spacing, touchTarget, typography } from "../theme/tokens";
 import {
-  canResendVerificationEmail,
+  extendResendCooldown,
+  getResendAvailableAt,
+  logVerificationError,
+  NoSignedInUserError,
+  recordVerificationSend,
   sendVerificationEmail,
   syncVerificationStatus,
-  updateVerificationMeta,
 } from "../utils/verificationService";
+import { Button, Card, TextField } from "./ui";
 
 interface EmailVerificationPromptProps {
   visible: boolean;
@@ -41,6 +37,10 @@ interface EmailVerificationPromptProps {
   onSignOut?: () => void | Promise<void>;
 }
 
+type Notice = { tone: "info" | "success" | "error"; text: string } | null;
+
+const formatWait = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+
 export function EmailVerificationPrompt({
   visible,
   user,
@@ -52,39 +52,41 @@ export function EmailVerificationPrompt({
 }: EmailVerificationPromptProps) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  const [cooldownTotal, setCooldownTotal] = useState(60);
   const [signingOut, setSigningOut] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [resent, setResent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
   const [showChangeEmail, setShowChangeEmail] = useState(false);
   const [newEmail, setNewEmail] = useState(user?.email || "");
   const [changeEmailLoading, setChangeEmailLoading] = useState(false);
-  const [lastResendTime, setLastResendTime] = useState<number>(0);
-  const [resendCooldown, setResendCooldown] = useState(0);
   const [checkingVerification, setCheckingVerification] = useState(false);
-  const verificationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
+  // Epoch ms when Resend unlocks; derived from storage so it survives remounts and restarts.
+  const [resendAvailableAt, setResendAvailableAt] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const verificationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const verificationDelayIndexRef = useRef(0);
 
-  // Remember the starting length of each cooldown so the progress bar can scale.
-  const previousCooldown = useRef(0);
+  const email = user?.email ?? "";
+
+  const refreshCooldown = useCallback(async () => {
+    if (!email) return;
+    setResendAvailableAt(await getResendAvailableAt(email));
+    setNow(Date.now());
+  }, [email]);
+
+  // Load the persisted cooldown whenever the screen opens; never show an error on entry.
   useEffect(() => {
-    if (resendCooldown > previousCooldown.current) setCooldownTotal(resendCooldown);
-    previousCooldown.current = resendCooldown;
-  }, [resendCooldown]);
+    if (!visible) return;
+    setNotice(null);
+    void refreshCooldown();
+  }, [visible, refreshCooldown]);
 
-  // Cooldown timer for resend button
+  const remaining = Math.max(0, Math.ceil((resendAvailableAt - now) / 1000));
+
   useEffect(() => {
-    if (resendCooldown <= 0) return;
-
-    const timer = setTimeout(() => {
-      setResendCooldown(resendCooldown - 1);
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [resendCooldown]);
+    if (remaining <= 0) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [remaining]);
 
   // Auto-check verification status while prompt is visible
   useEffect(() => {
@@ -123,10 +125,7 @@ export function EmailVerificationPrompt({
           // Silent - network hiccup or transient auth error
         }
 
-        verificationDelayIndexRef.current = Math.min(
-          verificationDelayIndexRef.current + 1,
-          delays.length - 1,
-        );
+        verificationDelayIndexRef.current = Math.min(verificationDelayIndexRef.current + 1, delays.length - 1);
         scheduleNextCheck();
       }, delays[verificationDelayIndexRef.current]);
     };
@@ -139,111 +138,73 @@ export function EmailVerificationPrompt({
   }, [visible, user, onVerified]);
 
   const handleResendEmail = async () => {
-    if (!user) return;
+    if (!user || sending || remaining > 0) return;
 
-    const now = Date.now();
-    const timeSinceLastResend = now - lastResendTime;
-
-    // Client-side cooldown (60s)
-    if (timeSinceLastResend < 60 * 1000) {
-      const secondsRemaining = Math.ceil(
-        (60 * 1000 - timeSinceLastResend) / 1000,
-      );
-      setResendCooldown(secondsRemaining);
-      setError(verificationMessages.resendCooldown);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      return;
-    }
-
-    // Firestore-side cooldown (2 minutes)
-    const resendCheck = await canResendVerificationEmail(user.uid);
-    if (!resendCheck.allowed) {
-      setResendCooldown(resendCheck.waitSeconds);
-      setError(verificationMessages.resendRecent);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    if (!auth.currentUser) {
+      setNotice({ tone: "error", text: "You've been signed out. Sign in again to resend the email." });
       return;
     }
 
     try {
-      setLoading(true);
-      setError(null);
-      setResent(false);
-
+      setSending(true);
+      setNotice(null);
       await sendVerificationEmail(user);
-
-      setLastResendTime(now);
-      setResendCooldown(60);
-      setResent(true);
-      console.log("✅ Verification email resent to:", user.email);
-
+      setNotice({ tone: "success", text: `Sent again to ${email}. Check spam too.` });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       onResendSuccess?.();
     } catch (err: any) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      console.error("Resend verification error:", err);
-      let message = verificationMessages.resendFailed;
-
-      if (err.code === "auth/too-many-requests") {
-        message = verificationMessages.resendRecent;
-        setResendCooldown(120);
-        setLastResendTime(now);
-      } else if (err.message) {
-        message = err.message;
+      if (err instanceof NoSignedInUserError) {
+        setNotice({ tone: "error", text: "You've been signed out. Sign in again to resend the email." });
+      } else if (err?.code === "auth/too-many-requests") {
+        await extendResendCooldown(email);
+        setNotice({ tone: "info", text: "Too many requests. Try again in a few minutes." });
+      } else {
+        setNotice({ tone: "error", text: verificationMessages.resendFailed });
       }
-
-      setError(message);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     } finally {
-      setLoading(false);
+      await refreshCooldown();
+      setSending(false);
     }
   };
 
   const handleChangeEmail = async () => {
     if (!user) {
-      setError("User not authenticated");
+      setNotice({ tone: "error", text: "You've been signed out. Sign in again to change your email." });
       return;
     }
 
     if (!newEmail.trim()) {
-      setError("Please enter a new email address");
+      setNotice({ tone: "error", text: "Please enter a new email address" });
       return;
     }
 
     if (newEmail.trim() === user.email) {
-      setError("New email must be different from current email");
+      setNotice({ tone: "error", text: "New email must be different from current email" });
       return;
     }
 
     try {
       setChangeEmailLoading(true);
-      setError(null);
+      setNotice(null);
 
       // Send verification link to the new email before updating
       await verifyBeforeUpdateEmail(user, newEmail.trim());
-      await updateVerificationMeta(user.uid, {
-        isEmailVerified: false,
-        verificationSentAt: Date.now(),
-      });
-
-      setLastResendTime(Date.now());
-      setResendCooldown(60);
+      await recordVerificationSend(newEmail.trim());
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(
-        "Email Updated",
-        verificationMessages.changeEmailSuccess,
-        [
-          {
-            text: "OK",
-            onPress: () => {
-              setShowChangeEmail(false);
-              setNewEmail(user?.email || "");
-            },
+      Alert.alert("Email Updated", verificationMessages.changeEmailSuccess, [
+        {
+          text: "OK",
+          onPress: () => {
+            setShowChangeEmail(false);
+            setNewEmail(user?.email || "");
           },
-        ]
-      );
+        },
+      ]);
     } catch (err: any) {
+      logVerificationError("change email", err);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      console.error("Failed to change email:", err);
 
       let userMessage = "Failed to change email. Please try again.";
       if (err.code === "auth/email-already-in-use") {
@@ -254,11 +215,11 @@ export function EmailVerificationPrompt({
         userMessage = verificationMessages.verifyExpired;
       } else if (err.code === "auth/requires-recent-login") {
         userMessage = verificationMessages.changeEmailRequiresRecentLogin;
-      } else if (err.message) {
-        userMessage = err.message;
+      } else if (err.code === "auth/too-many-requests") {
+        userMessage = "Too many requests. Try again in a few minutes.";
       }
 
-      setError(userMessage);
+      setNotice({ tone: "error", text: userMessage });
     } finally {
       setChangeEmailLoading(false);
     }
@@ -268,25 +229,23 @@ export function EmailVerificationPrompt({
     if (!user) return;
     try {
       setCheckingVerification(true);
-      setError(null);
-      const synced = await syncVerificationStatus(user);
-      if (synced || user.emailVerified) {
+      setNotice(null);
+      await user.reload();
+      if (user.emailVerified) {
+        await syncVerificationStatus(user);
         onVerified?.();
       } else {
-        setError(verificationMessages.verifyExpired);
+        setNotice({ tone: "info", text: "Not verified yet. Open the link in the email first." });
       }
-        } catch {
-      setError(verificationMessages.verifyCheckFailed);
+    } catch (err) {
+      logVerificationError("verify check", err);
+      setNotice({ tone: "error", text: verificationMessages.verifyCheckFailed });
     } finally {
       setCheckingVerification(false);
     }
   };
 
   if (!user) return null;
-
-  const coolingDown = resendCooldown > 0;
-  const mm = String(Math.floor(resendCooldown / 60)).padStart(2, "0");
-  const ss = String(resendCooldown % 60).padStart(2, "0");
 
   const handleSignOut = async () => {
     if (!onSignOut) return;
@@ -298,6 +257,11 @@ export function EmailVerificationPrompt({
     }
   };
 
+  const noticeColor =
+    notice?.tone === "error" ? colors.danger : notice?.tone === "success" ? colors.accent : colors.textSecondary;
+  const noticeIcon =
+    notice?.tone === "error" ? "alert-circle-outline" : notice?.tone === "success" ? "checkmark-circle-outline" : "time-outline";
+
   return (
     <Modal
       visible={visible}
@@ -307,150 +271,94 @@ export function EmailVerificationPrompt({
       onRequestClose={dismissible ? onSkip : () => {}}
     >
       <StatusBar style={isDark ? "light" : "dark"} />
-      <KeyboardAvoidingView
-        style={{ flex: 1, backgroundColor: colors.bg }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-      >
-        <ScrollView
+      <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top, paddingBottom: insets.bottom }}>
+        <KeyboardAwareScrollView
           contentContainerStyle={{
             flexGrow: 1,
-            paddingHorizontal: spacing.lg,
-            paddingTop: insets.top + spacing.lg,
-            paddingBottom: insets.bottom + spacing.xl,
+            justifyContent: "center",
+            paddingHorizontal: spacing.screen,
+            paddingVertical: spacing.xl,
             gap: spacing.lg,
           }}
+          bottomOffset={size.keyboardClearance}
           keyboardShouldPersistTaps="handled"
         >
-          {dismissible ? (
+          {dismissible && (
             <Pressable
               onPress={onSkip}
               accessibilityRole="button"
               accessibilityLabel="Close"
               style={{ alignSelf: "flex-end", width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center" }}
             >
-              <Ionicons name="close" size={24} color={colors.textSecondary} />
+              <Ionicons name="close" size={size.icon} color={colors.textSecondary} />
             </Pressable>
-          ) : (
-            <View style={{ height: spacing.xl }} />
           )}
 
           {/* Header */}
-          <View style={{ alignItems: "center", gap: spacing.md }}>
+          <View style={{ alignItems: "center", gap: spacing.md, marginBottom: spacing.lg }}>
             <View
               style={{
-                width: 64,
-                height: 64,
+                width: size.logoTile,
+                height: size.logoTile,
                 borderRadius: radius.xl,
                 backgroundColor: colors.raised,
-                borderWidth: 1,
-                borderColor: colors.border,
                 alignItems: "center",
                 justifyContent: "center",
               }}
               accessibilityElementsHidden
               importantForAccessibility="no-hide-descendants"
             >
-              <Ionicons name="mail-unread-outline" size={30} color={colors.accent} />
+              <Ionicons name="mail-unread-outline" size={size.logoMark} color={colors.accent} />
             </View>
             <Text accessibilityRole="header" style={[typography.headlineLg, { color: colors.text, textAlign: "center" }]}>
               Check your inbox
             </Text>
-            <Text style={[typography.bodyLg, { color: colors.textSecondary, textAlign: "center", maxWidth: 340 }]}>
-              We sent a verification link to{" "}
-              <Text style={{ color: colors.text, ...semibold }}>{user.email}</Text>. Tap the link in the email to
-              verify your account.
+            <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center", maxWidth: size.textNarrow }]}>
+              We sent a verification link to{"\n"}
+              <Text style={{ color: colors.text, ...semibold }}>{email}</Text>
+              {"\n"}Tap the link in the email to verify your account.
             </Text>
           </View>
 
-          {resent && (
-            <View
-              accessibilityLiveRegion="polite"
-              style={{ flexDirection: "row", gap: spacing.sm, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.accentSubtle }}
-            >
-              <Ionicons name="checkmark-circle" size={20} color={colors.accent} />
-              <Text style={[typography.bodyMd, { color: colors.text, flex: 1 }]}>
-                Verification email sent. Check your inbox.
-              </Text>
-            </View>
-          )}
-
-          {error && (
-            <View
-              accessibilityLiveRegion="polite"
-              style={{
-                flexDirection: "row",
-                gap: spacing.sm,
-                padding: spacing.md,
-                borderRadius: radius.lg,
-                backgroundColor: colors.dangerSubtle,
-                borderWidth: 1,
-                borderColor: colors.danger,
-              }}
-            >
-              <Ionicons name="alert-circle" size={20} color={colors.danger} />
-              <Text style={[typography.bodyMd, { color: colors.text, flex: 1 }]}>{error}</Text>
-            </View>
-          )}
-
-          {/* Resend */}
-          <Card style={{ gap: spacing.md }}>
-            {coolingDown && (
-              <View style={{ gap: spacing.sm }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                  <Ionicons name="timer-outline" size={18} color={colors.textSecondary} />
-                  <Text style={[typography.bodyMd, { color: colors.textSecondary, flex: 1 }]}>
-                    You can resend soon
-                  </Text>
-                  <Text
-                    style={[typography.bodyLg, { color: colors.accent, ...semibold, fontVariant: ["tabular-nums"] }]}
-                    accessibilityLabel={`${resendCooldown} seconds`}
-                  >
-                    {mm}:{ss}
-                  </Text>
-                </View>
-                <View
-                  style={{ height: 4, borderRadius: radius.full, backgroundColor: colors.border, overflow: "hidden" }}
-                  accessibilityElementsHidden
-                  importantForAccessibility="no-hide-descendants"
-                >
-                  <View
-                    style={{
-                      height: 4,
-                      width: `${Math.min(100, (resendCooldown / Math.max(cooldownTotal, 1)) * 100)}%`,
-                      backgroundColor: colors.accent,
-                    }}
-                  />
-                </View>
-              </View>
-            )}
-            <Button
-              title={loading ? "Sending…" : coolingDown ? `Resend email in ${resendCooldown}s` : "Resend email"}
-              icon="refresh"
-              variant="secondary"
-              onPress={handleResendEmail}
-              loading={loading}
-              disabled={loading || coolingDown}
-              fullWidth
-            />
-          </Card>
-
           <Button
             title="I've verified"
-            icon="checkmark-circle-outline"
+            uppercase
+            haptic
             onPress={handleIHaveVerified}
             loading={checkingVerification}
-            disabled={loading || checkingVerification}
+            disabled={sending || checkingVerification}
             fullWidth
           />
 
+          <View style={{ gap: spacing.sm }}>
+            <Button
+              title={remaining > 0 ? `Resend in ${formatWait(remaining)}` : "Resend email"}
+              icon="refresh"
+              variant="tonal"
+              onPress={handleResendEmail}
+              loading={sending}
+              disabled={sending || remaining > 0}
+              accessibilityLabel={remaining > 0 ? `Resend available in ${remaining} seconds` : "Resend email"}
+              fullWidth
+            />
+            {notice && (
+              <View accessibilityLiveRegion="polite" style={{ flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" }}>
+                <Ionicons name={noticeIcon} size={16} color={noticeColor} style={{ marginTop: 2 }} />
+                <Text style={[typography.bodyMd, { color: notice.tone === "error" ? colors.danger : colors.textSecondary, flex: 1 }]}>
+                  {notice.text}
+                </Text>
+              </View>
+            )}
+          </View>
+
           <Button
             title={showChangeEmail ? "Cancel email change" : "Use a different email address"}
-            variant="secondary"
+            variant="tonal"
             onPress={() => {
               setShowChangeEmail(!showChangeEmail);
-              setError(null);
+              setNotice(null);
             }}
-            disabled={loading}
+            disabled={sending}
             fullWidth
           />
 
@@ -472,7 +380,7 @@ export function EmailVerificationPrompt({
                 helperText="We'll send a new verification link to this address."
               />
               <Button
-                title={changeEmailLoading ? "Updating…" : "Send link to new email"}
+                title="Send link to new email"
                 icon="send-outline"
                 onPress={handleChangeEmail}
                 loading={changeEmailLoading}
@@ -496,18 +404,16 @@ export function EmailVerificationPrompt({
 
           {/* Help */}
           <Card style={{ flexDirection: "row", gap: spacing.md }}>
-            <Ionicons name="help-circle-outline" size={22} color={colors.textSecondary} />
+            <Ionicons name="help-circle-outline" size={size.icon} color={colors.textSecondary} />
             <View style={{ flex: 1 }}>
-              <Text style={[typography.bodyMd, { color: colors.text, ...semibold }]}>
-                Didn&apos;t get the email?
-              </Text>
+              <Text style={[typography.bodyMdMedium, { color: colors.text }]}>Didn&apos;t get the email?</Text>
               <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
                 Check your spam or junk folder, or resend it above.
               </Text>
             </View>
           </Card>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </KeyboardAwareScrollView>
+      </View>
     </Modal>
   );
 }

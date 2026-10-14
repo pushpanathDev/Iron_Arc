@@ -1,943 +1,398 @@
-import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  Text,
-  View,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, {
-  FadeInDown,
-  FadeInUp,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from "react-native-reanimated";
-
-import { useAuth } from "../../auth/AuthContext";
-import { WorkoutCalendar } from "../../components/ui/WorkoutCalendar";
-import { WorkoutDaySummary } from "../../components/ui/WorkoutDaySummary";
+import { MaterialIcons } from "@expo/vector-icons";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAllWorkouts } from "../../hooks/useWorkouts";
-import { ACHIEVEMENTS_KEY, useAchievementUnlockHandler } from "../../hooks/useAchievements";
+import { router, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { useAuth } from "../../auth/AuthContext";
+import { ExportSheet } from "../../components/ExportSheet";
+import { MonthCalendar } from "../../components/history/MonthCalendar";
+import { SessionCard, sessionTitle } from "../../components/history/SessionCard";
+import { Avatar } from "../../components/ui/Avatar";
+import { Button } from "../../components/ui/Button";
+import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
+import { FilterChip } from "../../components/ui/FilterChip";
+import { Reveal } from "../../components/ui/Reveal";
+import { SkeletonBlock } from "../../components/ui/Skeleton";
+import { useToast } from "../../context/ToastContext";
+import { displayCategory } from "../../hooks/logSession";
+import { useAchievementUnlockHandler } from "../../hooks/useAchievements";
+import { useProfile } from "../../hooks/useProfile";
+import { useStartPlanSession } from "../../hooks/useStartPlanSession";
 import { useUnitPreference } from "../../hooks/useUnitPreference";
-import { ApiError, Workout, workoutApi } from "../../services/api";
+import { groupSessions, type SessionGroup } from "../../hooks/useWorkoutSummary";
+import { useAllWorkouts, workoutKeys } from "../../hooks/useWorkouts";
+import { isPendingDelete } from "../../hooks/workoutCache";
+import { scheduleWorkoutDelete, UNDO_WINDOW_MS, undoWorkoutDelete } from "../../hooks/workoutDeleteQueue";
 import { useTheme } from "../../theme/theme";
+import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
+import { getInitials } from "../../utils/avatar";
+import { exerciseIndexFor, exerciseKey, prExerciseDays } from "../../utils/exerciseHistory";
 import { createPageLogger } from "../../utils/logger";
-import { displayWeight, weightLabel } from "../../utils/unitConversion";
-import { formatDate } from "../../utils/weekUtils";
+import { perfStart } from "../../utils/perf";
+import { formatDate, parseLocalDate } from "../../utils/weekUtils";
 
 const log = createPageLogger("History");
+const DAY_MS = 86_400_000;
+const NO_WORKOUTS: never[] = [];
 
-const SWIPE_THRESHOLD = -60;
-const DELETE_WIDTH = 80;
-const SWIPE_ACTIVE_OFFSET = 12;
-const SWIPE_FAIL_OFFSET_Y = 8;
+const monthKeyOf = (d: Date) => formatDate(new Date(d.getFullYear(), d.getMonth(), 1)).slice(0, 7);
+const sessionKey = (g: SessionGroup) => `${g.date}-${g.list[0].id}`;
 
-type ViewMode = "calendar" | "list";
+/* ==============================
+   HISTORY
+   ============================== */
 
 export default function History() {
-  const { colors, spacing, radius, typography, shadows } = useTheme();
+  const { colors } = useTheme();
   const { user } = useAuth();
-  const insets = useSafeAreaInsets();
-
+  const { data: profile } = useProfile();
+  const params = useLocalSearchParams<{ date?: string }>();
   const { data: rawWorkouts, isLoading, refetch } = useAllWorkouts();
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const handleUnlocks = useAchievementUnlockHandler();
+  const startSession = useStartPlanSession();
   const { unit } = useUnitPreference();
 
-  // Workouts awaiting their deferred server delete. They are hidden rather
-  // than removed from the cache, so a refetch during the undo window cannot
-  // bring them back, and each has its own timer.
-  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(() => new Set());
-  const deleteTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const workouts = rawWorkouts ?? NO_WORKOUTS;
+  const todayKey = formatDate(new Date());
 
-  const workouts = useMemo(
-    () => (rawWorkouts ?? []).filter((w) => !pendingDeleteIds.has(w.id)),
-    [rawWorkouts, pendingDeleteIds],
-  );
-
-  const [deletedWorkout, setDeletedWorkout] = useState<Workout | null>(null);
+  const [month, setMonth] = useState(() => new Date());
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [category, setCategory] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  // Swiped session awaiting confirmation (and how to snap its card back).
+  const [confirm, setConfirm] = useState<{ group: SessionGroup; close: () => void } | null>(null);
 
-  // Calendar state
-  const [viewMode, setViewMode] = useState<ViewMode>("calendar");
-  const [selectedDate, setSelectedDate] = useState<string | null>(
-    formatDate(new Date()),
-  );
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-
-  // Calculate total stats
-  const totalSets = workouts.reduce((acc, w) => acc + (w.sets?.length || 0), 0);
-  const totalVolumeKg = workouts.reduce((acc, w) => {
-    return (
-      acc + (w.sets?.reduce((s, set) => s + set.weight * set.reps, 0) || 0)
-    );
-  }, 0);
-  const totalVolume = displayWeight(totalVolumeKg, unit);
-
-  // Get all workout dates for calendar indicators
-  const workoutDates = useMemo(() => {
-    return [...new Set(workouts.map((w) => w.date))];
+  /* ---------- data ---------- */
+  const groups = useMemo(() => groupSessions(workouts), [workouts]);
+  const trainedDays = useMemo(() => new Set(workouts.map((w) => w.date.slice(0, 10))), [workouts]);
+  const prWorkoutIds = useMemo(() => {
+    const days = prExerciseDays(exerciseIndexFor(workouts).index);
+    return new Set(workouts.filter((w) => days.has(`${exerciseKey(w.exercise)}|${w.date.slice(0, 10)}`)).map((w) => w.id));
   }, [workouts]);
 
-  // Get workouts for selected date
-  const selectedDateWorkouts = useMemo(() => {
-    if (!selectedDate) return [];
-    return workouts.filter((w) => w.date === selectedDate);
-  }, [workouts, selectedDate]);
+  const monthKey = monthKeyOf(month);
+  const monthGroups = useMemo(() => groups.filter((g) => g.date.startsWith(monthKey)), [groups, monthKey]);
+  const monthCategories = useMemo(
+    () => [...new Set(monthGroups.flatMap((g) => g.list.map((w) => w.category)).filter(Boolean))].sort(),
+    [monthGroups],
+  );
+  const visible = useMemo(
+    () =>
+      monthGroups.filter((g) => (!selectedDay || g.date === selectedDay) && (!category || g.list.some((w) => w.category === category))),
+    [monthGroups, selectedDay, category],
+  );
+  const byDay = useMemo(() => {
+    const out: { date: string; groups: SessionGroup[] }[] = [];
+    for (const g of visible) {
+      const last = out[out.length - 1];
+      if (last && last.date === g.date) last.groups.push(g);
+      else out.push({ date: g.date, groups: [g] });
+    }
+    return out;
+  }, [visible]);
 
-  // Calendar navigation
-  const handlePrevMonth = useCallback(() => {
-    setCurrentMonth((prev) => {
-      const newDate = new Date(prev);
-      newDate.setMonth(newDate.getMonth() - 1);
-      return newDate;
-    });
+  const monthTrainingDays = new Set(monthGroups.map((g) => g.date)).size;
+  const monthSets = monthGroups.reduce((n, g) => n + g.list.reduce((m, w) => m + w.sets.length, 0), 0);
+  const isCurrentMonth = monthKey === todayKey.slice(0, 7);
+  const monthName = month.toLocaleDateString(undefined, { month: "long" });
+
+  /* ---------- opened for a day (Home's "View workout") ---------- */
+  useEffect(() => {
+    const d = params.date;
+    if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+    setMonth(parseLocalDate(d));
+    setSelectedDay(d);
+    setCategory(null);
+    const first = groups.find((g) => g.date === d);
+    if (first) setExpanded(sessionKey(first));
+    // Only when the requested day changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.date]);
+
+  /* ---------- month / filters ---------- */
+  const changeMonth = useCallback((delta: number) => {
+    setMonth((m) => new Date(m.getFullYear(), m.getMonth() + delta, 1));
+    setSelectedDay(null);
+    setCategory(null);
+    setExpanded(null);
   }, []);
+  const toggleExpanded = useCallback((key: string) => setExpanded((cur) => (cur === key ? null : key)), []);
 
-  const handleNextMonth = useCallback(() => {
-    setCurrentMonth((prev) => {
-      const newDate = new Date(prev);
-      newDate.setMonth(newDate.getMonth() + 1);
-      return newDate;
-    });
-  }, []);
-
-  const handleSelectDate = useCallback((date: string) => {
-    setSelectedDate(date);
-  }, []);
-
-  /* =========================
-     PULL TO REFRESH
-     ========================= */
-  const handleRefresh = async () => {
+  const onRefresh = async () => {
     setRefreshing(true);
-    setSyncMessage(null);
     try {
       await refetch();
-      setSyncMessage("Refreshed ✓");
-      log.info("History refreshed");
-    } catch (e) {
-      log.error(`Refresh failed: ${e}`);
-      setSyncMessage("Refresh failed");
     } finally {
       setRefreshing(false);
-      setTimeout(() => setSyncMessage(null), 3000);
     }
   };
 
-  /* =========================
-     DELETE + UNDO
-     ========================= */
-  const setPending = (id: string, pending: boolean) => {
-    setPendingDeleteIds((prev) => {
-      const next = new Set(prev);
-      if (pending) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  };
-
-  const commitDelete = async (workout: Workout) => {
-    deleteTimers.current.delete(workout.id);
-    let newlyUnlocked: string[] = [];
-    try {
-      ({ newlyUnlocked } = await workoutApi.delete(workout.id));
-      log.info(`Deleted workout ${workout.id}`);
-    } catch (error) {
-      // 404 means it is already gone on the server — treat as deleted.
-      if (!(error instanceof ApiError && error.status === 404)) {
-        setPending(workout.id, false); // un-hide the row
-        setDeletedWorkout((current) => (current?.id === workout.id ? null : current));
-        setSyncMessage("Failed to delete workout");
-        log.error("Delete failed", error instanceof Error ? error.message : String(error));
-        return;
-      }
-    }
-
-    queryClient.setQueryData<Workout[]>(["workouts", "all"], (old) =>
-      old ? old.filter((w) => w.id !== workout.id) : old,
-    );
-    setPending(workout.id, false);
-    setDeletedWorkout((current) => (current?.id === workout.id ? null : current));
-    queryClient.invalidateQueries({ queryKey: ["workouts"] });
-    void handleUnlocks(newlyUnlocked); // also refreshes ["achievements"]
-  };
-
-  const deleteWorkout = async (workout: Workout) => {
-    if (refreshing) {
-      setSyncMessage("Please wait...");
-      return;
-    }
-
-    if (!user) {
-      setSyncMessage("User not authenticated");
-      return;
-    }
-
-    // Repeat taps on a row that is already being deleted are ignored.
-    if (deleteTimers.current.has(workout.id)) return;
-
-    // Stop in-flight refetches from overwriting the list mid-delete.
-    await queryClient.cancelQueries({ queryKey: ["workouts"] });
-
-    setPending(workout.id, true);
-    setDeletedWorkout(workout);
-
-    // Each workout gets its own timer; deleting another never cancels this one.
-    deleteTimers.current.set(
-      workout.id,
-      setTimeout(() => void commitDelete(workout), 4500),
-    );
-  };
-
-  const undoDelete = () => {
-    if (!deletedWorkout) return;
-    const timer = deleteTimers.current.get(deletedWorkout.id);
-    if (timer) clearTimeout(timer);
-    deleteTimers.current.delete(deletedWorkout.id);
-    setPending(deletedWorkout.id, false);
-    setDeletedWorkout(null);
-    log.info(`Undo: restored workout ${deletedWorkout.id}`);
-  };
-
-  // Leaving the screen with deletes pending: send them now instead of dropping them.
-  useEffect(() => {
-    const timers = deleteTimers.current;
-    return () => {
-      timers.forEach((timer, id) => {
-        clearTimeout(timer);
-        workoutApi
-          .delete(id)
-          .catch(() => {})
-          .finally(() => {
-            queryClient.invalidateQueries({ queryKey: ["workouts"] });
-            queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
-          });
+  /* ---------- delete a whole session (through the delete queue) ---------- */
+  const deleteSession = useCallback(
+    async (group: SessionGroup) => {
+      if (!user) return;
+      const ids = group.list.map((w) => w.id).filter((id) => !isPendingDelete(id));
+      if (ids.length === 0) return;
+      await queryClient.cancelQueries({ queryKey: workoutKeys.all });
+      for (const id of ids) scheduleWorkoutDelete(queryClient, id, { onDeleted: (unlocked) => void handleUnlocks(unlocked) });
+      const exercises = new Set(group.list.map((w) => w.exercise)).size;
+      showToast({
+        type: "undo",
+        message: "Session deleted",
+        subtitle: `${sessionTitle(group)} · ${exercises} ${exercises === 1 ? "exercise" : "exercises"}`,
+        actionLabel: "Undo",
+        duration: UNDO_WINDOW_MS,
+        onAction: () => {
+          const restored = ids.filter((id) => undoWorkoutDelete(queryClient, id)).length;
+          if (restored) log.info(`Undo: restored ${restored} workout(s)`);
+        },
       });
-      timers.clear();
-    };
-  }, [queryClient]);
-
-  // Group workouts by date
-  const groupedWorkouts = workouts.reduce(
-    (groups, workout) => {
-      const date = workout.date;
-      if (!groups[date]) groups[date] = [];
-      groups[date].push(workout);
-      return groups;
     },
-    {} as Record<string, Workout[]>,
+    [user, queryClient, handleUnlocks, showToast],
   );
 
-  const sortedDates = Object.keys(groupedWorkouts).sort(
-    (a, b) => new Date(b).getTime() - new Date(a).getTime(),
+  const askDelete = useCallback((group: SessionGroup, close: () => void) => setConfirm({ group, close }), []);
+
+  const editWorkout = useCallback((id: string) => router.push({ pathname: "/log/edit", params: { id } }), []);
+  const repeatSession = useCallback(
+    (group: SessionGroup) => startSession(group.list.map((w) => ({ name: w.exercise, sets: w.sets.length, category: w.category }))),
+    [startSession],
   );
+
+  const nameSource = profile?.displayName || user?.displayName || profile?.email || user?.email || "";
+  const avatarPhoto = profile?.avatarUrl || user?.photoURL || null;
+  const sessionsLabel = `${monthGroups.length} ${monthGroups.length === 1 ? "session" : "sessions"} logged ${isCurrentMonth ? "this month" : `in ${monthName}`}`;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <ScrollView
-        contentContainerStyle={{
-          padding: spacing.md,
-          paddingBottom: insets.bottom + spacing.xxl,
-        }}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor={colors.accent}
-          />
-        }
-      >
-        {/* HEADER */}
-        <Animated.View entering={FadeInDown.duration(400)}>
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <View>
-              <Text
-                style={{
-                  ...typography.h1,
-                  color: colors.textPrimary,
-                  marginBottom: spacing.xs,
-                }}
-              >
-                History
-              </Text>
-              <Text style={{ ...typography.body, color: colors.textSecondary }}>
-                {workouts.length} workouts logged • Pull to refresh
-              </Text>
-            </View>
-
-            {/* View Mode Toggle */}
-            <View
-              style={{
-                flexDirection: "row",
-                backgroundColor: colors.surfaceElevated,
-                borderRadius: radius.lg,
-                padding: 4,
-              }}
-            >
-              <Pressable
-                onPress={() => setViewMode("calendar")}
-                style={{
-                  paddingVertical: spacing.xs,
-                  paddingHorizontal: spacing.sm,
-                  borderRadius: radius.md,
-                  backgroundColor:
-                    viewMode === "calendar" ? colors.accent : "transparent",
-                }}
-              >
-                <Ionicons
-                  name="calendar"
-                  size={18}
-                  color={
-                    viewMode === "calendar"
-                      ? colors.textOnAccent
-                      : colors.textSecondary
-                  }
-                />
-              </Pressable>
-              <Pressable
-                onPress={() => setViewMode("list")}
-                style={{
-                  paddingVertical: spacing.xs,
-                  paddingHorizontal: spacing.sm,
-                  borderRadius: radius.md,
-                  backgroundColor:
-                    viewMode === "list" ? colors.accent : "transparent",
-                }}
-              >
-                <Ionicons
-                  name="list"
-                  size={18}
-                  color={
-                    viewMode === "list"
-                      ? colors.textOnAccent
-                      : colors.textSecondary
-                  }
-                />
-              </Pressable>
-            </View>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      {/* Header */}
+      <View style={{ height: size.appBar, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingLeft: spacing.screen, paddingRight: spacing.sm }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+          <View style={{ width: size.tileSm, height: size.tileSm, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh }}>
+            <MaterialIcons name="history" size={size.icon} color={colors.accent} />
           </View>
-        </Animated.View>
-
-        {/* QUICK STATS */}
-        <Animated.View
-          entering={FadeInUp.delay(100).duration(400)}
-          style={{
-            flexDirection: "row",
-            marginTop: spacing.lg,
-            marginBottom: spacing.lg,
-            gap: spacing.sm,
-          }}
-        >
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: colors.surface,
-              borderRadius: radius.xl,
-              padding: spacing.md,
-              borderWidth: 1,
-              borderColor: colors.cardBorder,
-              ...shadows.sm,
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: spacing.xs,
-              }}
-            >
-              <View
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: radius.md,
-                  backgroundColor: colors.accentLight,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: spacing.xs,
-                }}
-              >
-                <Ionicons name="fitness" size={16} color={colors.accent} />
-              </View>
-            </View>
-            <Text style={{ ...typography.stat, color: colors.textPrimary }}>
-              {totalSets}
-            </Text>
-            <Text
-              style={{ ...typography.caption, color: colors.textSecondary }}
-            >
-              Total Sets
-            </Text>
-          </View>
-
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: colors.surface,
-              borderRadius: radius.xl,
-              padding: spacing.md,
-              borderWidth: 1,
-              borderColor: colors.cardBorder,
-              ...shadows.sm,
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: spacing.xs,
-              }}
-            >
-              <View
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: radius.md,
-                  backgroundColor: colors.secondaryLight,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: spacing.xs,
-                }}
-              >
-                <Ionicons
-                  name="trending-up"
-                  size={16}
-                  color={colors.secondary}
-                />
-              </View>
-            </View>
-            <Text style={{ ...typography.stat, color: colors.textPrimary }}>
-              {totalVolume >= 1000
-                ? `${(totalVolume / 1000).toFixed(1)}k`
-                : totalVolume}
-            </Text>
-            <Text
-              style={{ ...typography.caption, color: colors.textSecondary }}
-            >
-              Volume ({weightLabel(unit)})
-            </Text>
-          </View>
-        </Animated.View>
-
-        {/* SYNC STATUS */}
-        {syncMessage && (
-          <Animated.View
-            entering={FadeInDown.duration(300)}
-            style={{
-              backgroundColor: syncMessage.includes("failed")
-                ? colors.errorLight
-                : colors.successLight,
-              paddingVertical: spacing.sm,
-              paddingHorizontal: spacing.md,
-              borderRadius: radius.lg,
-              marginBottom: spacing.md,
-              flexDirection: "row",
-              alignItems: "center",
-            }}
-          >
-            <Ionicons
-              name={
-                syncMessage.includes("failed")
-                  ? "close-circle"
-                  : "checkmark-circle"
-              }
-              size={18}
-              color={
-                syncMessage.includes("failed") ? colors.error : colors.success
-              }
-              style={{ marginRight: spacing.xs }}
-            />
-            <Text
-              style={{
-                ...typography.caption,
-                color: syncMessage.includes("failed")
-                  ? colors.error
-                  : colors.success,
-              }}
-            >
-              {syncMessage}
-            </Text>
-          </Animated.View>
-        )}
-
-        {/* EMPTY STATE */}
-        {workouts.length === 0 && !refreshing && (
-          <Animated.View
-            entering={FadeInUp.delay(200).duration(400)}
-            style={{
-              alignItems: "center",
-              paddingVertical: spacing.xxl,
-              backgroundColor: colors.surface,
-              borderRadius: radius.xl,
-              borderWidth: 1,
-              borderColor: colors.cardBorder,
-            }}
-          >
-            <LinearGradient
-              colors={[colors.gradientStart, colors.gradientEnd]}
-              style={{
-                width: 80,
-                height: 80,
-                borderRadius: radius.full,
-                justifyContent: "center",
-                alignItems: "center",
-                marginBottom: spacing.md,
-              }}
-            >
-              <Ionicons name="barbell-outline" size={40} color={colors.onAccent} />
-            </LinearGradient>
-            <Text
-              style={{
-                ...typography.h3,
-                color: colors.textPrimary,
-                marginBottom: spacing.xs,
-              }}
-            >
-              No workouts yet
-            </Text>
-            <Text
-              style={{
-                ...typography.body,
-                color: colors.textSecondary,
-                textAlign: "center",
-              }}
-            >
-              Start logging to see{"\n"}your progress here
-            </Text>
-          </Animated.View>
-        )}
-
-        {/* CALENDAR VIEW */}
-        {viewMode === "calendar" && workouts.length > 0 && (
-          <Animated.View entering={FadeInUp.delay(150).duration(400)}>
-            {/* Calendar */}
-            <WorkoutCalendar
-              workoutDates={workoutDates}
-              selectedDate={selectedDate}
-              onSelectDate={handleSelectDate}
-              currentMonth={currentMonth}
-              onPrevMonth={handlePrevMonth}
-              onNextMonth={handleNextMonth}
-            />
-
-            {/* Day Summary */}
-            <View style={{ marginTop: spacing.md }}>
-              <WorkoutDaySummary
-                date={selectedDate || formatDate(new Date())}
-                workouts={selectedDateWorkouts}
-              />
-            </View>
-
-            {/* Swipeable workout list for selected date - for delete functionality */}
-            {selectedDateWorkouts.length > 0 && (
-              <View style={{ marginTop: spacing.lg }}>
-                <View style={{ marginBottom: spacing.md }}>
-                  <Text
-                    style={{
-                      ...typography.label,
-                      color: colors.textPrimary,
-                      marginBottom: spacing.sm,
-                      marginLeft: spacing.xs,
-                      fontSize: 14,
-                      fontWeight: "700",
-                    }}
-                  >
-                    WORKOUTS
-                  </Text>
-                  <Text
-                    style={{
-                      ...typography.caption,
-                      color: colors.textSecondary,
-                      marginLeft: spacing.xs,
-                    }}
-                  >
-                    Swipe left to delete or tap to edit
-                  </Text>
-                </View>
-                {selectedDateWorkouts.map((workout, index) => (
-                  <SwipeRow
-                    key={workout.id}
-                    workout={workout}
-                    onDelete={() => deleteWorkout(workout)}
-                    onEdit={() =>
-                      router.push({
-                        pathname: "/add-workout",
-                        params: { id: workout.id },
-                      })
-                    }
-                    index={index}
-                    disabled={refreshing}
-                    weightUnit={unit}
-                  />
-                ))}
-              </View>
-            )}
-          </Animated.View>
-        )}
-
-        {/* LIST VIEW */}
-        {viewMode === "list" &&
-          workouts.length > 0 &&
-          sortedDates.map((date, dateIndex) => (
-            <Animated.View
-              key={date}
-              entering={FadeInUp.delay(200 + dateIndex * 50).duration(400)}
-              style={{ marginBottom: spacing.lg }}
-            >
-              {/* Date Header */}
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  marginBottom: spacing.sm,
-                }}
-              >
-                <View
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
-                    backgroundColor: colors.accent,
-                    marginRight: spacing.sm,
-                  }}
-                />
-                <Text
-                  style={{ ...typography.label, color: colors.textSecondary }}
-                >
-                  {formatDateLabel(date)}
-                </Text>
-                <View
-                  style={{
-                    flex: 1,
-                    height: 1,
-                    backgroundColor: colors.divider,
-                    marginLeft: spacing.sm,
-                  }}
-                />
-              </View>
-
-              {/* Workouts for this date */}
-              {groupedWorkouts[date].map((workout, index) => (
-                <SwipeRow
-                  key={workout.id}
-                  workout={workout}
-                  onDelete={() => deleteWorkout(workout)}
-                  onEdit={() =>
-                    router.push({
-                      pathname: "/add-workout",
-                      params: { id: workout.id },
-                    })
-                  }
-                  index={index}
-                  disabled={refreshing}
-                  weightUnit={unit}
-                />
-              ))}
-            </Animated.View>
-          ))}
-      </ScrollView>
-
-      {/* UNDO TOAST */}
-      {deletedWorkout && (
-        <Animated.View
-          entering={FadeInUp.duration(300)}
-          style={{
-            position: "absolute",
-            bottom: spacing.lg,
-            left: spacing.md,
-            right: spacing.md,
-            backgroundColor: colors.surface,
-            paddingVertical: spacing.md,
-            paddingHorizontal: spacing.lg,
-            borderRadius: radius.xl,
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            borderWidth: 1,
-            borderColor: colors.cardBorder,
-            ...shadows.lg,
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <View
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: radius.md,
-                backgroundColor: colors.errorLight,
-                justifyContent: "center",
-                alignItems: "center",
-                marginRight: spacing.sm,
-              }}
-            >
-              <Ionicons name="trash-outline" size={18} color={colors.error} />
-            </View>
-            <Text
-              style={{ ...typography.bodyMedium, color: colors.textPrimary }}
-            >
-              Workout deleted
-            </Text>
-          </View>
-
-          <Pressable
-            onPress={undoDelete}
-            style={{
-              backgroundColor: colors.accent,
-              paddingVertical: spacing.xs,
-              paddingHorizontal: spacing.md,
-              borderRadius: radius.md,
-            }}
-          >
-            <Text style={{ color: colors.onAccent, fontWeight: "600", fontSize: 14 }}>
-              UNDO
-            </Text>
-          </Pressable>
-        </Animated.View>
-      )}
-    </View>
-  );
-}
-
-/* =========================
-   HELPER FUNCTIONS
-   ========================= */
-function formatDateLabel(dateStr: string): string {
-  const date = new Date(dateStr + "T00:00:00"); // Force local timezone
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-
-  const todayStr = formatDate(today);
-  const yesterdayStr = formatDate(yesterday);
-
-  if (dateStr === todayStr) {
-    return "TODAY";
-  } else if (dateStr === yesterdayStr) {
-    return "YESTERDAY";
-  } else {
-    return date
-      .toLocaleDateString("en-US", {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-      })
-      .toUpperCase();
-  }
-}
-
-/* =========================
-   SWIPE ROW
-   ========================= */
-function SwipeRow({
-  workout,
-  onDelete,
-  onEdit,
-  index,
-  disabled = false,
-  weightUnit = "kg",
-}: {
-  workout: Workout;
-  onDelete: () => void;
-  onEdit: () => void;
-  index: number;
-  disabled?: boolean;
-  weightUnit?: "kg" | "lbs";
-}) {
-  const { colors, spacing, radius, typography, shadows } = useTheme();
-  const translateX = useSharedValue(0);
-
-  const pan = Gesture.Pan()
-    .enabled(!disabled)
-    // Require a more deliberate horizontal swipe.
-    // If the user is mostly scrolling vertically, fail this gesture so ScrollView wins.
-    .activeOffsetX([-SWIPE_ACTIVE_OFFSET, SWIPE_ACTIVE_OFFSET])
-    .failOffsetY([-SWIPE_FAIL_OFFSET_Y, SWIPE_FAIL_OFFSET_Y])
-    .onUpdate((e) => {
-      translateX.value = Math.min(0, e.translationX);
-    })
-    .onEnd(() => {
-      translateX.value =
-        translateX.value < SWIPE_THRESHOLD
-          ? withTiming(-DELETE_WIDTH)
-          : withTiming(0);
-    });
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }],
-  }));
-
-  const totalVolumeKg =
-    workout.sets?.reduce((acc, s) => acc + s.weight * s.reps, 0) || 0;
-  const rowVolume = displayWeight(totalVolumeKg, weightUnit);
-  const totalReps = workout.sets?.reduce((acc, s) => acc + s.reps, 0) || 0;
-
-  return (
-    <View
-      style={{
-        marginBottom: spacing.md,
-        borderRadius: radius.xl,
-        overflow: "hidden",
-        ...shadows.sm,
-      }}
-    >
-      {/* DELETE ACTION */}
-      <View
-        style={{
-          position: "absolute",
-          right: 0,
-          top: 0,
-          bottom: 0,
-          width: DELETE_WIDTH,
-          backgroundColor: colors.error,
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
-        <Pressable onPress={onDelete} style={{ padding: spacing.md }}>
-          <Ionicons name="trash" size={22} color={colors.onDanger} />
-        </Pressable>
+          <Text style={[typography.headlineMd, { color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]} accessibilityRole="header">
+            History
+          </Text>
+        </View>
+        <Avatar key={avatarPhoto ?? "initials"} photoUri={avatarPhoto} initials={nameSource ? getInitials(nameSource) : ""} onPress={() => router.navigate("/(tabs)/profile")} />
       </View>
 
-      <GestureDetector gesture={pan}>
-        <Animated.View
-          style={[
-            animatedStyle,
-            {
-              backgroundColor: colors.surface,
-              padding: spacing.md,
-              borderRadius: radius.xl,
-              borderWidth: 1,
-              borderColor: colors.cardBorder,
-              ...shadows.md,
-            },
-          ]}
-        >
-          <Pressable onPress={onEdit} disabled={disabled}>
-          {/* Exercise Name & Category */}
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              marginBottom: spacing.sm,
-            }}
-          >
-            <View style={{ flex: 1 }}>
-              <Text
-                style={{
-                  ...typography.h3,
-                  color: colors.textPrimary,
-                  marginBottom: spacing.xxs,
-                }}
-              >
-                {workout.exercise}
-              </Text>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <View
-                  style={{
-                    paddingVertical: 2,
-                    paddingHorizontal: spacing.xs,
-                    backgroundColor: colors.accentLight,
-                    borderRadius: radius.sm,
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: spacing.xxl, gap: spacing.md }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} progressBackgroundColor={colors.card} />}
+      >
+        {isLoading && workouts.length === 0 ? (
+          <HistorySkeleton />
+        ) : workouts.length === 0 ? (
+          <Reveal>
+            <EmptyCard
+              icon="fitness-center"
+              title="No workouts yet"
+              body="Your logged sessions will show up here, day by day."
+              action={
+                <Button
+                  title="Start workout"
+                  icon="play"
+                  onPress={() => {
+                    perfStart("open picker");
+                    router.push("/log/pick");
                   }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 11,
-                      fontWeight: "600",
-                      color: colors.accent,
-                    }}
-                  >
-                    {workout.category}
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Quick Stats */}
-            <View style={{ alignItems: "flex-end" }}>
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  paddingVertical: 2,
-                  paddingHorizontal: spacing.xs,
-                  borderRadius: radius.md,
-                  backgroundColor: colors.surfaceElevated,
-                  marginBottom: spacing.xs,
-                }}
-              >
-                <Ionicons
-                  name="create-outline"
-                  size={14}
-                  color={colors.textSecondary}
+                  fullWidth
                 />
-                <Text
-                  style={{
-                    fontSize: 11,
-                    fontWeight: "600",
-                    color: colors.textSecondary,
-                    marginLeft: 4,
-                  }}
-                >
-                  EDIT
-                </Text>
+              }
+            />
+          </Reveal>
+        ) : (
+          <>
+            {/* Month summary + export */}
+            <Reveal index={0} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm }}>
+              <View style={{ flex: 1 }}>
+                <Text style={[typography.labelMd, { color: colors.textSecondary, textTransform: "uppercase", letterSpacing: tracking.overline }]}>Training log</Text>
+                <Text style={[typography.bodyMd, { color: colors.text }]}>{sessionsLabel}</Text>
               </View>
-              <Text style={{ ...typography.h3, color: colors.accent }}>
-                {rowVolume.toLocaleString()}
-              </Text>
-              <Text
-                style={{ ...typography.caption, color: colors.textSecondary }}
+              <Pressable
+                onPress={() => setExportOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Export workout history"
+                style={({ pressed }) => ({
+                  width: size.control,
+                  height: size.control,
+                  borderRadius: radius.lg,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: pressed ? colors.surfaceContainerHighest : colors.surfaceContainerHigh,
+                })}
               >
-                {weightLabel(weightUnit)} volume
-              </Text>
-            </View>
-          </View>
+                <MaterialIcons name="ios-share" size={size.icon} color={colors.text} />
+              </Pressable>
+            </Reveal>
 
-          {/* Sets */}
-          <View
-            style={{
-              flexDirection: "row",
-              flexWrap: "wrap",
-              gap: spacing.xs,
-            }}
-          >
-            {workout.sets?.map((set, i) => (
-              <View
-                key={i}
-                style={{
-                  backgroundColor: colors.surfaceElevated,
-                  paddingVertical: spacing.xxs,
-                  paddingHorizontal: spacing.sm,
-                  borderRadius: radius.md,
-                }}
-              >
-                <Text
-                  style={{ ...typography.caption, color: colors.textPrimary }}
-                >
-                  {set.reps}×{displayWeight(set.weight, weightUnit)}{weightLabel(weightUnit)}
+            <Reveal index={1}>
+              <MonthCalendar
+                month={month}
+                onPrev={() => changeMonth(-1)}
+                onNext={() => changeMonth(1)}
+                trainedDays={trainedDays}
+                selected={selectedDay}
+                onSelect={setSelectedDay}
+                todayKey={todayKey}
+                footer={
+                  monthTrainingDays > 0
+                    ? `${monthTrainingDays} training ${monthTrainingDays === 1 ? "day" : "days"} · ${monthSets} ${monthSets === 1 ? "set" : "sets"}`
+                    : `Nothing logged ${isCurrentMonth ? "this month yet" : `in ${monthName}`}`
+                }
+              />
+            </Reveal>
+
+            {/* Filters: only groups trained this month */}
+            {monthCategories.length > 1 && (
+              <Reveal index={2}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+                  <FilterChip label="All" active={!category} onPress={() => setCategory(null)} />
+                  {monthCategories.map((c) => (
+                    <FilterChip key={c} label={displayCategory(c)} active={category === c} onPress={() => setCategory((cur) => (cur === c ? null : c))} />
+                  ))}
+                </ScrollView>
+              </Reveal>
+            )}
+
+            {/* Selected-day note */}
+            {selectedDay && (
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <Text style={[typography.labelMd, { color: colors.accent }]}>
+                  Showing {parseLocalDate(selectedDay).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
                 </Text>
+                <Button title="Show whole month" variant="ghost" onPress={() => setSelectedDay(null)} />
               </View>
-            ))}
-          </View>
-          </Pressable>
-        </Animated.View>
-      </GestureDetector>
+            )}
+
+            {/* Sessions by day */}
+            <Reveal index={3} style={{ gap: spacing.md }}>
+              {byDay.length === 0 ? (
+                <EmptyCard
+                  icon={selectedDay ? "event-busy" : "filter-alt-off"}
+                  title={
+                    selectedDay
+                      ? "Nothing logged that day"
+                      : category
+                        ? `No ${displayCategory(category)} sessions in ${monthName}`
+                        : `Nothing logged in ${monthName}`
+                  }
+                  body={selectedDay || category ? "Clear the filter to see the rest of the month." : "Pick another month or start a workout."}
+                />
+              ) : (
+                byDay.map((day) => (
+                  <View key={day.date} style={{ gap: spacing.sm }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                      <Text style={[typography.headlineSm, { color: colors.text }]}>{dayLabel(day.date, todayKey)}</Text>
+                      <Text style={[typography.labelMd, { color: colors.textSecondary }]}>
+                        {day.groups.length} {day.groups.length === 1 ? "session" : "sessions"}
+                      </Text>
+                    </View>
+                    {day.groups.map((g) => {
+                      const key = sessionKey(g);
+                      return (
+                        <SessionCard
+                          key={key}
+                          group={g}
+                          sessionKey={key}
+                          unit={unit}
+                          pr={g.list.some((w) => prWorkoutIds.has(w.id))}
+                          prWorkoutIds={prWorkoutIds}
+                          expanded={expanded === key}
+                          onToggle={toggleExpanded}
+                          onDelete={askDelete}
+                          onEdit={editWorkout}
+                          onRepeat={repeatSession}
+                        />
+                      );
+                    })}
+                  </View>
+                ))
+              )}
+            </Reveal>
+
+            {byDay.length > 0 && (
+              <Text style={[typography.labelSm, { color: colors.textMuted, textAlign: "center" }]}>Tap a session for its sets · swipe left to delete</Text>
+            )}
+          </>
+        )}
+      </ScrollView>
+
+      {/* Confirm before a swipe deletes a whole session */}
+      <ConfirmDialog
+        visible={!!confirm}
+        destructive
+        title={confirm && confirm.group.list.length === 1 ? "Delete this workout?" : "Delete this session?"}
+        message={confirm ? deleteMessage(confirm.group) : ""}
+        confirmLabel="Delete"
+        onConfirm={() => {
+          const g = confirm?.group;
+          setConfirm(null);
+          if (g) void deleteSession(g);
+        }}
+        onCancel={() => {
+          confirm?.close();
+          setConfirm(null);
+        }}
+      />
+
+      {/* Export */}
+      <ExportSheet visible={exportOpen} onClose={() => setExportOpen(false)} displayName={profile?.displayName ?? ""} />
     </View>
   );
+}
+
+/* ==============================
+   PIECES
+   ============================== */
+
+function EmptyCard({ icon, title, body, action }: { icon: React.ComponentProps<typeof MaterialIcons>["name"]; title: string; body: string; action?: React.ReactNode }) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ alignItems: "center", gap: spacing.md, padding: spacing.xl, borderRadius: radius.xl, backgroundColor: colors.raised }}>
+      <View style={{ width: size.iconBadge, height: size.iconBadge, borderRadius: radius.lg, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh }}>
+        <MaterialIcons name={icon} size={size.iconLg} color={colors.accent} />
+      </View>
+      <View style={{ alignItems: "center", gap: spacing.xs }}>
+        <Text style={[typography.headlineSm, { color: colors.text, textAlign: "center", textTransform: "uppercase", letterSpacing: tracking.headlineWide }]}>{title}</Text>
+        <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center" }]}>{body}</Text>
+      </View>
+      {action ? <View style={{ alignSelf: "stretch" }}>{action}</View> : null}
+    </View>
+  );
+}
+
+function HistorySkeleton() {
+  return (
+    <View style={{ gap: spacing.md }} accessibilityLabel="Loading history">
+      <SkeletonBlock height={size.control} radius="lg" />
+      <SkeletonBlock height={size.ring * 2.6} radius="xl" />
+      <SkeletonBlock height={size.control} radius="lg" />
+      {[0, 1, 2].map((k) => (
+        <SkeletonBlock key={k} height={size.goalCard * 0.8} radius="lg" />
+      ))}
+    </View>
+  );
+}
+
+/** "This removes 5 exercises and 18 logged sets…" (true: there is a short Undo afterwards). */
+function deleteMessage(group: SessionGroup) {
+  const exercises = new Set(group.list.map((w) => w.exercise)).size;
+  const sets = group.list.reduce((n, w) => n + w.sets.length, 0);
+  return `This removes ${exercises} ${exercises === 1 ? "exercise" : "exercises"} and ${sets} logged ${sets === 1 ? "set" : "sets"} (${sessionTitle(group)}) from your training history. You'll have a few seconds to undo.`;
+}
+
+/** "Today", "Yesterday", "Mon 5 Oct". */
+function dayLabel(key: string, todayKey: string) {
+  const diff = Math.round((parseLocalDate(todayKey).getTime() - parseLocalDate(key).getTime()) / DAY_MS);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return parseLocalDate(key).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 }

@@ -1,11 +1,6 @@
 export const verificationMessages = {
-  resendCooldown: "Please wait before requesting another email.",
-  resendRecent:
-    "A verification email was recently sent. Please wait before requesting another.",
   resendFailed:
     "Could not send verification email. Please check your connection and try again.",
-  verifyNotYet:
-    "Email not verified yet. Please check your inbox and try again.",
   verifyExpired:
     "Your link may have expired. Please request a new one.",
   verifyCheckFailed:
@@ -23,6 +18,4 @@ export const verificationMessages = {
   bannerTitleSoft: (daysLeft: number) =>
     `Verify your email within ${daysLeft} days`,
   bannerTitleHard: "Email verification required to continue",
-  badgeVerified: "Verified",
-  badgeUnverified: "Not verified",
 };

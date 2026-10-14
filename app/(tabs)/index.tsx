@@ -1,73 +1,60 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshControl, ScrollView, Text, View, type DimensionValue } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import { useReducedMotion } from "react-native-reanimated";
 import { useAuth } from "../../auth/AuthContext";
 import { EmailVerificationPrompt } from "../../components/EmailVerificationPrompt";
+import { CyclingHeadline } from "../../components/home/CyclingHeadline";
+import { ResumeWorkoutSheet } from "../../components/log/ResumeWorkoutSheet";
+import { MuscleIcon } from "../../components/muscle/MuscleIcon";
+import { Avatar } from "../../components/ui/Avatar";
 import {
   Button,
   Card,
   EmptyState,
   ErrorState,
+  PressableScale,
+  Reveal,
   ProgressRing,
-  SectionHeader,
-  Skeleton,
-  StatTile,
-  type IconName,
+  SkeletonBlock,
+  StatusPill,
 } from "../../components/ui";
 import { verificationMessages } from "../../constants/verificationMessages";
-import {
-  clearEmailVerificationStart,
-  getEmailVerificationStart,
-  setEmailVerificationStart,
-} from "../../db/syncMeta";
+import { useConnection } from "../../context/ConnectionContext";
+import { clearEmailVerificationStart, getEmailVerificationStart, setEmailVerificationStart } from "../../db/syncMeta";
 import { usePlan, usePlans } from "../../hooks/usePlan";
 import { useProfile } from "../../hooks/useProfile";
+import { useAllWeights } from "../../hooks/useWeights";
+import { PRHighlight } from "../../components/home/PRHighlight";
+import { WeightSnapshotCard } from "../../components/home/WeightSnapshotCard";
+import { exerciseIndexFor, recentPRs } from "../../utils/exerciseHistory";
+import { formatMuscles, getPlanWeekDays, isRestDayTitle, planDayShortName, type PlanDay, type PlanExercise } from "../../utils/planData";
+import { useStartPlanSession } from "../../hooks/useStartPlanSession";
+import { effectiveWeeklyGoal, isoWeekday } from "../../constants/trainingProfile";
 import { useUnitPreference } from "../../hooks/useUnitPreference";
-import { useAllWorkouts } from "../../hooks/useWorkouts";
-import { isNetworkApiError, type Workout } from "../../services/api";
+import { useWorkoutSummary, type Session, type StreakSummary, type WeekSummary, type WeekVolume } from "../../hooks/useWorkoutSummary";
+import { isNetworkApiError } from "../../services/api";
 import { useTheme } from "../../theme/theme";
-import { radius, spacing, touchTarget, typography, semibold } from "../../theme/tokens";
+import { alpha, motion, radius, semibold, size, spacing, touchTarget, tracking, typography, withAlpha } from "../../theme/tokens";
 import { getInitials } from "../../utils/avatar";
+import { perfStart } from "../../utils/perf";
 import { displayWeight, weightLabel } from "../../utils/unitConversion";
-import { formatDate, getWeekStart, parseLocalDate } from "../../utils/weekUtils";
+import { formatDate, parseLocalDate } from "../../utils/weekUtils";
 
 /* ==============================
-   TYPES
+   TYPES & CONSTANTS
    ============================== */
-interface RecentWorkout {
-  date: string;
-  exercises: string[];
-  category: string;
-  totalSets: number;
-  totalVolume: number;
-}
-
-interface TrainingSuggestion {
-  category: string;
-  reason: string;
-  daysSinceLastTrained: number;
-  icon: IconName;
-}
-
-interface PlanExercise {
-  name?: string;
-  sets?: number;
-  reps?: string;
-}
-
-interface PlanDay {
-  day?: string;
-  name?: string;
-  sessionType?: "training" | "rest";
-  targetMuscles?: string[];
-  estimatedDurationMinutes?: number;
-  recoveryNote?: string;
-  exercises?: PlanExercise[];
-}
-
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const MAX_CHIPS = 6;
+const WEEK_LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MAX_UPCOMING = 3;
+/** Dates within this many days show a weekday name instead of "12 Sep". */
+const WEEKDAY_WINDOW = 6;
 const VERIFICATION_GRACE_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /* ==============================
    MAIN COMPONENT
@@ -76,11 +63,29 @@ export default function Home() {
   const { colors } = useTheme();
   const { user } = useAuth();
   const { unit } = useUnitPreference();
+  const connection = useConnection();
 
   const profileQuery = useProfile();
   const profile = profileQuery.data;
-  const workoutsQuery = useAllWorkouts();
-  const workouts = useMemo(() => workoutsQuery.data ?? [], [workoutsQuery.data]);
+  // Training days per week: the chosen weekdays, else the stored count, capped at 6.
+  const weeklyGoal = effectiveWeeklyGoal(profile);
+  // Is today one of the user's training days? null when they haven't picked days.
+  const trainingDayToday = profile?.trainingDays?.length ? profile.trainingDays.includes(isoWeekday(new Date())) : null;
+  // Every Home number comes from the one shared workouts query.
+  const {
+    query: workoutsQuery,
+    todayKey,
+    sessions,
+    todaySession,
+    week,
+    streak,
+    suggestion: suggestedGroup,
+    recent,
+    volume,
+  } = useWorkoutSummary(weeklyGoal);
+  const weightsQuery = useAllWeights();
+  // PRs from the shared, cached exercise index (built once per workouts change).
+  const prs = useMemo(() => recentPRs(exerciseIndexFor(workoutsQuery.data ?? []).index, todayKey), [workoutsQuery.data, todayKey]);
   const plansQuery = usePlans();
   const activePlanMeta = plansQuery.data?.find((p) => p.isActive);
   const activePlanQuery = usePlan(activePlanMeta?.id);
@@ -90,92 +95,8 @@ export default function Home() {
   const [showVerificationPrompt, setShowVerificationPrompt] = useState(false);
   const [dismissVerificationBanner, setDismissVerificationBanner] = useState(false);
 
-  /* ---------- derived data ---------- */
-  const streak = useMemo(() => {
-    const sortedDates = [...new Set(workouts.map((w) => w.date))].sort().reverse();
-    const today = formatDate(new Date());
-    const yesterday = formatDate(new Date(Date.now() - 24 * 60 * 60 * 1000));
-    let count = 0;
-    if (sortedDates[0] === today || sortedDates[0] === yesterday) {
-      count = 1;
-      for (let i = 1; i < sortedDates.length; i++) {
-        const curr = new Date(sortedDates[i - 1]);
-        const prev = new Date(sortedDates[i]);
-        const diffDays = Math.floor((curr.getTime() - prev.getTime()) / (24 * 60 * 60 * 1000));
-        if (diffDays === 1) count++;
-        else break;
-      }
-    }
-    return count;
-  }, [workouts]);
-
-  const workoutsThisWeek = useMemo(() => {
-    const weekStart = getWeekStart(new Date());
-    return new Set(workouts.filter((w) => parseLocalDate(w.date) >= weekStart).map((w) => w.date.split("T")[0])).size;
-  }, [workouts]);
-
-  const recentWorkouts = useMemo((): RecentWorkout[] => {
-    const groupedByDate = workouts.reduce(
-      (acc, w) => {
-        if (!acc[w.date]) acc[w.date] = [];
-        acc[w.date].push(w);
-        return acc;
-      },
-      {} as Record<string, Workout[]>,
-    );
-
-    return Object.keys(groupedByDate)
-      .sort((a, b) => b.localeCompare(a))
-      .slice(0, 3)
-      .map((date) => {
-        const dayWorkouts = groupedByDate[date];
-        const exercises = [...new Set(dayWorkouts.map((w) => w.exercise))];
-        const categories = [...new Set(dayWorkouts.map((w) => w.category || "Other"))];
-        const totalSets = dayWorkouts.reduce((sum, w) => sum + w.sets.length, 0);
-        const totalVolume = dayWorkouts.reduce(
-          (sum, w) => sum + w.sets.reduce((s, set) => s + set.reps * set.weight, 0),
-          0,
-        );
-        return { date, exercises, category: categories.length === 1 ? categories[0] : "Mixed", totalSets, totalVolume };
-      });
-  }, [workouts]);
-
-  const suggestion = useMemo((): TrainingSuggestion | null => {
-    const categoryLastTrained: Record<string, string> = {};
-    for (const workout of workouts) {
-      const cat = workout.category || "Other";
-      if (!categoryLastTrained[cat] || workout.date > categoryLastTrained[cat]) {
-        categoryLastTrained[cat] = workout.date;
-      }
-    }
-    const mainCategories = ["Chest", "Back", "Shoulders", "Legs", "Arms", "Abs"];
-    const today = new Date();
-    let best: TrainingSuggestion | null = null;
-    let maxDays = -1;
-    for (const cat of mainCategories) {
-      const lastDate = categoryLastTrained[cat];
-      const daysSince = lastDate
-        ? Math.floor((today.getTime() - new Date(lastDate).getTime()) / (1000 * 60 * 60 * 24))
-        : 999;
-      if (daysSince > maxDays) {
-        maxDays = daysSince;
-        best = {
-          category: cat,
-          daysSinceLastTrained: daysSince,
-          reason:
-            daysSince >= 999
-              ? "Never trained"
-              : daysSince >= 7
-                ? "Over a week ago"
-                : daysSince >= 4
-                  ? `${daysSince} days ago`
-                  : `${daysSince} days rest`,
-          icon: getCategoryIcon(cat),
-        };
-      }
-    }
-    return best;
-  }, [workouts]);
+  // Suggested next only without an active plan; the plan card takes its slot.
+  const suggestion = activePlanMeta ? null : suggestedGroup;
 
   const planWeekDays = useMemo(
     () => getPlanWeekDays(activePlanQuery.data?.planData, activePlanQuery.data?.weekNumber),
@@ -185,14 +106,6 @@ export default function Home() {
     const todayName = WEEKDAYS[new Date().getDay()];
     return planWeekDays.find((d) => d.day?.toLowerCase() === todayName) ?? null;
   }, [planWeekDays]);
-  const planTrainingDays = planWeekDays.filter((d) => d.sessionType !== "rest").length;
-
-  const weeklyTarget =
-    planTrainingDays > 0
-      ? { value: planTrainingDays, source: "Target from your plan" }
-      : profile?.weeklyGoal && profile.weeklyGoal > 0
-        ? { value: profile.weeklyGoal, source: "Your weekly goal" }
-        : null;
 
   /* ---------- email verification ---------- */
   const loadVerificationStatus = useCallback(async () => {
@@ -213,7 +126,7 @@ export default function Home() {
       start = Date.now();
       await setEmailVerificationStart(user.uid, start);
     }
-    const elapsedDays = Math.floor((Date.now() - start) / (24 * 60 * 60 * 1000));
+    const elapsedDays = Math.floor((Date.now() - start) / DAY_MS);
     setVerificationDaysLeft(Math.max(0, VERIFICATION_GRACE_DAYS - elapsedDays));
   }, [user]);
 
@@ -252,15 +165,33 @@ export default function Home() {
   };
 
   /* ---------- screen state ---------- */
-  const isLoading = workoutsQuery.isLoading;
+  const planLoading = plansQuery.isLoading || (!!activePlanMeta && activePlanQuery.isLoading);
+  // Skeleton until EVERYTHING Home shows has loaded (workouts, profile, weights,
+  // plan), so the screen appears complete in one go instead of filling in card
+  // by card. `isLoading` is only true with no cached data: with saved data the
+  // screen renders at once and refreshes in the background (Syncing pill).
+  // A query that fails stops loading too, so this can't hang.
+  const isLoading = workoutsQuery.isLoading || profileQuery.isLoading || weightsQuery.isLoading || planLoading;
+  // Background refresh of data already on screen; the offline banner covers other states.
+  const syncing =
+    connection.state === "online" &&
+    !isLoading &&
+    (workoutsQuery.isFetching || profileQuery.isFetching || plansQuery.isFetching || weightsQuery.isFetching);
   const fatalError = workoutsQuery.isError && !workoutsQuery.data ? workoutsQuery.error : null;
-  const isNewUser = !isLoading && !fatalError && workouts.length === 0 && !plansQuery.isLoading && !activePlanMeta;
-  const hasPlannedTrainingToday = !!todayPlanDay && todayPlanDay.sessionType !== "rest";
 
   const firstName = (profile?.displayName ?? user?.displayName ?? "").trim().split(/\s+/)[0];
   const avatarPhoto = profile?.avatarUrl || user?.photoURL || null;
   const nameSource = profile?.displayName || user?.displayName || profile?.email || user?.email || "";
   const initials = nameSource ? getInitials(nameSource) : "";
+
+  // Header messages: only those that apply, in this order (max 5).
+  const headlines = [
+    `${getGreeting()}${firstName ? `, ${firstName}` : ""}`,
+    todaySession ? "Nice work today" : "Ready for your session?",
+    week.goal ? `${week.daysTrained} of ${week.goal} days this week` : null,
+    suggestion ? `${suggestion.label} is up next` : null,
+    streak.current >= 1 ? `${streak.current}-week streak` : null,
+  ].filter((m): m is string => !!m);
 
   /* ==============================
      RENDER
@@ -269,7 +200,7 @@ export default function Home() {
     <>
       <ScrollView
         style={{ flex: 1, backgroundColor: colors.bg }}
-        contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.lg }}
+        contentContainerStyle={{ padding: spacing.screen, paddingBottom: spacing.xxl, gap: spacing.lg }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -280,64 +211,63 @@ export default function Home() {
           />
         }
       >
-        {/* ========== HEADER ========== */}
+        {/* Header */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
-          <View style={{ flex: 1 }}>
-            <Text accessibilityRole="header" style={[typography.headlineLg, { color: colors.text }]}>
-              {getGreeting()}
-              {firstName ? `, ${firstName}` : ""}
-            </Text>
-            <Text style={[typography.labelMd, { color: colors.textSecondary, marginTop: spacing.xs }]}>
-              {new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}
-            </Text>
+          <View style={{ flex: 1, gap: spacing.xs }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Text style={[typography.labelMd, { color: colors.textSecondary, textTransform: "uppercase", letterSpacing: tracking.overline }]}>
+                Dashboard
+              </Text>
+              {syncing && <StatusPill label="Syncing" dotColor={colors.accent} />}
+            </View>
+            <CyclingHeadline messages={headlines} />
           </View>
-          <Avatar key={avatarPhoto ?? "initials"} photoUri={avatarPhoto} initials={initials} onPress={() => router.navigate("/(tabs)/profile")} />
+          <Avatar
+            key={avatarPhoto ?? "initials"}
+            photoUri={avatarPhoto}
+            initials={initials}
+            onPress={() => router.navigate("/(tabs)/profile")}
+          />
         </View>
 
-        {/* Email verification banner */}
+        {/* Email verification reminder (kept from the old Home) */}
         {user && !user.emailVerified && verificationDaysLeft !== null && !dismissVerificationBanner && (
           <Card style={{ gap: spacing.sm }}>
             <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
               <Ionicons
                 name="mail-unread-outline"
-                size={20}
+                size={size.icon}
                 color={verificationDaysLeft > 0 ? colors.accent : colors.danger}
-                style={{ marginTop: 2 }}
               />
               <Text style={[typography.bodyLg, { color: colors.text, ...semibold, flex: 1 }]}>
                 {verificationDaysLeft > 0
                   ? verificationMessages.bannerTitleSoft(verificationDaysLeft)
                   : verificationMessages.bannerTitleHard}
               </Text>
-              <Pressable
+              <PressableScale
                 onPress={() => setDismissVerificationBanner(true)}
                 accessibilityRole="button"
                 accessibilityLabel="Dismiss verification reminder"
                 style={{ width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center", marginTop: -spacing.md, marginRight: -spacing.md }}
               >
-                <Ionicons name="close" size={20} color={colors.textSecondary} />
-              </Pressable>
+                <Ionicons name="close" size={size.icon} color={colors.textSecondary} />
+              </PressableScale>
             </View>
             <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>{verificationMessages.bannerBody}</Text>
             <Button title={verificationMessages.bannerAction} variant="ghost" onPress={() => setShowVerificationPrompt(true)} />
           </Card>
         )}
 
-        {/* Fitness goal nudge */}
+        {/* Fitness goal nudge (kept from the old Home) */}
         {profile && !profile.fitnessGoal && (
-          <Card
-            onPress={() => router.navigate("/(tabs)/profile")}
-            accessibilityLabel="Set your fitness goal. Needed to create your AI workout plan."
-          >
+          <Card onPress={() => router.navigate("/(tabs)/profile")} accessibilityLabel="Set your fitness goal. Needed to create your AI workout plan.">
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
-              <Ionicons name="sparkles" size={20} color={colors.accent} />
+              <Ionicons name="sparkles" size={size.icon} color={colors.accent} />
               <View style={{ flex: 1 }}>
                 <Text style={[typography.bodyLg, { color: colors.text, ...semibold }]}>Set your fitness goal</Text>
-                <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
-                  Needed to create your AI workout plan
-                </Text>
+                <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>Needed to create your AI workout plan</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+              <Ionicons name="chevron-forward" size={size.icon} color={colors.textSecondary} />
             </View>
           </Card>
         )}
@@ -347,118 +277,121 @@ export default function Home() {
         ) : fatalError ? (
           <Card>
             {isNetworkApiError(fatalError) ? (
-              // The global offline banner owns the offline message and Retry.
-              <EmptyState
-                icon="barbell-outline"
-                title="Workouts not loaded yet"
-                body="They'll appear here once you're back online."
-              />
+              // The offline banner owns the message and Retry.
+              <EmptyState icon="barbell-outline" title="Workouts not loaded yet" body="They'll appear here once you're back online." />
             ) : (
-              <ErrorState
-                message="We couldn't load your workouts."
-                onRetry={() => void refetchAll()}
-                retrying={workoutsQuery.isFetching}
-              />
+              <ErrorState message="We couldn't load your workouts." onRetry={() => void refetchAll()} retrying={workoutsQuery.isFetching} />
             )}
-          </Card>
-        ) : isNewUser ? (
-          <Card>
-            <EmptyState
-              icon="calendar-outline"
-              title="Plan your week"
-              body="Create a workout plan or log your first session."
-              actionLabel="Create AI plan"
-              onAction={() => router.navigate("/ai-plan")}
-              secondaryActionLabel="Log a workout"
-              onSecondaryAction={() => router.push("/add-workout")}
-            />
           </Card>
         ) : (
           <>
-            {/* ========== TODAY ========== */}
-            {activePlanMeta && todayPlanDay && (
-              <TodayCard planId={activePlanMeta.id} planName={activePlanMeta.name} day={todayPlanDay} />
+            {/* Cards rise in one after another (Reveal: UI-thread transform, taps unaffected). */}
+            <Reveal index={0}>
+              <TodayCard
+                loadingPlan={planLoading}
+                planId={activePlanMeta?.id ?? null}
+                planDay={activePlanMeta ? todayPlanDay : null}
+                hasPlan={!!activePlanMeta}
+                todaySession={todaySession}
+                nextSessionNumber={sessions.length + 1}
+                unit={unit}
+                trainingDayToday={trainingDayToday}
+              />
+            </Reveal>
+
+            {prs.length > 0 && (
+              <Reveal index={1}>
+                <PRHighlight prs={prs} unit={unit} />
+              </Reveal>
             )}
 
-            {/* ========== THIS WEEK ========== */}
-            <Card style={{ gap: spacing.md }}>
-              <Text accessibilityRole="header" style={[typography.headlineMd, { color: colors.text }]}>
-                This week
-              </Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.lg }}>
-                {weeklyTarget ? (
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, flexGrow: 1, flexBasis: 180 }}>
-                    <ProgressRing
-                      progress={workoutsThisWeek / weeklyTarget.value}
-                      size={80}
-                      accessibilityLabel={`${workoutsThisWeek} of ${weeklyTarget.value} workouts this week`}
-                    >
-                      <Text style={[typography.bodyMd, { color: colors.text, ...semibold }]}>
-                        {workoutsThisWeek}/{weeklyTarget.value}
-                      </Text>
-                    </ProgressRing>
-                    <View style={{ flex: 1 }} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
-                      <Text style={[typography.bodyLg, { color: colors.text, ...semibold }]}>
-                        {workoutsThisWeek} of {weeklyTarget.value} workouts
-                      </Text>
-                      <Text style={[typography.labelMd, { color: colors.textSecondary }]}>{weeklyTarget.source}</Text>
-                    </View>
-                  </View>
-                ) : (
-                  <StatTile
-                    value={workoutsThisWeek}
-                    label="Workouts this week"
-                    icon="barbell-outline"
-                    style={{ flexBasis: 140, backgroundColor: colors.raised }}
-                  />
-                )}
-                <StatTile
-                  value={streak}
-                  unit={streak === 1 ? "day" : "days"}
-                  label="Streak"
-                  icon="flame"
-                  tone={streak > 0 ? "streak" : "default"}
-                  style={{ flexBasis: 120, flexGrow: 1, backgroundColor: colors.raised }}
-                />
-              </View>
-            </Card>
+            <Reveal index={2} style={{ flexDirection: "row", gap: spacing.sm }}>
+              <WeekCard week={week} volume={volume} unit={unit} />
+              <StreakCard streak={streak} week={week} todayKey={todayKey} />
+            </Reveal>
 
-            {/* ========== SUGGESTED NEXT ========== */}
-            {suggestion && suggestion.daysSinceLastTrained >= 3 && !hasPlannedTrainingToday && (
+            {weightsQuery.data && (
+              <Reveal index={3}>
+                <WeightSnapshotCard entries={weightsQuery.data} unit={unit} goalKg={profile?.targetWeight ?? null} fitnessGoal={profile?.fitnessGoal} />
+              </Reveal>
+            )}
+
+            {/* Plan slot: the active plan, or the way to build one (always reachable from Home). */}
+            <Reveal index={4}>
+              {activePlanMeta ? (
+                <YourPlanCard
+                  planId={activePlanMeta.id}
+                  name={activePlanMeta.name}
+                  weekNumber={activePlanQuery.data?.weekNumber ?? activePlanMeta.weekNumber}
+                  days={planWeekDays}
+                />
+              ) : (
+                <AIPlanCard savedPlans={plansQuery.data?.length ?? 0} weeklyGoal={weeklyGoal} />
+              )}
+            </Reveal>
+
+            {suggestion && (
+              <Reveal index={5}>
               <Card
-                onPress={() => router.push("/add-workout")}
-                accessibilityLabel={`Suggested next: train ${suggestion.category}. ${suggestion.reason}.`}
+                onPress={() => {
+                  perfStart("open picker");
+                  router.push({ pathname: "/log/pick", params: { category: suggestion.category } });
+                }}
+                accessibilityLabel={`Suggested next: ${suggestion.label}. ${lastTrainedText(suggestion.daysAgo)}`}
                 accessibilityHint="Opens Log workout"
               >
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
-                  <IconBadge name={suggestion.icon} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={[typography.labelMd, { color: colors.textSecondary }]}>Suggested next</Text>
-                    <Text style={[typography.bodyLg, { color: colors.text, ...semibold }]}>
-                      Train {suggestion.category.toLowerCase()}
-                    </Text>
-                    <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>{suggestion.reason}</Text>
+                  <View
+                    style={{
+                      width: size.rowIcon,
+                      height: size.rowIcon,
+                      borderRadius: radius.md,
+                      backgroundColor: colors.surfaceContainerHigh,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <MuscleIcon category={suggestion.category} size={size.muscleIcon} active />
                   </View>
-                  <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+                  <View style={{ flex: 1, gap: spacing.xxs }}>
+                    <Text style={[typography.labelSm, { color: colors.textSecondary, textTransform: "uppercase", letterSpacing: tracking.labelWide }]}>Suggested next</Text>
+                    <Text style={[typography.headlineSm, { color: colors.text }]} numberOfLines={1}>
+                      {suggestion.label}
+                    </Text>
+                    <Text style={[typography.labelSm, { color: colors.textSecondary }]}>{lastTrainedText(suggestion.daysAgo)}</Text>
+                  </View>
+                  <MaterialIcons name="chevron-right" size={size.icon} color={colors.textSecondary} />
                 </View>
               </Card>
+              </Reveal>
             )}
 
-            {/* ========== RECENT ========== */}
-            {recentWorkouts.length > 0 && (
-              <View>
-                <SectionHeader
-                  title="Recent"
-                  actionLabel="See all"
-                  actionAccessibilityLabel="See all workouts in History"
-                  onAction={() => router.navigate("/(tabs)/history")}
-                />
-                <Card padded={false}>
-                  {recentWorkouts.map((workout, index) => (
-                    <RecentRow key={workout.date} workout={workout} unit={unit} showDivider={index > 0} />
-                  ))}
-                </Card>
-              </View>
+            {recent.length > 0 && (
+              <Reveal index={6} style={{ gap: spacing.sm }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text
+                    accessibilityRole="header"
+                    style={[typography.headlineSm, { color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]}
+                  >
+                    Recent activity
+                  </Text>
+                  <PressableScale
+                    onPress={() => router.navigate("/(tabs)/history")}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${sessions.length} sessions logged. Open History`}
+                    style={{ minHeight: touchTarget, justifyContent: "center", paddingLeft: spacing.md }}
+                  >
+                    {({ pressed }) => (
+                      <Text style={[typography.labelMd, { color: pressed ? colors.text : colors.textSecondary }]}>
+                        {sessions.length} {sessions.length === 1 ? "session" : "sessions"} logged
+                      </Text>
+                    )}
+                  </PressableScale>
+                </View>
+                {recent.map((s) => (
+                  <RecentCard key={`${s.date}-${s.number}`} session={s} unit={unit} todayKey={todayKey} />
+                ))}
+              </Reveal>
             )}
           </>
         )}
@@ -477,209 +410,566 @@ export default function Home() {
           await loadVerificationStatus();
         }}
       />
+
+      <ResumeWorkoutSheet from="home" />
     </>
   );
 }
 
 /* ==============================
-   SECTIONS
+   TODAY CARD
    ============================== */
 
-function TodayCard({ planId, planName, day }: { planId: string; planName: string; day: PlanDay }) {
-  const { colors } = useTheme();
-  const openPlan = () => router.push({ pathname: "/plan-detail", params: { id: planId } });
+type ChipItem = { name: string; done?: boolean };
 
-  if (day.sessionType === "rest") {
-    const note = day.recoveryNote?.trim();
-    const showNote = !!note && !isRestDayTitle(note);
+function TodayCard({
+  loadingPlan,
+  planDay,
+  hasPlan,
+  todaySession,
+  nextSessionNumber,
+  unit,
+  trainingDayToday,
+}: {
+  loadingPlan: boolean;
+  planId: string | null;
+  planDay: PlanDay | null;
+  hasPlan: boolean;
+  todaySession: Session | null;
+  nextSessionNumber: number;
+  unit: "kg" | "lbs";
+  /** From the user's chosen weekdays; null when they haven't picked any. */
+  trainingDayToday: boolean | null;
+}) {
+  const { colors } = useTheme();
+  const startPlanSession = useStartPlanSession();
+  const volume = useCountUp(todaySession ? Math.round(displayWeight(todaySession.volumeKg, unit)) : 0, !!todaySession);
+  // The one card you act on: same surface as the rest, lit by an accent glow (HeroGlow).
+  const shell = {
+    backgroundColor: colors.raised,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    gap: spacing.md,
+    overflow: "hidden" as const,
+  };
+
+  if (loadingPlan && !todaySession) {
     return (
-      <Card style={{ gap: spacing.md }}>
-        <View>
-          <Text style={[typography.labelMd, { color: colors.textSecondary }]}>Today · {planName}</Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-            <Ionicons name="moon-outline" size={20} color={colors.textSecondary} />
-            <Text accessibilityRole="header" style={[typography.headlineMd, { color: colors.text }]}>
-              Rest day
-            </Text>
-          </View>
-          {showNote && (
-            <Text style={[typography.bodyMd, { color: colors.textSecondary, marginTop: spacing.xs }]}>{note}</Text>
-          )}
-        </View>
-        <Button title="View plan" variant="secondary" onPress={openPlan} />
-      </Card>
+      <View style={shell}>
+        <HeroGlow />
+        <SkeletonBlock width="25%" height={typography.labelMd.lineHeight} radius="sm" />
+        <SkeletonBlock width="55%" height={typography.headlineMd.lineHeight} radius="sm" />
+        <SkeletonBlock height={size.control} radius="lg" />
+      </View>
     );
   }
 
-  const exercises = (day.exercises ?? []).filter((e) => e.name);
-  const shown = exercises.slice(0, 3);
-  const title = day.name || formatMuscles(day.targetMuscles) || "Workout";
+  const sessionNumber = todaySession ? todaySession.number : nextSessionNumber;
+  const trainingToday = hasPlan && !!planDay && planDay.sessionType !== "rest";
+  // Opens History on today with the session expanded.
+  const viewWorkout = () => router.navigate({ pathname: "/(tabs)/history", params: { date: todaySession?.date ?? formatDate(new Date()) } });
+  const logWorkout = () => {
+    perfStart("open picker");
+    router.push("/log/pick");
+  };
+
+  // No plan and nothing logged: one action. AI plans have their own card on
+  // Home, so they stay reachable whether or not you've trained today.
+  if (!hasPlan && !todaySession) {
+    const rest = trainingDayToday === false;
+    return (
+      <View style={shell}>
+        <HeroGlow />
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <Text style={[typography.labelMd, { color: colors.accent, textTransform: "uppercase", letterSpacing: tracking.labelWide }]}>Today</Text>
+          <View style={{ paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: radius.full, backgroundColor: colors.surfaceContainerHigh }}>
+            <Text style={[typography.labelSm, { color: colors.textSecondary }]}>Session {sessionNumber}</Text>
+          </View>
+        </View>
+        <View style={{ gap: spacing.xs }}>
+          <Text accessibilityRole="header" style={[typography.headlineMd, { color: colors.text }]}>
+            {trainingDayToday == null ? "Ready to train?" : rest ? "Rest day" : "Training day"}
+          </Text>
+          <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
+            {rest ? "Not one of your training days. Train anyway if you feel like it." : "Nothing logged yet today."}
+          </Text>
+        </View>
+        <Button title={rest ? "Start a workout anyway" : "Start workout"} icon="play" haptic fullWidth onPress={logWorkout} />
+      </View>
+    );
+  }
+
+  let badge: { label: string; done?: boolean } = { label: "Today" };
+  let title: string;
+  let subtitle: string;
+  let chips: ChipItem[] = [];
+  let button: { title: string; icon?: "play"; onPress: () => void; haptic?: boolean };
+
+  if (trainingToday && planDay) {
+    const planned = (planDay.exercises ?? []).filter((e) => e.name);
+    const logged = new Set((todaySession?.exercises ?? []).map(normalizeExercise));
+    const isLogged = (e: PlanExercise) =>
+      logged.has(normalizeExercise(e.name ?? "")) || (!!e.exerciseId && logged.has(normalizeExercise(e.exerciseId)));
+    const doneCount = planned.filter(isLogged).length;
+    title = planDay.name || formatMuscles(planDay.targetMuscles) || "Workout";
+
+    if (planned.length > 0 && doneCount === planned.length && todaySession) {
+      // Plan complete.
+      badge = { label: "Done today", done: true };
+      subtitle = sessionSummary(todaySession, volume, unit);
+      chips = planned.map((e) => ({ name: e.name!, done: true }));
+      button = { title: "View workout", onPress: viewWorkout };
+    } else if (doneCount > 0) {
+      // In progress.
+      subtitle = `${doneCount} of ${planned.length} exercises done`;
+      chips = planned.map((e) => ({ name: e.name!, done: isLogged(e) }));
+      const remaining = planned.filter((e) => !isLogged(e));
+      button = {
+        title: "Continue workout",
+        icon: "play",
+        haptic: true,
+        onPress: () => startPlanSession(remaining, planDay.targetMuscles),
+      };
+    } else {
+      // Planned, nothing logged.
+      subtitle = [
+        `${planned.length} ${planned.length === 1 ? "exercise" : "exercises"}`,
+        planDay.estimatedDurationMinutes ? `about ${planDay.estimatedDurationMinutes} min` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      chips = planned.map((e) => ({ name: e.name! }));
+      button = {
+        title: "Start workout",
+        icon: "play",
+        haptic: true,
+        onPress: () => startPlanSession(planned, planDay.targetMuscles),
+      };
+    }
+  } else if (todaySession) {
+    // No plan workout today (no plan, rest day, or day not in plan) but something was logged.
+    badge = { label: "Logged today" };
+    title = sessionName(todaySession);
+    subtitle = sessionSummary(todaySession, volume, unit);
+    chips = todaySession.exercises.map((name) => ({ name }));
+    button = { title: "View workout", onPress: viewWorkout };
+  } else {
+    // Rest day (or nothing scheduled today), nothing logged.
+    const note = planDay?.recoveryNote?.trim();
+    title = "Rest day";
+    subtitle = note && !isRestDayTitle(note) ? note : planDay ? "Recovery is part of the plan." : "Nothing is scheduled today.";
+    button = { title: "Start a workout anyway", onPress: logWorkout };
+  }
+
+  const shown = chips.slice(0, MAX_CHIPS);
 
   return (
-    <Card style={{ gap: spacing.md }}>
-      <View>
-        <Text style={[typography.labelMd, { color: colors.textSecondary }]}>Today · {planName}</Text>
+    <View style={shell}>
+      <HeroGlow />
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+          {badge.done && <MaterialIcons name="check-circle" size={size.iconSm} color={colors.accent} />}
+          <Text style={[typography.labelMd, { color: colors.accent, textTransform: "uppercase", letterSpacing: tracking.labelWide }]}>{badge.label}</Text>
+        </View>
+        <View style={{ paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: radius.full, backgroundColor: colors.surfaceContainerHigh }}>
+          <Text style={[typography.labelSm, { color: colors.textSecondary }]}>Session {sessionNumber}</Text>
+        </View>
+      </View>
+      <View style={{ gap: spacing.xs }}>
         <Text accessibilityRole="header" style={[typography.headlineMd, { color: colors.text }]}>
           {title}
         </Text>
-        {!!day.estimatedDurationMinutes && (
-          <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
-            About {day.estimatedDurationMinutes} min
-          </Text>
-        )}
+        <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>{subtitle}</Text>
       </View>
       {shown.length > 0 && (
-        <View style={{ gap: spacing.xs }}>
-          {shown.map((e, i) => (
-            <Text key={`${e.name}-${i}`} style={[typography.bodyMd, { color: colors.text }]}>
-              {e.name}
-              {typeof e.sets === "number" && e.reps ? (
-                <Text style={{ color: colors.textSecondary }}>{`  ${e.sets} × ${e.reps}`}</Text>
-              ) : null}
-            </Text>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.inline }}>
+          {shown.map((c, i) => (
+            <View
+              key={`${c.name}-${i}`}
+              accessibilityLabel={c.done ? `${c.name}, done` : c.name}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: spacing.xs,
+                paddingHorizontal: spacing.sm,
+                paddingVertical: spacing.xs,
+                borderRadius: radius.md,
+                backgroundColor: colors.surfaceContainerHigh,
+              }}
+            >
+              {c.done && <MaterialIcons name="check" size={size.iconXs} color={colors.accent} />}
+              <Text style={[typography.labelSm, { color: c.done ? colors.textSecondary : colors.text }]}>{c.name}</Text>
+            </View>
           ))}
-          {exercises.length > shown.length && (
-            <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
-              +{exercises.length - shown.length} more
-            </Text>
+          {chips.length > shown.length && (
+            <View style={{ paddingHorizontal: spacing.sm, paddingVertical: spacing.xs }}>
+              <Text style={[typography.labelSm, { color: colors.textSecondary }]}>+{chips.length - shown.length} more</Text>
+            </View>
           )}
         </View>
       )}
-      <Button title="Start workout" icon="play" fullWidth onPress={() => router.push("/add-workout")} />
-      <Button title="View plan" variant="secondary" onPress={openPlan} />
-    </Card>
-  );
-}
-
-function Avatar({ photoUri, initials, onPress }: { photoUri: string | null; initials: string; onPress: () => void }) {
-  const { colors } = useTheme();
-  const [photoFailed, setPhotoFailed] = useState(false);
-  const showPhoto = !!photoUri && !photoFailed;
-
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel="Open profile"
-      style={({ pressed }) => ({
-        width: touchTarget,
-        height: touchTarget,
-        borderRadius: touchTarget / 2,
-        overflow: "hidden",
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: pressed ? colors.border : colors.raised,
-        borderWidth: 1,
-        borderColor: colors.border,
-      })}
-    >
-      {showPhoto ? (
-        <Image
-          source={{ uri: photoUri }}
-          onError={() => setPhotoFailed(true)}
-          style={{ width: touchTarget, height: touchTarget }}
-        />
-      ) : initials ? (
-        <Text style={[typography.bodyLg, { color: colors.accent, ...semibold }]} maxFontSizeMultiplier={1.2}>
-          {initials}
-        </Text>
-      ) : (
-        <Ionicons name="person" size={22} color={colors.accent} />
-      )}
-    </Pressable>
-  );
-}
-
-function RecentRow({
-  workout,
-  unit,
-  showDivider,
-}: {
-  workout: RecentWorkout;
-  unit: "kg" | "lbs";
-  showDivider: boolean;
-}) {
-  const { colors } = useTheme();
-  const dateLabel = formatRelativeDate(workout.date);
-  const detail =
-    workout.totalVolume > 0
-      ? `${Math.round(displayWeight(workout.totalVolume, unit)).toLocaleString()} ${weightLabel(unit)}`
-      : `${workout.exercises.length} ${workout.exercises.length === 1 ? "exercise" : "exercises"}`;
-  const exerciseSummary =
-    workout.exercises.slice(0, 2).join(", ") +
-    (workout.exercises.length > 2 ? ` +${workout.exercises.length - 2}` : "");
-
-  return (
-    <Pressable
-      onPress={() => router.navigate("/(tabs)/history")}
-      accessibilityRole="button"
-      accessibilityLabel={`${workout.category}, ${dateLabel}, ${detail}. ${exerciseSummary}`}
-      accessibilityHint="Opens History"
-      style={({ pressed }) => ({
-        minHeight: 64,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: spacing.md,
-        paddingHorizontal: spacing.lg,
-        paddingVertical: spacing.md,
-        borderTopWidth: showDivider ? 1 : 0,
-        borderTopColor: colors.border,
-        backgroundColor: pressed ? colors.raised : "transparent",
-      })}
-    >
-      <IconBadge name={getCategoryIcon(workout.category)} />
-      <View style={{ flex: 1 }}>
-        <Text style={[typography.bodyLg, { color: colors.text, ...semibold }]}>{workout.category}</Text>
-        <Text style={[typography.bodyMd, { color: colors.textSecondary }]} numberOfLines={2}>
-          {exerciseSummary}
-        </Text>
-      </View>
-      <View style={{ alignItems: "flex-end", maxWidth: "40%" }}>
-        <Text style={[typography.bodyMd, { color: colors.text }]}>{dateLabel}</Text>
-        <Text style={[typography.labelMd, { color: colors.textSecondary }]}>{detail}</Text>
-      </View>
-    </Pressable>
-  );
-}
-
-function IconBadge({ name }: { name: IconName }) {
-  const { colors } = useTheme();
-  return (
-    <View
-      style={{
-        width: 40,
-        height: 40,
-        borderRadius: radius.lg,
-        backgroundColor: colors.accentSubtle,
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <Ionicons name={name} size={20} color={colors.accent} />
+      <Button title={button.title} icon={button.icon} haptic={button.haptic} fullWidth onPress={button.onPress} />
     </View>
   );
 }
 
-function HomeSkeleton() {
+/** Accent glow from the top-left corner, fading into the card surface; text stays on the plain surface tone. */
+function HeroGlow() {
+  const { colors } = useTheme();
   return (
-    <View style={{ gap: spacing.lg }}>
-      <Card style={{ gap: spacing.md }}>
-        <Skeleton width="40%" height={14} />
-        <Skeleton width="70%" height={24} />
-        <Skeleton height={48} radius="lg" />
-      </Card>
-      <Card style={{ flexDirection: "row", gap: spacing.lg, alignItems: "center" }}>
-        <Skeleton width={80} height={80} radius="full" />
-        <View style={{ flex: 1, gap: spacing.sm }}>
-          <Skeleton width="60%" />
-          <Skeleton width="40%" height={12} />
+    <LinearGradient
+      pointerEvents="none"
+      colors={[withAlpha(colors.accentContainer, alpha.faint), withAlpha(colors.accentContainer, alpha.band), withAlpha(colors.accentContainer, 0)]}
+      locations={[0, 0.45, 1]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
+    />
+  );
+}
+
+/* ==============================
+   WEEK + STREAK
+   ============================== */
+
+function WeekCard({ week, volume, unit }: { week: WeekSummary; volume: WeekVolume; unit: "kg" | "lbs" }) {
+  const { colors } = useTheme();
+  const shown = useCountUp(week.daysTrained, true);
+  const { goal, met, percent, daysTrained } = week;
+
+  return (
+    <Card style={{ flex: 1, gap: spacing.sm }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <Text style={[typography.labelSm, { color: colors.textSecondary, textTransform: "uppercase", letterSpacing: tracking.labelWide }]}>This week</Text>
+        {percent != null && <Text style={[typography.labelLg, { color: colors.accent }]}>{percent}%</Text>}
+      </View>
+      {/* Count and ring sit together in the middle of the card's remaining space. */}
+      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.md }}>
+        <View style={{ flexShrink: 1 }}>
+          <Text style={[typography.headlineMd, { color: colors.text }]}>
+            {goal ? `${shown} of ${goal}` : `${shown} ${daysTrained === 1 ? "day" : "days"}`}
+          </Text>
+          <Text style={[typography.labelSm, { color: met ? colors.accent : colors.textSecondary }]}>{met ? "Goal met" : goal ? "days trained" : "trained"}</Text>
         </View>
-      </Card>
-      <Card style={{ gap: spacing.md }}>
-        <Skeleton width="30%" height={20} />
-        <Skeleton height={40} />
-        <Skeleton height={40} />
-      </Card>
+        {goal && (
+          <ProgressRing
+            progress={daysTrained / goal}
+            size={size.ringSm}
+            strokeWidth={size.ringSmStroke}
+            trackColor={colors.surfaceContainerHighest}
+            accessibilityLabel={`${daysTrained} of ${goal} training days this week${met ? ", goal met" : ""}`}
+          >
+            {/* Always shown; lights up once the goal is met. */}
+            <MaterialIcons name="check" size={size.iconXs} color={met ? colors.accent : colors.textSecondary} />
+          </ProgressRing>
+        )}
+      </View>
+      {volume.thisWeekKg > 0 && (
+        <Text style={[typography.labelSm, { color: colors.textSecondary }]} numberOfLines={2}>
+          {`${Math.round(displayWeight(volume.thisWeekKg, unit)).toLocaleString()} ${weightLabel(unit)} lifted`}
+          {volume.changePct != null && (
+            <Text style={{ color: volume.changePct >= 0 ? colors.trendGood : colors.trendBad }}>
+              {` · ${volume.changePct >= 0 ? "+" : "−"}${Math.abs(volume.changePct)}% vs last week`}
+            </Text>
+          )}
+        </Text>
+      )}
+    </Card>
+  );
+}
+
+function StreakCard({ streak, week, todayKey }: { streak: StreakSummary; week: WeekSummary; todayKey: string }) {
+  const { colors } = useTheme();
+  const shown = useCountUp(streak.current, true);
+  const weeksLabel = (n: number) => `${n} ${n === 1 ? "week" : "weeks"}`;
+  const plural = (n: number) => `${n} more ${n === 1 ? "day" : "days"} this week`;
+  const progress = !week.goal
+    ? null
+    : week.met
+      ? "Week complete"
+      : `${plural(week.remaining)} to ${streak.current > 0 ? "keep it" : "start one"}`;
+  const a11y = [
+    streak.current > 0 ? `${streak.current} week streak.` : "No streak yet.",
+    streak.best > streak.current ? `Best ${weeksLabel(streak.best)}.` : "",
+    week.goal ? `${week.daysTrained} of ${week.goal} days this week.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <Card style={{ flex: 1, justifyContent: "space-between", gap: spacing.sm }} accessibilityLabel={a11y}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+        <MaterialIcons name="local-fire-department" size={size.iconSm} color={colors.warning} />
+        <Text style={[typography.labelSm, { color: colors.textSecondary, textTransform: "uppercase", letterSpacing: tracking.labelWide }]}>Streak</Text>
+      </View>
+      <View style={{ gap: spacing.xs }}>
+        <Text style={[typography.headlineMd, { color: streak.current > 0 ? colors.warning : colors.textSecondary }]}>
+          {streak.current > 0 ? weeksLabel(shown) : "Start a streak"}
+        </Text>
+        {streak.best > streak.current && (
+          <Text style={[typography.labelSm, { color: colors.textSecondary }]}>Best: {weeksLabel(streak.best)}</Text>
+        )}
+        {progress && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            {week.met && <MaterialIcons name="check" size={size.iconXs} color={colors.accent} />}
+            <Text style={[typography.labelSm, { color: week.met ? colors.accent : colors.textSecondary, flexShrink: 1 }]}>{progress}</Text>
+          </View>
+        )}
+        <View
+          style={{ flexDirection: "row", justifyContent: "space-between", marginTop: spacing.xs }}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
+          {week.dates.map((date, i) => {
+            const isToday = date === todayKey;
+            const future = date > todayKey;
+            const trained = week.trained[i];
+            return (
+              <View key={date} style={{ alignItems: "center", gap: spacing.xs }}>
+                <Text style={[isToday ? typography.labelMd : typography.labelSm, { color: isToday ? colors.warning : colors.textSecondary }]}>{WEEK_LETTERS[i]}</Text>
+                <View
+                  style={{
+                    width: size.goalDot,
+                    height: size.goalDot,
+                    borderRadius: radius.full,
+                    backgroundColor: trained ? colors.warning : future || isToday ? "transparent" : colors.surfaceContainerHigh,
+                    borderWidth: trained ? 0 : size.divider,
+                    borderColor: isToday && !trained ? colors.warning : colors.border,
+                    opacity: future ? alpha.half : 1,
+                  }}
+                />
+              </View>
+            );
+          })}
+        </View>
+      </View>
+    </Card>
+  );
+}
+
+/* ==============================
+   YOUR PLAN
+   ============================== */
+
+function YourPlanCard({ planId, name, weekNumber, days }: { planId: string; name: string; weekNumber: number; days: PlanDay[] }) {
+  const { colors } = useTheme();
+  // Next training days after today, following the plan's weekday template.
+  const todayIndex = new Date().getDay();
+  const upcoming: string[] = [];
+  for (let i = 1; i <= 7 && upcoming.length < MAX_UPCOMING; i++) {
+    const idx = (todayIndex + i) % 7;
+    const day = days.find((d) => d.day?.toLowerCase() === WEEKDAYS[idx] && d.sessionType !== "rest");
+    if (day) upcoming.push(`${WEEKDAY_SHORT[idx]} · ${planDayShortName(day)}`);
+  }
+
+  return (
+    <Card
+      onPress={() => router.push({ pathname: "/plan-detail", params: { id: planId } })}
+      accessibilityLabel={`Your plan: ${name}, week ${weekNumber}. Next: ${upcoming.join(", ") || "no sessions scheduled"}`}
+      accessibilityHint="Opens your plan"
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        <View style={{ flex: 1, gap: spacing.sm }}>
+          <View>
+            <Text style={[typography.labelSm, { color: colors.textSecondary, textTransform: "uppercase", letterSpacing: tracking.labelWide }]}>Your plan · Week {weekNumber}</Text>
+            <Text style={[typography.bodyMdMedium, { color: colors.text }]} numberOfLines={1}>
+              {name}
+            </Text>
+          </View>
+          {upcoming.length > 0 && (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.inline }}>
+              {upcoming.map((label) => (
+                <View key={label} style={{ paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: radius.md, backgroundColor: colors.surfaceContainerHigh }}>
+                  <Text style={[typography.labelSm, { color: colors.text }]}>{label}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+        <MaterialIcons name="chevron-right" size={size.icon} color={colors.textSecondary} />
+      </View>
+    </Card>
+  );
+}
+
+/** Home's permanent entry to AI plans when none is active. */
+function AIPlanCard({ savedPlans, weeklyGoal }: { savedPlans: number; weeklyGoal: number | null }) {
+  const { colors } = useTheme();
+  const title = savedPlans > 0 ? "Pick your active plan" : "Build your AI plan";
+  const subtitle =
+    savedPlans > 0
+      ? `You have ${savedPlans} saved ${savedPlans === 1 ? "plan" : "plans"}. Activate one to follow it here.`
+      : weeklyGoal
+        ? `A week of sessions built around your ${weeklyGoal} training ${weeklyGoal === 1 ? "day" : "days"}.`
+        : "A week of sessions built from your profile and recent workouts.";
+  return (
+    <Card onPress={() => router.navigate("/ai-plan")} accessibilityLabel={`${title}. ${subtitle}`} accessibilityHint="Opens AI plans">
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        <View style={{ width: size.rowIcon, height: size.rowIcon, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh }}>
+          <Ionicons name="sparkles" size={size.icon} color={colors.accent} />
+        </View>
+        <View style={{ flex: 1, gap: spacing.xxs }}>
+          <Text style={[typography.labelSm, { color: colors.textSecondary, textTransform: "uppercase", letterSpacing: tracking.labelWide }]}>AI plan</Text>
+          <Text style={[typography.headlineSm, { color: colors.text }]}>{title}</Text>
+          <Text style={[typography.labelSm, { color: colors.textSecondary }]}>{subtitle}</Text>
+        </View>
+        <MaterialIcons name="chevron-right" size={size.icon} color={colors.textSecondary} />
+      </View>
+    </Card>
+  );
+}
+
+/* ==============================
+   RECENT CARD
+   ============================== */
+
+function RecentCard({ session, unit, todayKey }: { session: Session; unit: "kg" | "lbs"; todayKey: string }) {
+  const { colors } = useTheme();
+  const volume = useCountUp(Math.round(displayWeight(session.volumeKg, unit)), true);
+  const day = relativeDay(session.date, todayKey);
+  const count = `${session.exercises.length} ${session.exercises.length === 1 ? "exercise" : "exercises"}`;
+  const name = sessionName(session);
+
+  return (
+    <PressableScale
+      onPress={() => router.navigate("/(tabs)/history")}
+      accessibilityRole="button"
+      accessibilityLabel={`${name}, ${day}, ${count}${session.volumeKg > 0 ? `, total volume ${volume} ${weightLabel(unit)}` : ""}`}
+      accessibilityHint="Opens History"
+      style={({ pressed }) => ({
+        flexDirection: "row",
+        alignItems: "center",
+        gap: spacing.md,
+        padding: spacing.md,
+        borderRadius: radius.lg,
+        backgroundColor: pressed ? colors.surfaceContainerHigh : colors.raised,
+      })}
+    >
+      <View
+        style={{
+          width: size.rowIcon,
+          height: size.rowIcon,
+          borderRadius: radius.md,
+          backgroundColor: colors.surfaceContainerHigh,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <MuscleIcon category={session.mainCategory} size={size.muscleIcon} active />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[typography.bodyMdMedium, { color: colors.text }]} numberOfLines={1}>
+          {name}
+        </Text>
+        <Text style={[typography.labelSm, { color: colors.textSecondary }]}>
+          {day} · {count}
+        </Text>
+      </View>
+      <View style={{ alignItems: "flex-end" }}>
+        {session.volumeKg > 0 ? (
+          <>
+            <View style={{ flexDirection: "row", alignItems: "baseline", gap: spacing.xs }}>
+              <Text style={[typography.headlineSm, { color: colors.text }]}>{volume.toLocaleString()}</Text>
+              <Text style={[typography.labelMd, { color: colors.textSecondary }]}>{weightLabel(unit)}</Text>
+            </View>
+            <Text style={[typography.labelSm, { color: colors.textSecondary }]}>Total volume</Text>
+          </>
+        ) : (
+          <Text style={[typography.labelSm, { color: colors.textSecondary }]}>
+            {session.sets} {session.sets === 1 ? "set" : "sets"}
+          </Text>
+        )}
+      </View>
+    </PressableScale>
+  );
+}
+
+/* ==============================
+   AVATAR
+   ============================== */
+
+/* ==============================
+   SKELETON (mirrors the loaded layout)
+   ============================== */
+
+function HomeSkeleton() {
+  const { colors } = useTheme();
+  const line = (w: DimensionValue, role: { lineHeight: number }) => <SkeletonBlock width={w} height={role.lineHeight} radius="sm" />;
+  // Mirrors the loaded layout block for block (same surfaces, radii and gaps),
+  // so nothing jumps when the real cards replace it.
+  const surface = { backgroundColor: colors.raised, borderRadius: radius.xl, padding: spacing.lg };
+  return (
+    <View style={{ gap: spacing.lg }} accessibilityLabel="Loading your home screen">
+      {/* Today */}
+      <View style={[surface, { gap: spacing.md }]}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+          {line("28%", typography.labelMd)}
+          {line("20%", typography.labelSm)}
+        </View>
+        {line("50%", typography.headlineMd)}
+        {line("70%", typography.bodyMd)}
+        <View style={{ flexDirection: "row", gap: spacing.inline }}>
+          {(["24%", "30%", "26%"] as DimensionValue[]).map((w, i) => (
+            <SkeletonBlock key={i} width={w} height={typography.labelSm.lineHeight + spacing.sm} radius="md" />
+          ))}
+        </View>
+        <SkeletonBlock height={size.control} radius="lg" />
+      </View>
+      {/* This week + streak */}
+      <View style={{ flexDirection: "row", gap: spacing.sm }}>
+        {[0, 1].map((k) => (
+          <View key={k} style={[surface, { flex: 1, gap: spacing.sm }]}>
+            {line("55%", typography.labelSm)}
+            {line("65%", typography.headlineMd)}
+            {line("80%", typography.labelSm)}
+            {line("90%", typography.labelSm)}
+          </View>
+        ))}
+      </View>
+      {/* Body weight */}
+      <View style={[surface, { flexDirection: "row", alignItems: "center", gap: spacing.md }]}>
+        <View style={{ flex: 1, gap: spacing.xs }}>
+          {line("35%", typography.labelSm)}
+          {line("45%", typography.headlineLg)}
+          {line("55%", typography.labelMd)}
+        </View>
+        <SkeletonBlock width={size.goalCard - spacing.xl} height={size.control} radius="md" />
+      </View>
+      {/* Plan slot (your plan, or the AI plan card) */}
+      <View style={[surface, { flexDirection: "row", alignItems: "center", gap: spacing.md }]}>
+        <SkeletonBlock width={size.rowIcon} height={size.rowIcon} radius="md" />
+        <View style={{ flex: 1, gap: spacing.xs }}>
+          {line("25%", typography.labelSm)}
+          {line("50%", typography.headlineSm)}
+          {line("75%", typography.labelSm)}
+        </View>
+      </View>
+      {/* Suggested next */}
+      <View style={[surface, { flexDirection: "row", alignItems: "center", gap: spacing.md }]}>
+        <SkeletonBlock width={size.rowIcon} height={size.rowIcon} radius="md" />
+        <View style={{ flex: 1, gap: spacing.xs }}>
+          {line("35%", typography.labelSm)}
+          {line("30%", typography.headlineSm)}
+          {line("45%", typography.labelSm)}
+        </View>
+      </View>
+      {/* Recent activity */}
+      <View style={{ gap: spacing.sm }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", minHeight: touchTarget }}>
+          {line("40%", typography.headlineSm)}
+          {line("25%", typography.labelMd)}
+        </View>
+        {[0, 1, 2].map((k) => (
+          <View key={k} style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.raised }}>
+            <SkeletonBlock width={size.rowIcon} height={size.rowIcon} radius="md" />
+            <View style={{ flex: 1, gap: spacing.xs }}>
+              {line("45%", typography.bodyMdMedium)}
+              {line("60%", typography.labelSm)}
+            </View>
+            <SkeletonBlock width={size.homeRing} height={typography.headlineSm.lineHeight} radius="sm" />
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
@@ -688,26 +978,69 @@ function HomeSkeleton() {
    HELPERS
    ============================== */
 
-function getPlanWeekDays(planData: unknown, weekNumber: number | undefined): PlanDay[] {
-  const data = planData as { weeks?: { days?: PlanDay[] }[]; days?: PlanDay[] } | null | undefined;
-  if (Array.isArray(data?.weeks) && data.weeks.length > 0) {
-    const index = Math.min(Math.max((weekNumber ?? 1) - 1, 0), data.weeks.length - 1);
-    return data.weeks[index]?.days ?? [];
-  }
-  if (Array.isArray(data?.days)) return data.days;
-  return [];
+/** Counts up from 0 once, on first load; later changes jump straight to the value. */
+function useCountUp(target: number, ready: boolean) {
+  const reduceMotion = useReducedMotion();
+  const [value, setValue] = useState(0);
+  const animated = useRef(false);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (animated.current || reduceMotion || target === 0) {
+      animated.current = true;
+      setValue(target);
+      return;
+    }
+    animated.current = true;
+    const start = Date.now();
+    let frame = 0;
+    const tick = () => {
+      const t = Math.min(1, (Date.now() - start) / motion.countUpMs);
+      setValue(Math.round(target * (1 - (1 - t) ** 3)));
+      if (t < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target, ready, reduceMotion]);
+
+  return ready ? value : target;
 }
 
-function isRestDayTitle(note: string): boolean {
-  const normalized = note.toLowerCase().replace(/[^a-z ]/g, "").trim();
-  return normalized === "rest" || normalized === "rest day";
+/** Case/punctuation-insensitive key for matching plan exercises to logged ones. */
+function normalizeExercise(name: string) {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function formatMuscles(muscles: string[] | undefined): string {
-  if (!muscles || muscles.length === 0) return "";
-  const list = muscles.map((m) => m.toLowerCase());
-  const joined = list.length === 1 ? list[0] : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
-  return joined.charAt(0).toUpperCase() + joined.slice(1);
+/** "2 exercises · 6 sets · 900 kg" (volume omitted for bodyweight-only sessions). */
+function sessionSummary(s: Session, volume: number, unit: "kg" | "lbs") {
+  const parts = [
+    `${s.exercises.length} ${s.exercises.length === 1 ? "exercise" : "exercises"}`,
+    `${s.sets} ${s.sets === 1 ? "set" : "sets"}`,
+  ];
+  if (s.volumeKg > 0) parts.push(`${volume.toLocaleString()} ${weightLabel(unit)}`);
+  return parts.join(" · ");
+}
+
+function sessionName(s: Session) {
+  const main = s.categories.filter((c) => c !== "Other");
+  if (main.length === 0) return "Workout";
+  if (main.length <= 2) return main.join(" & ");
+  return "Mixed session";
+}
+
+function relativeDay(date: string, todayKey: string) {
+  const diff = Math.round((parseLocalDate(todayKey).getTime() - parseLocalDate(date).getTime()) / DAY_MS);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  if (diff <= WEEKDAY_WINDOW) return parseLocalDate(date).toLocaleDateString(undefined, { weekday: "long" });
+  return parseLocalDate(date).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+function lastTrainedText(daysAgo: number | null) {
+  if (daysAgo === null) return "Not trained yet";
+  if (daysAgo === 0) return "Last trained today";
+  if (daysAgo === 1) return "Last trained yesterday";
+  return `Last trained ${daysAgo} days ago`;
 }
 
 function getGreeting(): string {
@@ -715,38 +1048,4 @@ function getGreeting(): string {
   if (hour < 12) return "Good morning";
   if (hour < 17) return "Good afternoon";
   return "Good evening";
-}
-
-function getCategoryIcon(category: string): IconName {
-  const icons: Record<string, IconName> = {
-    Chest: "fitness-outline",
-    Back: "body-outline",
-    Shoulders: "barbell-outline",
-    Legs: "walk-outline",
-    Arms: "hand-left-outline",
-    Abs: "ellipse-outline",
-    Cardio: "heart-outline",
-    "Full Body": "body-outline",
-    Mixed: "layers-outline",
-  };
-  return icons[category] || "barbell-outline";
-}
-
-function formatRelativeDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-
-  const dateOnly = dateStr.split("T")[0];
-  const todayStr = today.toISOString().split("T")[0];
-  const yesterdayStr = yesterday.toISOString().split("T")[0];
-
-  if (dateOnly === todayStr) return "Today";
-  if (dateOnly === yesterdayStr) return "Yesterday";
-
-  const diff = Math.floor((today.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
-  if (diff < 7) return `${diff}d ago`;
-
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }

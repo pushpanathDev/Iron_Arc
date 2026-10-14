@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
-import { Pressable, View, type StyleProp, type ViewStyle } from "react-native";
+import { View, type StyleProp, type ViewStyle } from "react-native";
 import { useTheme } from "../../theme/theme";
-import { radius as radii, spacing } from "../../theme/tokens";
+import { radius as radii, spacing, touchTarget } from "../../theme/tokens";
+import { PressableScale } from "./PressableScale";
 
 export type CardProps = {
   children: ReactNode;
   onPress?: () => void;
-  radius?: "md" | "lg";
+  radius?: "md" | "lg" | "xl";
   padded?: boolean;
   accessibilityLabel?: string;
   accessibilityHint?: string;
@@ -17,7 +18,7 @@ export type CardProps = {
 export function Card({
   children,
   onPress,
-  radius = "lg",
+  radius = "xl",
   padded = true,
   accessibilityLabel,
   accessibilityHint,
@@ -25,10 +26,10 @@ export function Card({
   testID,
 }: CardProps) {
   const { colors } = useTheme();
+  // Borderless on the raised surface (the Weight screen's card style): depth
+  // comes from the surface step, not an outline.
   const base: ViewStyle = {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
+    backgroundColor: colors.raised,
     borderRadius: radii[radius],
     padding: padded ? spacing.lg : 0,
   };
@@ -42,7 +43,7 @@ export function Card({
   }
 
   return (
-    <Pressable
+    <PressableScale
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
@@ -50,13 +51,13 @@ export function Card({
       testID={testID}
       style={({ pressed }) => [
         base,
-        { minHeight: 48 },
-        pressed && { backgroundColor: colors.raised },
+        { minHeight: touchTarget },
+        pressed && { backgroundColor: colors.surfaceContainerHigh },
         style,
       ]}
     >
       {children}
-    </Pressable>
+    </PressableScale>
   );
 }
 

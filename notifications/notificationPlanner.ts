@@ -1,34 +1,54 @@
 import type { BodyWeight, Workout } from "../services/api";
 
-export type NotificationType =
-  | "daily_reminder"
-  | "streak_at_risk"
-  | "inactivity"
-  | "weekly_summary"
-  | "motivation";
+/*
+ * Plans the next two weeks of local reminders from the user's own data. Pure:
+ * the service schedules what this returns, and re-plans whenever workouts,
+ * the profile or the settings change (and when the app comes to the front),
+ * so a reminder never fires about something already done.
+ */
 
-export type NotificationPriority = 1 | 2 | 3 | 4 | 5;
+export type NotificationType = "daily_reminder" | "goal_at_risk" | "inactivity" | "weekly_summary" | "weigh_in";
+
+export type NotificationPriority = 1 | 2 | 3 | 4;
 
 export interface NotificationState {
   workouts: Workout[];
   weights: BodyWeight[];
   displayName?: string | null;
-  weeklyGoal?: number;
+  /** Training days per week (mirrors trainingDays.length when set). */
+  weeklyGoal?: number | null;
+  /** ISO weekdays the user trains on (1 = Mon … 7 = Sun). Training reminders go out only on these. */
+  trainingDays?: number[] | null;
 }
 
 export interface NotificationPreferences {
   enabled: boolean;
+  /** "Time to train" on training days not yet logged. */
   dailyReminder: boolean;
+  /** Weekly goal check: the evening it becomes "train today or miss the goal". (Stored name kept.) */
   streakReminders: boolean;
+  /** Comeback nudge after three days without a workout. */
   inactivityReminders: boolean;
+  /** Sunday evening review. */
   weeklySummary: boolean;
-  motivationalMessages: boolean;
+  /** Alert when the rest timer ends while the app is in the background. */
+  restTimerAlert: boolean;
   dailyReminderTime: string;
   streakReminderTime: string;
   inactivityReminderTime: string;
   weeklySummaryTime: string;
-  quietHoursStart: string;
-  quietHoursEnd: string;
+  /** Days for the training reminder (ISO 1 = Mon); null = the profile's training days. */
+  reminderDays: number[] | null;
+  /** No training reminder on a day already logged. */
+  skipIfTrained: boolean;
+  /** Morning weigh-in reminder on chosen days, skipped once a weight is logged that day. */
+  weighIn: boolean;
+  weighInDays: number[];
+  weighInTime: string;
+  /** Rest timer: default length when an exercise has none, and how the end alert sounds. */
+  restDefaultSeconds: number;
+  restSound: boolean;
+  restVibrate: boolean;
 }
 
 export interface PlannedNotification {
@@ -41,35 +61,66 @@ export interface PlannedNotification {
   data: Record<string, string>;
 }
 
-const MOTIVATION_MESSAGES = [
-  {
-    title: "Small steps count",
-    body: "A little progress today still moves you forward, {name}.",
-  },
-  {
-    title: "Keep your momentum",
-    body: "You do not need a perfect session. Just keep showing up, {name}.",
-  },
-  {
-    title: "Your future self is watching",
-    body: "Give yourself something to be proud of today, {name}.",
-  },
-  {
-    title: "Progress over perfection",
-    body: "Consistency beats intensity. Keep your rhythm, {name}.",
-  },
-];
+export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  enabled: true,
+  dailyReminder: true,
+  streakReminders: true,
+  inactivityReminders: true,
+  weeklySummary: true,
+  restTimerAlert: true,
+  dailyReminderTime: "09:00",
+  streakReminderTime: "19:00",
+  inactivityReminderTime: "10:00",
+  weeklySummaryTime: "18:00",
+  reminderDays: null,
+  skipIfTrained: true,
+  weighIn: false,
+  weighInDays: [1, 4],
+  weighInTime: "07:00",
+  restDefaultSeconds: 90,
+  restSound: true,
+  restVibrate: true,
+};
+
+export const REST_MIN_SECONDS = 30;
+export const REST_MAX_SECONDS = 300;
+
+/**
+ * The words each reminder uses. The planner sends these and the settings
+ * screen previews them, so the preview is always what really arrives.
+ */
+export const COPY = {
+  daily_reminder: (name: string) => ({ title: "Time to train", body: `Your session is waiting${name ? `, ${name}` : ""}. Log it when you're done.` }),
+  goal_at_risk: (streakWeeks: number, needed: number, goal: number) => ({
+    title: streakWeeks > 0 ? `Keep your ${plural(streakWeeks, "week")} streak` : "Your weekly goal needs today",
+    body: needed === 1 ? `Train today to reach ${plural(goal, "day")} this week.` : `You need ${needed} more days this week: today and every day after.`,
+  }),
+  inactivity: (name: string) => ({ title: "Ready for a comeback?", body: `It's been 3 days. A short session gets the rhythm back${name ? `, ${name}` : ""}.` }),
+  weekly_summary: (days: number, goal: number | null) => ({
+    title: "Your week in review",
+    body:
+      days === 0
+        ? "See how your week went in Analytics."
+        : goal && days < goal
+          ? `${days} of ${goal} training days this week. See your progress.`
+          : `${plural(days, "training day")} this week${goal ? ", goal reached" : ""}. See your progress.`,
+  }),
+  weigh_in: () => ({ title: "Morning weigh-in", body: "Step on the scale before breakfast and log it. Same time, same conditions." }),
+};
+
+const PLAN_DAYS = 14;
+const COMEBACK_AFTER_DAYS = 3;
 
 function localDateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 function parseDateKey(value: string): Date {
-  const [year, month, day] = value.split("-").map(Number);
-  return new Date(year, month - 1, day);
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(y, m - 1, d);
 }
 
 function addDays(date: Date, amount: number): Date {
@@ -79,215 +130,138 @@ function addDays(date: Date, amount: number): Date {
 }
 
 function parseTime(value: string, fallback: string): [number, number] {
-  const [rawHour, rawMinute] = value.split(":").map(Number);
-  const [fallbackHour, fallbackMinute] = fallback.split(":").map(Number);
-  const hour = Number.isInteger(rawHour) && rawHour >= 0 && rawHour <= 23 ? rawHour : fallbackHour;
-  const minute = Number.isInteger(rawMinute) && rawMinute >= 0 && rawMinute <= 59 ? rawMinute : fallbackMinute;
-  return [hour, minute];
+  const [h, m] = value.split(":").map(Number);
+  const [fh, fm] = fallback.split(":").map(Number);
+  return [Number.isInteger(h) && h >= 0 && h <= 23 ? h : fh, Number.isInteger(m) && m >= 0 && m <= 59 ? m : fm];
 }
 
-function dateAtTime(dateKey: string, time: string, fallback = "09:00"): Date {
+function dateAtTime(dateKey: string, time: string, fallback: string): Date {
   const date = parseDateKey(dateKey);
-  const [hour, minute] = parseTime(time, fallback);
-  date.setHours(hour, minute, 0, 0);
+  const [h, m] = parseTime(time, fallback);
+  date.setHours(h, m, 0, 0);
   return date;
 }
 
-function replaceName(template: string, displayName?: string | null): string {
-  const name = displayName?.trim() || "there";
-  return template.replaceAll("{name}", name);
-}
+const isoWeekday = (d: Date) => ((d.getDay() + 6) % 7) + 1;
+/** Monday of the date's week. */
+const weekStartOf = (d: Date) => addDays(new Date(d.getFullYear(), d.getMonth(), d.getDate()), -(isoWeekday(d) - 1));
+const firstName = (name?: string | null) => name?.trim().split(/\s+/)[0] || "";
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-function isQuietHour(date: Date, prefs: NotificationPreferences): boolean {
-  const [startHour, startMinute] = parseTime(prefs.quietHoursStart, "22:00");
-  const [endHour, endMinute] = parseTime(prefs.quietHoursEnd, "07:00");
-  const minutes = date.getHours() * 60 + date.getMinutes();
-  const start = startHour * 60 + startMinute;
-  const end = endHour * 60 + endMinute;
-
-  if (start === end) return false;
-  if (start < end) return minutes >= start && minutes < end;
-  return minutes >= start || minutes < end;
-}
-
-function moveOutsideQuietHours(date: Date, prefs: NotificationPreferences): Date {
-  if (!isQuietHour(date, prefs)) return date;
-
-  const [startHour, startMinute] = parseTime(prefs.quietHoursStart, "22:00");
-  const [endHour, endMinute] = parseTime(prefs.quietHoursEnd, "07:00");
-  const start = startHour * 60 + startMinute;
-  const end = endHour * 60 + endMinute;
-  const result = new Date(date);
-
-  if (start < end || result.getHours() * 60 + result.getMinutes() < end) {
-    result.setHours(endHour, endMinute, 0, 0);
-    return result;
-  }
-
-  result.setDate(result.getDate() + 1);
-  result.setHours(endHour, endMinute, 0, 0);
-  return result;
-}
-
-function workoutDateKeys(workouts: Workout[]): string[] {
-  return [...new Set(workouts.map((workout) => workout.date))].sort();
-}
-
-function currentStreak(workoutDates: string[], now: Date): number {
-  const dates = [...new Set(workoutDates)].sort().reverse();
-  if (dates.length === 0) return 0;
-
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const yesterday = addDays(today, -1);
-  const todayKey = localDateKey(today);
-  const yesterdayKey = localDateKey(yesterday);
-  if (dates[0] !== todayKey && dates[0] !== yesterdayKey) return 0;
-
+/** Weeks in a row that met the goal, counting back from last week (this week counts once met). */
+function weeklyStreak(trained: Set<string>, goal: number, today: Date): number {
+  const daysIn = (monday: Date) => {
+    let n = 0;
+    for (let i = 0; i < 7; i++) if (trained.has(localDateKey(addDays(monday, i)))) n++;
+    return n;
+  };
+  const thisWeek = weekStartOf(today);
+  let week = daysIn(thisWeek) >= goal ? thisWeek : addDays(thisWeek, -7);
   let streak = 0;
-  let expected = parseDateKey(dates[0]);
-  for (const date of dates) {
-    if (date !== localDateKey(expected)) break;
-    streak += 1;
-    expected = addDays(expected, -1);
+  while (daysIn(week) >= goal) {
+    streak++;
+    week = addDays(week, -7);
   }
   return streak;
 }
 
-function weeklyMotivationDates(start: Date, end: Date): Date[] {
-  const dates: Date[] = [];
-  for (let date = new Date(start); date <= end; date = addDays(date, 1)) {
-    if (date.getDay() === 2 || date.getDay() === 4) dates.push(date);
-  }
-  return dates;
-}
-
-export function planNotifications(
-  state: NotificationState,
-  now: Date,
-  prefs: NotificationPreferences,
-): PlannedNotification[] {
+export function planNotifications(state: NotificationState, now: Date, prefs: NotificationPreferences): PlannedNotification[] {
   if (!prefs.enabled) return [];
 
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  const end = addDays(start, 13);
-  const todayKey = localDateKey(start);
-  const workoutDates = workoutDateKeys(state.workouts);
-  const workoutDateSet = new Set(workoutDates);
-  const workedOutToday = workoutDateSet.has(todayKey);
-  const streak = currentStreak(workoutDates, now);
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = addDays(start, PLAN_DAYS - 1);
+  const trained = new Set(state.workouts.map((w) => w.date.slice(0, 10)));
+  const name = firstName(state.displayName);
   const candidates: PlannedNotification[] = [];
 
-  const addCandidate = (
-    type: NotificationType,
-    date: Date,
-    priority: NotificationPriority,
-    title: string,
-    body: string,
-  ) => {
-    const scheduledDate = moveOutsideQuietHours(date, prefs);
-    if (scheduledDate <= now) return;
-    if (workedOutToday && localDateKey(scheduledDate) === todayKey) return;
-    candidates.push({
-      id: `iron-arc-${type}-${localDateKey(scheduledDate)}`,
-      type,
-      date: scheduledDate,
-      priority,
-      title: replaceName(title, state.displayName),
-      body: replaceName(body, state.displayName),
-      data: { type },
-    });
+  const add = (type: NotificationType, date: Date, priority: NotificationPriority, copy: { title: string; body: string }, evenIfTrained = false) => {
+    if (date <= now) return;
+    // Nothing more about a logged day (unless the user asked for the reminder anyway).
+    if (!evenIfTrained && trained.has(localDateKey(date))) return;
+    candidates.push({ id: `iron-arc-${type}-${localDateKey(date)}`, type, date, priority, ...copy, data: { type } });
   };
 
-  for (let date = new Date(start); date <= end; date = addDays(date, 1)) {
-    const dateKey = localDateKey(date);
-    if (!workoutDateSet.has(dateKey) && prefs.dailyReminder) {
-      addCandidate(
-        "daily_reminder",
-        dateAtTime(dateKey, prefs.dailyReminderTime),
-        2,
-        "Time to train",
-        "Ready for a session, {name}? A little progress goes a long way.",
-      );
+  const profileDays = state.trainingDays?.length ? new Set(state.trainingDays) : null;
+  // Reminder days: the user's own pick, else the profile's training days, else every day.
+  const reminderDays = prefs.reminderDays ? new Set(prefs.reminderDays) : profileDays;
+  const goal = state.trainingDays?.length ? state.trainingDays.length : state.weeklyGoal && state.weeklyGoal > 0 ? state.weeklyGoal : null;
+  const streak = goal ? weeklyStreak(trained, goal, start) : 0;
+
+  for (let day = new Date(start); day <= end; day = addDays(day, 1)) {
+    const key = localDateKey(day);
+
+    // Training-day reminder.
+    if (prefs.dailyReminder && (!reminderDays || reminderDays.has(isoWeekday(day)))) {
+      add("daily_reminder", dateAtTime(key, prefs.dailyReminderTime, "09:00"), 2, COPY.daily_reminder(name), !prefs.skipIfTrained);
     }
-  }
 
-  if (prefs.streakReminders && streak > 0 && !workedOutToday) {
-    addCandidate(
-      "streak_at_risk",
-      dateAtTime(todayKey, prefs.streakReminderTime, "20:00"),
-      1,
-      `${streak}-day streak at risk`,
-      "A short session tonight keeps your momentum alive, {name}.",
-    );
-  }
-
-  const lastWorkout = workoutDates.length > 0 ? workoutDates[workoutDates.length - 1] : null;
-  if (prefs.inactivityReminders && lastWorkout) {
-    const inactivityDate = addDays(parseDateKey(lastWorkout), 3);
-    if (inactivityDate >= start && inactivityDate <= end && !workoutDateSet.has(localDateKey(inactivityDate))) {
-      addCandidate(
-        "inactivity",
-        dateAtTime(localDateKey(inactivityDate), prefs.inactivityReminderTime, "10:00"),
-        3,
-        "Ready when you are",
-        "Three days away is enough. A manageable session can restart your rhythm, {name}.",
-      );
-    }
-  }
-
-  if (prefs.weeklySummary) {
-    for (let date = new Date(start); date <= end; date = addDays(date, 1)) {
-      if (date.getDay() === 0) {
-        addCandidate(
-          "weekly_summary",
-          dateAtTime(localDateKey(date), prefs.weeklySummaryTime, "18:00"),
-          4,
-          "Your week in review",
-          "Take a moment to see what you built this week, {name}.",
-        );
+    // Weekly goal check: only the evening it becomes "every day left, starting today".
+    if (prefs.streakReminders && goal && !trained.has(key)) {
+      const monday = weekStartOf(day);
+      let doneBefore = 0;
+      for (let d = new Date(monday); d < day; d = addDays(d, 1)) if (trained.has(localDateKey(d))) doneBefore++;
+      const needed = goal - doneBefore;
+      const daysLeft = 8 - isoWeekday(day); // today through Sunday
+      if (needed > 0 && needed === daysLeft) {
+        const isThisWeek = localDateKey(monday) === localDateKey(weekStartOf(start));
+        add("goal_at_risk", dateAtTime(key, prefs.streakReminderTime, "19:00"), 1, COPY.goal_at_risk(isThisWeek ? streak : 0, needed, goal));
       }
     }
   }
 
-  if (prefs.motivationalMessages) {
-    for (const date of weeklyMotivationDates(start, end)) {
-      const index = Math.floor((date.getTime() - start.getTime()) / 86_400_000) % MOTIVATION_MESSAGES.length;
-      const message = MOTIVATION_MESSAGES[index];
-      addCandidate(
-        "motivation",
-        dateAtTime(localDateKey(date), "12:30"),
-        5,
-        message.title,
-        message.body,
-      );
+  // Comeback nudge after a few days off.
+  const lastWorkout = [...trained].sort().pop();
+  if (prefs.inactivityReminders && lastWorkout) {
+    const nudge = addDays(parseDateKey(lastWorkout), COMEBACK_AFTER_DAYS);
+    if (nudge >= start && nudge <= end) {
+      add("inactivity", dateAtTime(localDateKey(nudge), prefs.inactivityReminderTime, "10:00"), 3, COPY.inactivity(name));
     }
   }
 
-  const selectedByDate = new Map<string, PlannedNotification>();
-  for (const candidate of candidates.sort((a, b) => a.date.getTime() - b.date.getTime() || a.priority - b.priority)) {
-    const dateKey = localDateKey(candidate.date);
-    const current = selectedByDate.get(dateKey);
-    if (!current || candidate.priority < current.priority) {
-      selectedByDate.set(dateKey, candidate);
+  // Sunday review: this week's real numbers so far (re-planned as you log).
+  if (prefs.weeklySummary) {
+    for (let day = new Date(start); day <= end; day = addDays(day, 1)) {
+      if (isoWeekday(day) !== 7) continue;
+      const monday = weekStartOf(day);
+      const isThisWeek = localDateKey(monday) === localDateKey(weekStartOf(start));
+      let days = 0;
+      for (let i = 0; i < 7; i++) if (trained.has(localDateKey(addDays(monday, i)))) days++;
+      const date = dateAtTime(localDateKey(day), prefs.weeklySummaryTime, "18:00");
+      if (date <= now) continue;
+      candidates.push({
+        id: `iron-arc-weekly_summary-${localDateKey(day)}`,
+        type: "weekly_summary",
+        date,
+        priority: 4,
+        ...COPY.weekly_summary(isThisWeek ? days : 0, goal),
+        data: { type: "weekly_summary" },
+      });
     }
   }
 
-  return [...selectedByDate.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
+  // Weigh-in: chosen mornings, skipped once a weight is logged that day.
+  if (prefs.weighIn && prefs.weighInDays.length) {
+    const weighed = new Set(state.weights.map((w) => w.date.slice(0, 10)));
+    const days = new Set(prefs.weighInDays);
+    for (let day = new Date(start); day <= end; day = addDays(day, 1)) {
+      const key = localDateKey(day);
+      const date = dateAtTime(key, prefs.weighInTime, "07:00");
+      if (!days.has(isoWeekday(day)) || weighed.has(key) || date <= now) continue;
+      candidates.push({ id: `iron-arc-weigh_in-${key}`, type: "weigh_in", date, priority: 4, ...COPY.weigh_in(), data: { type: "weigh_in" } });
+    }
+  }
+
+  // At most one training nudge a day (the most important); the Sunday review and weigh-in are extra.
+  const byDay = new Map<string, PlannedNotification>();
+  const reviews: PlannedNotification[] = [];
+  for (const c of candidates.sort((a, b) => a.date.getTime() - b.date.getTime() || a.priority - b.priority)) {
+    if (c.type === "weekly_summary" || c.type === "weigh_in") {
+      reviews.push(c);
+      continue;
+    }
+    const key = localDateKey(c.date);
+    const current = byDay.get(key);
+    if (!current || c.priority < current.priority) byDay.set(key, c);
+  }
+  return [...byDay.values(), ...reviews].sort((a, b) => a.date.getTime() - b.date.getTime());
 }
-
-export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
-  enabled: true,
-  dailyReminder: true,
-  streakReminders: true,
-  inactivityReminders: true,
-  weeklySummary: true,
-  motivationalMessages: true,
-  dailyReminderTime: "09:00",
-  streakReminderTime: "20:00",
-  inactivityReminderTime: "10:00",
-  weeklySummaryTime: "18:00",
-  quietHoursStart: "22:00",
-  quietHoursEnd: "07:00",
-};

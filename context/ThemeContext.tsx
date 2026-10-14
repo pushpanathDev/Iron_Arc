@@ -19,9 +19,12 @@ interface ThemeContextValue {
 
 const STORAGE_KEY = "@theme_preference";
 
+/** While true the app always renders dark and Profile hides the theme picker. */
+export const FORCE_DARK = true;
+
 const ThemeContext = createContext<ThemeContextValue>({
   preference: "system",
-  resolved: "light",
+  resolved: "dark",
   setPreference: async () => {},
 });
 
@@ -43,8 +46,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.setItem(STORAGE_KEY, pref);
   }, []);
 
-  const resolved: ResolvedTheme =
-    preference === "system"
+  // Dark-only until a light palette is designed. The stored preference and
+  // the system setting are kept (and still saved) but ignored for now.
+  const resolved: ResolvedTheme = FORCE_DARK
+    ? "dark"
+    : preference === "system"
       ? systemScheme === "dark"
         ? "dark"
         : "light"

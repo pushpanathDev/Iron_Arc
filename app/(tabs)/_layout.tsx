@@ -1,8 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, Tabs } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { OfflineBanner } from "../../components/connection/OfflineBanner";
 import { AppTabBar } from "../../components/ui/AppTabBar";
 import { useTheme } from "../../theme/theme";
+import { perfStart } from "../../utils/perf";
 
 // Forces Expo Router to always reset to "index" on reload/state restore.
 export const unstable_settings = {
@@ -12,18 +15,22 @@ export const unstable_settings = {
 export default function TabLayout() {
   const { colors } = useTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
+  // The status-bar inset is applied here, outside every tab's ScrollView (as on
+  // Sign In), so scrolled content stops at the status bar instead of under it.
   return (
-    <SafeAreaView
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      edges={["top"]}
-    >
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
+      <OfflineBanner />
       <Tabs
         initialRouteName="index"
-        // Back from any tab (including Profile, declared first) returns to Home; back on Home exits.
-        backBehavior="initialRoute"
+        // Back returns to the tab you came from (e.g. Analytics → History → back = Analytics); back on the first one exits.
+        backBehavior="history"
         tabBar={(props) => (
-          <AppTabBar {...props} onLogPress={() => router.push("/add-workout")} />
+          <AppTabBar {...props} onLogPress={() => {
+            perfStart("open picker");
+            router.push("/log/pick");
+          }} />
         )}
         screenOptions={{
           headerShown: false,
@@ -83,6 +90,6 @@ export default function TabLayout() {
           }}
         />
       </Tabs>
-    </SafeAreaView>
+    </View>
   );
 }

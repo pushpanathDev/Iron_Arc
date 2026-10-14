@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "ironarc",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
@@ -45,7 +45,7 @@
         "expo-notifications",
         {
           "icon": "./assets/images/splash-icon.png",
-          "color": "#4F46E5"
+          "color": "#5CDDA6"
         }
       ],
       "expo-secure-store",

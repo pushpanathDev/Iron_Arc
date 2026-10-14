@@ -13,7 +13,9 @@ import Animated, {
 import { useTheme } from "../theme/theme";
 
 const PRESETS = [30, 60, 90, 120, 180];
-const DEFAULT_SECONDS = 90;
+/** Default rest length; also used by the Log Workout session timer. */
+export const REST_DEFAULT_SECONDS = 90;
+const DEFAULT_SECONDS = REST_DEFAULT_SECONDS;
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);

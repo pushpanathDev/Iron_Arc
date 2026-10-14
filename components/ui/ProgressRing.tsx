@@ -10,6 +10,8 @@ export type ProgressRingProps = {
   strokeWidth?: number;
   /** e.g. "3 of 4 workouts this week" */
   accessibilityLabel: string;
+  /** Colour of the unfilled track; defaults to the border colour. */
+  trackColor?: string;
   children?: ReactNode;
   style?: StyleProp<ViewStyle>;
 };
@@ -19,6 +21,7 @@ export function ProgressRing({
   size = 72,
   strokeWidth = 8,
   accessibilityLabel,
+  trackColor,
   children,
   style,
 }: ProgressRingProps) {
@@ -36,7 +39,7 @@ export function ProgressRing({
       style={[{ width: size, height: size, alignItems: "center", justifyContent: "center" }, style]}
     >
       <Svg width={size} height={size} style={{ position: "absolute", transform: [{ rotate: "-90deg" }] }}>
-        <Circle cx={size / 2} cy={size / 2} r={r} stroke={colors.border} strokeWidth={strokeWidth} fill="none" />
+        <Circle cx={size / 2} cy={size / 2} r={r} stroke={trackColor ?? colors.border} strokeWidth={strokeWidth} fill="none" />
         {clamped > 0 && (
           <Circle
             cx={size / 2}

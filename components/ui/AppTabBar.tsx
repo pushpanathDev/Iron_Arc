@@ -1,42 +1,25 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import * as Haptics from "expo-haptics";
-import { useEffect, useState } from "react";
-import { Keyboard, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
+import { useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../../theme/theme";
-import { elevation, semibold, spacing, touchTarget, typography } from "../../theme/tokens";
-
-const LOG_SIZE = 56;
-const BAR_HEIGHT = 64;
-
-function useKeyboardVisible() {
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const show = Keyboard.addListener(showEvt, () => setVisible(true));
-    const hide = Keyboard.addListener(hideEvt, () => setVisible(false));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
-  return visible;
-}
+import { motion, radius, size, spacing, touchTarget, typography } from "../../theme/tokens";
+import { PressableScale } from "./PressableScale";
 
 export type AppTabBarProps = BottomTabBarProps & {
   onLogPress: () => void;
 };
 
 /**
- * Bottom tab bar with a centred Log button. Unmounts while the keyboard is
- * open so it never rides up over the keyboard on Android (adjustResize).
+ * Bottom tab bar with a centred Log button. Hidden while the keyboard is open
+ * so it never rides up over the keyboard.
  */
 export function AppTabBar({ state, descriptors, navigation, onLogPress }: AppTabBarProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const keyboardVisible = useKeyboardVisible();
+  const keyboardVisible = useKeyboardState((s) => s.isVisible);
 
   if (keyboardVisible) return null;
 
@@ -54,12 +37,13 @@ export function AppTabBar({ state, descriptors, navigation, onLogPress }: AppTab
     const onPress = () => {
       const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
       if (!focused && !event.defaultPrevented) {
+        Haptics.selectionAsync().catch(() => {});
         navigation.navigate(route.name, route.params);
       }
     };
 
     return (
-      <Pressable
+      <PressableScale
         key={route.key}
         onPress={onPress}
         onLongPress={() => navigation.emit({ type: "tabLongPress", target: route.key })}
@@ -69,38 +53,36 @@ export function AppTabBar({ state, descriptors, navigation, onLogPress }: AppTab
         testID={options.tabBarButtonTestID}
         style={styles.tab}
       >
-        {options.tabBarIcon?.({ focused, color, size: 24 })}
-        <Text style={[typography.labelMd, { color }, focused && semibold]} numberOfLines={1}>
+        {options.tabBarIcon?.({ focused, color, size: size.tabIcon })}
+        <Text style={[typography.labelSm, { color }]} numberOfLines={1}>
           {label}
         </Text>
-      </Pressable>
+      </PressableScale>
     );
   };
 
   const logButton = (
     <View key="__log" style={styles.tab}>
-      <Pressable
+      <PressableScale
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
           onLogPress();
         }}
+        pressedScale={motion.pressScaleStrong}
         accessibilityRole="button"
         accessibilityLabel="Log workout"
-        style={({ pressed }) => [
-          styles.logButton,
-          { backgroundColor: pressed ? colors.accentPressed : colors.accent, borderColor: colors.bg },
-          elevation.md,
-        ]}
+        hitSlop={(touchTarget - size.logButton) / 2}
+        style={({ pressed }) => ({
+          width: size.logButton,
+          height: size.logButton,
+          borderRadius: radius.full,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: pressed ? colors.accentPressed : colors.accent,
+        })}
       >
-        <Ionicons name="add" size={30} color={colors.onAccent} />
-      </Pressable>
-      <Text
-        style={[typography.labelMd, { color: colors.textSecondary, marginTop: 2 }]}
-        importantForAccessibility="no"
-        accessibilityElementsHidden
-      >
-        Log
-      </Text>
+        <Ionicons name="add" size={size.iconLg} color={colors.onAccent} />
+      </PressableScale>
     </View>
   );
 
@@ -112,12 +94,12 @@ export function AppTabBar({ state, descriptors, navigation, onLogPress }: AppTab
       accessibilityRole="tablist"
       style={{
         flexDirection: "row",
-        alignItems: "flex-end",
-        minHeight: BAR_HEIGHT + insets.bottom,
-        paddingBottom: Math.max(spacing.sm, insets.bottom),
-        paddingTop: spacing.xs,
+        alignItems: "center",
+        height: size.tabBar + insets.bottom,
+        paddingBottom: insets.bottom,
+        paddingHorizontal: spacing.xs,
         backgroundColor: colors.card,
-        borderTopWidth: 1,
+        borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: colors.border,
       }}
     >
@@ -129,19 +111,11 @@ export function AppTabBar({ state, descriptors, navigation, onLogPress }: AppTab
 const styles = StyleSheet.create({
   tab: {
     flex: 1,
-    minHeight: touchTarget + 4,
-    alignItems: "center",
-    justifyContent: "flex-end",
-    gap: 2,
-  },
-  logButton: {
-    width: LOG_SIZE,
-    height: LOG_SIZE,
-    borderRadius: LOG_SIZE / 2,
-    borderWidth: 4,
+    minWidth: size.tabMin,
+    minHeight: touchTarget,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: -20,
+    gap: spacing.xs,
   },
 });
 

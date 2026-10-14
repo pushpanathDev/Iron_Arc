@@ -156,6 +156,9 @@ export const EXERCISES: Record<ExerciseCategory, string[]> = {
     // Forearms
     "Wrist Curl",
     "Reverse Wrist Curl",
+    "Reverse Curl",
+    "Plate Pinch",
+    "Dead Hang",
     "Farmer's Walk",
   ],
   Abs: [

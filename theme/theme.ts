@@ -1,295 +1,153 @@
 import { useThemeContext } from "../context/ThemeContext";
+import {
+  darkColors as darkTokens,
+  elevation,
+  lightColors as lightTokens,
+  fontFamily,
+  type ColorTokens,
+} from "./tokens";
 
-/* ============================================
-   FORGE - PREMIUM DESIGN SYSTEM
-   
-   Inspired by: Apple Fitness+, Linear, Stripe
-   Philosophy: Luxurious, glossy, motivational
-   
-   🎨 Premium Light Theme with Emerald Accent
-   ============================================ */
+/*
+ * Theme hook plus backward-compatible aliases. Values live in ./tokens.ts.
+ * New code: use the token names (bg, card, raised, text, accent, ...) and
+ * import `typography` from ./tokens.
+ */
 
-/* =========================
-   COLOR PALETTE
-   ========================= */
-
-// Premium Light - Soft cream/gray with rich emerald
-const premiumColors = {
-  // Backgrounds - Warm off-whites for depth
-  background: "#F5F5F0",        // Warm cream (not pure white)
-  surface: "#FFFFFF",           // Pure white for cards
-  surfaceElevated: "#FAFAF8",   // Slightly elevated
-  surfaceGlass: "rgba(255, 255, 255, 0.85)", // Glass effect
-
-  // Text - Soft blacks for elegance
-  textPrimary: "#1A1A1A",       // Rich black (not pure)
-  textSecondary: "#4A4A4A",     // Medium gray
-  textMuted: "#8A8A8A",         // Muted gray
-  textOnAccent: "#FFFFFF",      // White on accent
-
-  // Accent Colors - Rich Emerald
-  accent: "#059669",            // Deep emerald (primary)
-  accentLight: "#D1FAE5",       // Light emerald tint
-  accentDim: "rgba(5, 150, 105, 0.12)", // Subtle accent bg
-  accentGlow: "#10B981",        // Brighter for glow effects
-  
-  // Secondary - Indigo for charts
-  secondary: "#4F46E5",         // Rich indigo
-  secondaryLight: "#E0E7FF",
-
-  // Semantic Colors
-  success: "#22C55E",
-  successLight: "#DCFCE7",
-  warning: "#F59E0B",
-  warningLight: "#FEF3C7",
-  error: "#EF4444",
-  errorLight: "#FEE2E2",
-
-  // Borders & Dividers - Subtle
-  border: "#E8E8E3",            // Warm gray border
-  divider: "#F0F0EB",           // Very subtle divider
-  borderGlass: "rgba(0, 0, 0, 0.06)", // Glass border
-
-  // Card specific - Premium glass effect
-  card: "#FFFFFF",
-  cardBorder: "rgba(0, 0, 0, 0.04)",
-  cardShadow: "rgba(0, 0, 0, 0.08)",
-
-  // Gradient colors - Rich emerald
-  gradientStart: "#059669",
-  gradientEnd: "#047857",
-  gradientLight: ["#F5F5F0", "#FFFFFF"], // Subtle bg gradient
-
-  // Chart colors
-  chartPrimary: "#059669",
-  chartSecondary: "#4F46E5",
-  chartTertiary: "#F59E0B",
-  chartBackground: "#FAFAF8",
-
-  // Premium extras
-  shimmer: "rgba(255, 255, 255, 0.6)",
-  overlay: "rgba(0, 0, 0, 0.4)",
-
-  // Training category colours (plan day/stat accents). 6-digit hex so a
-  // 2-digit alpha suffix can be appended.
-  categoryPush: "#7C3AED",
-  categoryPull: "#2563EB",
-  categoryLegs: "#D97706",
-  categoryShoulders: "#0891B2",
-  categoryCore: "#059669",
-  categoryNeutral: "#6B7280",
+const legacyOnly = {
+  dark: {
+    secondary: "#818CF8",
+    secondaryLight: "#312E81",
+    warningLight: "#78350F",
+    chartSecondary: "#818CF8",
+    chartTertiary: "#FBBF24",
+    shimmer: "rgba(255, 255, 255, 0.1)",
+    categoryPush: "#A78BFA",
+    categoryPull: "#60A5FA",
+    categoryLegs: "#FBBF24",
+    categoryShoulders: "#22D3EE",
+    categoryCore: "#34D399",
+    categoryNeutral: "#9CA3AF",
+  },
+  light: {
+    secondary: "#4F46E5",
+    secondaryLight: "#E0E7FF",
+    warningLight: "#FEF3C7",
+    chartSecondary: "#4F46E5",
+    chartTertiary: "#F59E0B",
+    shimmer: "rgba(255, 255, 255, 0.6)",
+    categoryPush: "#7C3AED",
+    categoryPull: "#2563EB",
+    categoryLegs: "#D97706",
+    categoryShoulders: "#0891B2",
+    categoryCore: "#059669",
+    categoryNeutral: "#6B7280",
+  },
 };
 
-// Keep dark colors for future use (can enable later)
-const darkColors = {
-  background: "#0A0A0B",
-  surface: "#141414",
-  surfaceElevated: "#1C1C1E",
-  surfaceGlass: "rgba(255, 255, 255, 0.06)",
+function buildPalette(t: ColorTokens, extra: (typeof legacyOnly)["dark"]) {
+  return {
+    ...t,
+    ...extra,
+    /** @deprecated use bg */
+    background: t.bg,
+    /** @deprecated use card */
+    surface: t.card,
+    /** @deprecated use raised */
+    surfaceElevated: t.raised,
+    /** @deprecated use raised (no glass effects) */
+    surfaceGlass: t.raised,
+    /** @deprecated use text */
+    textPrimary: t.text,
+    /** @deprecated use onAccent */
+    textOnAccent: t.onAccent,
+    /** @deprecated use accentSubtle */
+    accentLight: t.accentSubtle,
+    /** @deprecated use accentSubtle */
+    accentDim: t.accentSubtle,
+    /** @deprecated no glows; resolves to accent */
+    accentGlow: t.accent,
+    /** @deprecated use accentSubtle */
+    successLight: t.accentSubtle,
+    /** @deprecated use danger */
+    error: t.danger,
+    /** @deprecated use dangerSubtle */
+    errorLight: t.dangerSubtle,
+    /** @deprecated use border */
+    divider: t.border,
+    /** @deprecated use border */
+    borderGlass: t.border,
+    /** @deprecated use border */
+    cardBorder: t.border,
+    /** @deprecated shadows come from elevation */
+    cardShadow: "#000000",
+    /** @deprecated no gradients; resolves to a flat accent */
+    gradientStart: t.accent,
+    /** @deprecated no gradients; resolves to a flat accent */
+    gradientEnd: t.accent,
+    /** @deprecated no gradients; resolves to a flat bg */
+    gradientLight: [t.bg, t.bg],
+    /** @deprecated use accent */
+    chartPrimary: t.accent,
+    /** @deprecated use raised */
+    chartBackground: t.raised,
+    /** @deprecated use scrim */
+    overlay: t.scrim,
+  };
+}
 
-  textPrimary: "#FAFAFA",
-  textSecondary: "#A3A3A3",
-  textMuted: "#525252",
-  textOnAccent: "#0A0A0B",
+const darkPalette = buildPalette(darkTokens, legacyOnly.dark);
+const lightPalette: typeof darkPalette = buildPalette(lightTokens, legacyOnly.light);
 
-  accent: "#10B981",
-  accentLight: "#064E3B",
-  accentDim: "rgba(16, 185, 129, 0.15)",
-  accentGlow: "#34D399",
-  
-  secondary: "#818CF8",
-  secondaryLight: "#312E81",
+export type ThemeColors = typeof darkPalette;
 
-  success: "#4ADE80",
-  successLight: "#14532D",
-  warning: "#FBBF24",
-  warningLight: "#78350F",
-  error: "#F87171",
-  errorLight: "#7F1D1D",
+/**
+ * @deprecated Legacy scale for screens not yet redesigned. Values are pinned so
+ * those layouts don't shift; new code uses `spacing` from ./tokens.
+ */
+export const spacing = { xxs: 4, xs: 8, sm: 12, md: 16, lg: 24, xl: 32, xxl: 48 };
 
-  border: "#262626",
-  divider: "#1C1C1E",
-  borderGlass: "rgba(255, 255, 255, 0.08)",
+/** @deprecated Legacy radii, pinned. New code uses `radius` from ./tokens. */
+export const radius = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 28, full: 9999 };
 
-  card: "#141414",
-  cardBorder: "rgba(255, 255, 255, 0.06)",
-  cardShadow: "rgba(0, 0, 0, 0.5)",
-
-  gradientStart: "#10B981",
-  gradientEnd: "#047857",
-  gradientLight: ["#0A0A0B", "#141414"],
-
-  chartPrimary: "#10B981",
-  chartSecondary: "#818CF8",
-  chartTertiary: "#FBBF24",
-  chartBackground: "#1C1C1E",
-
-  shimmer: "rgba(255, 255, 255, 0.1)",
-  overlay: "rgba(0, 0, 0, 0.7)",
-
-  categoryPush: "#A78BFA",
-  categoryPull: "#60A5FA",
-  categoryLegs: "#FBBF24",
-  categoryShoulders: "#22D3EE",
-  categoryCore: "#34D399",
-  categoryNeutral: "#9CA3AF",
-};
-
-// Legacy mappings for backward compatibility
-const lightColors = premiumColors;
-
-
-/* =========================
-   SPACING SCALE (8pt grid)
-   ========================= */
-
-export const spacing = {
-  xxs: 4,
-  xs: 8,
-  sm: 12,
-  md: 16,
-  lg: 24,
-  xl: 32,
-  xxl: 48,
-};
-
-/* =========================
-   BORDER RADIUS
-   ========================= */
-
-export const radius = {
-  xs: 4,
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 20,
-  xxl: 28,
-  full: 9999,
-};
-
-/* =========================
-   SHADOWS (Premium Glossy)
-   ========================= */
-
+/** @deprecated use `elevation`; `glow` and `card` resolve to neutral shadows. */
 export const shadows = {
-  sm: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  md: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 4,
-  },
-  lg: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 24,
-    elevation: 8,
-  },
-  // Premium glow shadow (for accent elements)
-  glow: {
-    shadowColor: "#059669",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  // Card shadow for glossy effect
-  card: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 6,
-  },
+  sm: elevation.sm,
+  md: elevation.md,
+  lg: elevation.md,
+  glow: elevation.md,
+  card: elevation.sm,
 };
 
-/* =========================
-   TYPOGRAPHY SCALE
-   ========================= */
-
+/**
+ * @deprecated Legacy type scale, sizes pinned, now set in Inter / Barlow
+ * Condensed. New code uses `typography` from ./tokens.
+ */
 export const typography = {
-  // Display - Hero numbers
-  display: {
-    fontSize: 48,
-    fontWeight: "800" as const,
-    lineHeight: 52,
-    letterSpacing: -1,
-  },
-  // H1 - Page titles
-  h1: {
-    fontSize: 32,
-    fontWeight: "700" as const,
-    lineHeight: 40,
-    letterSpacing: -0.5,
-  },
-  // H2 - Section headers
-  h2: {
-    fontSize: 24,
-    fontWeight: "600" as const,
-    lineHeight: 32,
-    letterSpacing: -0.3,
-  },
-  // H3 - Card titles
-  h3: {
-    fontSize: 18,
-    fontWeight: "600" as const,
-    lineHeight: 24,
-    letterSpacing: 0,
-  },
-  // Body - Regular text
-  body: {
-    fontSize: 16,
-    fontWeight: "400" as const,
-    lineHeight: 24,
-    letterSpacing: 0,
-  },
-  // Body Medium
-  bodyMedium: {
-    fontSize: 16,
-    fontWeight: "500" as const,
-    lineHeight: 24,
-    letterSpacing: 0,
-  },
-  // Caption - Secondary text
-  caption: {
-    fontSize: 14,
-    fontWeight: "500" as const,
-    lineHeight: 20,
-    letterSpacing: 0,
-  },
-  // Label - Small labels
+  display: { fontFamily: fontFamily.display, fontSize: 48, lineHeight: 52, letterSpacing: -1 },
+  h1: { fontFamily: fontFamily.display, fontSize: 32, lineHeight: 40 },
+  h2: { fontFamily: fontFamily.display, fontSize: 24, lineHeight: 32 },
+  h3: { fontFamily: fontFamily.semibold, fontSize: 18, lineHeight: 24 },
+  body: { fontFamily: fontFamily.regular, fontSize: 16, lineHeight: 24 },
+  bodyMedium: { fontFamily: fontFamily.medium, fontSize: 16, lineHeight: 24 },
+  caption: { fontFamily: fontFamily.medium, fontSize: 14, lineHeight: 20 },
   label: {
+    fontFamily: fontFamily.semibold,
     fontSize: 12,
-    fontWeight: "600" as const,
     lineHeight: 16,
     letterSpacing: 0.5,
     textTransform: "uppercase" as const,
   },
-  // Stat number - Large stats
-  stat: {
-    fontSize: 36,
-    fontWeight: "700" as const,
-    lineHeight: 40,
-    letterSpacing: -0.5,
-  },
+  stat: { fontFamily: fontFamily.display, fontSize: 36, lineHeight: 40 },
 };
 
-/* =========================
-   THEME HOOK
-   ========================= */
+export function getPalette(isDark: boolean): ThemeColors {
+  return isDark ? darkPalette : lightPalette;
+}
 
 export function useTheme() {
   const { resolved } = useThemeContext();
-  const colors = resolved === "dark" ? darkColors : lightColors;
   const isDark = resolved === "dark";
+  const colors = getPalette(isDark);
 
-  return { colors, spacing, radius, shadows, typography, isDark };
+  return { colors, spacing, radius, shadows, elevation, typography, isDark };
 }

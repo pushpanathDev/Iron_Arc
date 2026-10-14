@@ -5,6 +5,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { TIER_LABELS } from "../insights/achievements";
 import { Achievement, achievementApi } from "../services/api";
+import { enqueueUnlocks } from "./badgeUnlocks";
 
 export const ACHIEVEMENTS_KEY = ["achievements"] as const;
 
@@ -26,8 +27,9 @@ export function useAchievements() {
 /**
  * Call after any save that can unlock badges (workout, weight, plan).
  * Always refreshes ["achievements"] so progress stays current; when the
- * server reports newly unlocked keys, also shows one celebration toast with
- * each badge's title and tier (looked up from the refreshed catalog).
+ * server reports newly unlocked keys, celebrates each one in the unlock sheet
+ * (BadgeUnlockHost), one after another. Falls back to a toast if the badge
+ * details can't be loaded.
  */
 export function useAchievementUnlockHandler() {
   const queryClient = useQueryClient();
@@ -50,6 +52,12 @@ export function useAchievementUnlockHandler() {
       } catch {
         // Still celebrate; fall back to the raw keys below.
         queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
+      }
+
+      const found = newlyUnlocked.map((key) => badges.find((b) => b.key === key)).filter((b): b is Achievement => !!b);
+      if (found.length === newlyUnlocked.length) {
+        enqueueUnlocks(found);
+        return;
       }
 
       const labels = newlyUnlocked.map((key) => {

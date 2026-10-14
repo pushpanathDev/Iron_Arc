@@ -6,61 +6,61 @@
  * categories to icons, colours and labels. It never decides whether a
  * badge is earned.
  */
-import type { Ionicons } from "@expo/vector-icons";
+import type { MaterialIcons } from "@expo/vector-icons";
 import type { ComponentProps } from "react";
 
 import type { AchievementTier } from "../services/api";
+import type { ColorTokens } from "../theme/tokens";
+import { displayWeight, weightLabel, type WeightUnit } from "../utils/unitConversion";
 
-export type BadgeIconName = ComponentProps<typeof Ionicons>["name"];
+export type BadgeIconName = ComponentProps<typeof MaterialIcons>["name"];
 
 const BADGE_ICONS: Record<string, BadgeIconName> = {
-  streak_3: "flame-outline",
-  streak_7: "flame",
-  streak_14: "flame",
-  streak_30: "bonfire-outline",
-  streak_60: "bonfire",
-  streak_100: "bonfire",
-  weekly_4x_once: "calendar-outline",
-  weekly_4x_4: "calendar",
+  streak_3: "local-fire-department",
+  streak_7: "military-tech",
+  streak_14: "whatshot",
+  streak_30: "workspace-premium",
+  streak_60: "bolt",
+  streak_100: "emoji-events",
+  weekly_4x_once: "calendar-month",
+  weekly_4x_4: "event-repeat",
 
-  workout_1: "footsteps",
-  workout_10: "fitness",
-  workout_50: "medal",
-  workout_100: "trophy",
+  workout_1: "fitness-center",
+  workout_10: "repeat",
+  workout_50: "stars",
+  workout_100: "emoji-events",
 
-  volume_1k: "barbell-outline",
-  volume_10k: "barbell",
-  volume_50k: "barbell",
+  volume_1k: "line-weight",
+  volume_10k: "fitness-center",
+  volume_50k: "terrain",
 
   pr_1: "trending-up",
-  pr_10: "rocket",
+  pr_10: "upgrade",
 
-  muscle_groups_6: "body",
-  exercises_10: "list",
-  custom_exercise_1: "create",
+  muscle_groups_6: "accessibility-new",
+  exercises_10: "checklist",
+  custom_exercise_1: "edit-note",
 
-  weight_first: "scale-outline",
+  weight_first: "monitor-weight",
   weight_entries_10: "scale",
-  weight_entries_30: "analytics",
+  weight_entries_30: "insights",
 
-  ai_plan_1: "sparkles-outline",
-  ai_plan_3: "sparkles",
+  ai_plan_1: "auto-awesome",
+  ai_plan_3: "psychology",
 
-  weekend_warrior: "sunny",
-  double_session: "copy",
-  comeback_kid: "refresh-circle",
+  weekend_warrior: "wb-sunny",
+  double_session: "content-copy",
+  comeback_kid: "replay",
 };
 
 export function badgeIcon(key: string): BadgeIconName {
-  return BADGE_ICONS[key] ?? "ribbon";
+  return BADGE_ICONS[key] ?? "military-tech";
 }
 
-/** Badge colour per tier (fixed metal colours, readable in light and dark). */
-export const TIER_COLORS: Record<AchievementTier, string> = {
-  bronze: "#CD7F32",
-  silver: "#9CA3AF",
-  gold: "#D4A017",
-};
+/** Tier colour from the theme (gold = amber, the records colour). */
+export function tierColor(colors: ColorTokens, tier: AchievementTier): string {
+  return tier === "gold" ? colors.amber : tier === "silver" ? colors.tierSilver : colors.tierBronze;
+}
 
 export const TIER_LABELS: Record<AchievementTier, string> = {
   bronze: "Bronze",
@@ -69,23 +69,40 @@ export const TIER_LABELS: Record<AchievementTier, string> = {
 };
 
 /** Display order and labels for the server's badge categories. */
-export const CATEGORY_ORDER: { key: string; label: string }[] = [
-  { key: "consistency", label: "Consistency" },
-  { key: "workouts", label: "Workouts" },
-  { key: "volume", label: "Volume" },
-  { key: "records", label: "Personal Records" },
-  { key: "variety", label: "Variety" },
-  { key: "body_weight", label: "Body Weight" },
-  { key: "ai_plans", label: "AI Plans" },
-  { key: "fun", label: "Fun" },
+export const CATEGORY_ORDER: { key: string; label: string; icon: BadgeIconName }[] = [
+  { key: "consistency", label: "Consistency", icon: "local-fire-department" },
+  { key: "workouts", label: "Workouts", icon: "fitness-center" },
+  { key: "volume", label: "Volume", icon: "line-weight" },
+  { key: "records", label: "Records", icon: "trending-up" },
+  { key: "variety", label: "Variety", icon: "accessibility-new" },
+  { key: "body_weight", label: "Body weight", icon: "monitor-weight" },
+  { key: "ai_plans", label: "AI plans", icon: "auto-awesome" },
+  { key: "fun", label: "Fun", icon: "celebration" },
 ];
 
 export function categoryLabel(key: string): string {
   return CATEGORY_ORDER.find((c) => c.key === key)?.label ?? key;
 }
+export function categoryIcon(key: string): BadgeIconName {
+  return CATEGORY_ORDER.find((c) => c.key === key)?.icon ?? "military-tech";
+}
 
-/** Volume badges count kilograms; everything else is a plain count. */
-export function formatProgressValue(category: string, value: number): string {
-  const rounded = Math.floor(value);
-  return category === "volume" ? `${rounded.toLocaleString()} kg` : String(rounded);
+const compact = (n: number) => (n >= 10_000 ? `${Math.round(n / 100) / 10}k` : Math.round(n).toLocaleString());
+
+/**
+ * "1 / 4 weeks", "2.2k / 10k kg", "12 / 50". Volume badges count kilograms
+ * (shown in the user's unit); weekly-streak badges count weeks.
+ */
+export function progressLabel(badge: { key: string; category: string; progress: number; targetValue: number }, unit: WeightUnit): string {
+  const p = Math.max(0, Math.floor(badge.progress));
+  const t = badge.targetValue;
+  if (badge.category === "volume") return `${compact(displayWeight(p, unit))} / ${compact(displayWeight(t, unit))} ${weightLabel(unit)}`;
+  if (badge.key.startsWith("streak_")) return `${p} / ${t} ${t === 1 ? "week" : "weeks"}`;
+  return `${p} / ${t}`;
+}
+
+/** "10 Oct" (this year) or "10 Oct 2025". */
+export function unlockDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
 }

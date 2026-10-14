@@ -1,1051 +1,630 @@
 /**
- * OnboardingProfileSetup - Minimal Profile Data Collection
- * =========================================================
- * Fast onboarding with minimal required fields.
- * 
- * Features:
- * - Name text input (REQUIRED)
- * - Height ruler with cm/ft toggle (OPTIONAL - can skip)
- * - Fitness goal selector with cards (OPTIONAL)
- * - Beautiful animations
- * - Progress indication (step 2/3)
- * - Quick completion for user retention
+ * Profile setup, in two short steps (about a minute, mostly taps):
+ *   1. About you: name, age, height, weight (optional)
+ *   2. Your training: goal, experience, training days, session length,
+ *      equipment, and optional fine-tuning (target weight, areas to avoid)
+ * Every answer feeds the AI plan or something the app shows; nothing else is
+ * asked. Saves through the onComplete callback.
  */
 
-import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Dimensions,
-  KeyboardAvoidingView,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
-import Animated, {
-  FadeIn,
-  FadeInDown,
-  FadeInUp,
-  interpolate,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from "react-native-reanimated";
+import { useRef, useState, type ComponentProps, type ElementRef, type ReactNode, type Ref } from "react";
+import { Reveal } from "./ui/Reveal";
+import { Text, TextInput, View, type KeyboardTypeOptions, type LayoutChangeEvent } from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useUnitPreference } from "../hooks/useUnitPreference";
 import { useTheme } from "../theme/theme";
+import { radius, size, spacing, touchTarget, tracking, typography } from "../theme/tokens";
+import { kgToLbs, toKg, weightLabel } from "../utils/unitConversion";
+import {
+  AVOID_OPTIONS,
+  DEFAULT_SESSION_MINUTES,
+  DEFAULT_TRAINING_DAYS,
+  EQUIPMENT_OPTIONS,
+  EXPERIENCE_OPTIONS,
+  SESSION_OPTIONS,
+  type AvoidArea,
+  type Equipment,
+  type ExperienceLevel,
+  type SessionMinutes,
+  type Weekday,
+} from "../constants/trainingProfile";
+import { ChoiceChips } from "./training/ChoiceChips";
+import { TrainingDaysPicker } from "./training/TrainingDaysPicker";
+import { HeightRuler, type HeightUnit } from "./onboarding/HeightRuler";
+import { Button, FadingMessage, PressableScale } from "./ui";
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
+export type FitnessGoal = "strength" | "muscle" | "endurance" | "weight-loss" | "general";
 
-// Height ranges
-const CM_MIN = 120;
-const CM_MAX = 220;
-const FT_MIN = 4; // 4'0"
-const FT_MAX = 7; // 7'3"
+export type ProfileSetupResult = {
+  name: string;
+  age: number;
+  fitnessGoal: FitnessGoal;
+  heightCm: number;
+  weightKg: number | null;
+  /** Number of training days (mirrors trainingDays.length). */
+  weeklyGoal: number;
+  experienceLevel: ExperienceLevel;
+  equipment: Equipment;
+  sessionMinutes: SessionMinutes;
+  trainingDays: Weekday[];
+  avoidAreas: AvoidArea[];
+  targetWeightKg: number | null;
+};
 
-type Unit = "cm" | "ft";
-type FitnessGoal = "strength" | "muscle" | "endurance" | "weight-loss" | "general";
+type Props = {
+  initialName?: string;
+  /** Resolves true when saved; false keeps the user on this screen. */
+  onComplete: (result: ProfileSetupResult) => Promise<boolean>;
+  onBack: () => void;
+};
 
-interface FitnessGoalOption {
-  id: FitnessGoal;
-  label: string;
-  emoji: string;
-  description: string;
-}
+type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
 
-const FITNESS_GOALS: FitnessGoalOption[] = [
-  { id: "strength", label: "Strength", emoji: "🏋️", description: "Build raw power" },
-  { id: "muscle", label: "Muscle Gain", emoji: "💪", description: "Grow bigger muscles" },
-  { id: "endurance", label: "Endurance", emoji: "🏃", description: "Improve stamina" },
-  { id: "weight-loss", label: "Weight Loss", emoji: "⚖️", description: "Shed pounds" },
-  { id: "general", label: "General Fitness", emoji: "🎯", description: "Overall health" },
+/** Fitness goals (onboarding cards; Profile → Fitness goal). */
+export const GOALS: { id: FitnessGoal; title: string; description: string; icon: MaterialIconName }[] = [
+  { id: "strength", title: "Build strength", description: "Heavy loads, low reps", icon: "fitness-center" },
+  { id: "muscle", title: "Build muscle", description: "Hypertrophy volume, 8–12 reps", icon: "sports-gymnastics" },
+  { id: "weight-loss", title: "Lose weight", description: "Conditioning and calorie burn", icon: "local-fire-department" },
+  { id: "general", title: "Stay fit", description: "Balanced health and mobility", icon: "favorite" },
+  { id: "endurance", title: "Build endurance", description: "Stamina and work capacity", icon: "directions-run" },
 ];
 
-interface OnboardingProfileSetupProps {
-  onComplete: (
-    name: string,
-    age: number | null,
-    workoutPlan: FitnessGoal,
-    heightCm: number | null,
-    weightKg: number | null
-  ) => void;
-  showBackButton?: boolean;
-  onBack?: () => void;
-}
+const GOAL_ROWS = GOALS.reduce<(typeof GOALS)[]>((rows, g, i) => {
+  if (i % 2 === 0) rows.push([g]);
+  else rows[rows.length - 1].push(g);
+  return rows;
+}, []);
 
-/**
- * Generate height values for the ruler
- */
-function generateHeightValues(unit: Unit): number[] {
-  // Descending order: tallest at top, shortest at bottom.
-  // Scrolling DOWN shows shorter values — matches the physical ruler metaphor.
-  if (unit === "cm") {
-    return Array.from({ length: CM_MAX - CM_MIN + 1 }, (_, i) => CM_MAX - i);
-  } else {
-    const values: number[] = [];
-    for (let ft = FT_MAX; ft >= FT_MIN; ft--) {
-      const maxInch = ft === FT_MAX ? 3 : 11;
-      for (let inch = ft === FT_MAX ? 3 : 11; inch >= 0; inch--) {
-        values.push(ft * 12 + inch);
-      }
-    }
-    return values;
-  }
-}
+const DEFAULT_HEIGHT_CM = 170;
+const AGE_MIN = 13;
+const AGE_MAX = 100;
+const WEIGHT_MIN_KG = 20;
+const WEIGHT_MAX_KG = 300;
 
-/**
- * Convert cm to feet/inches display
- */
-function cmToFtIn(cm: number): { ft: number; inch: number } {
-  const totalInches = Math.round(cm / 2.54);
-  const ft = Math.floor(totalInches / 12);
-  const inch = totalInches % 12;
-  return { ft, inch };
-}
+type Field = "name" | "age" | "weight" | "goal" | "experience" | "days" | "equipment" | "target";
+const STEP1_FIELDS: Field[] = ["name", "age", "weight"];
+const STEP2_FIELDS: Field[] = ["goal", "experience", "days", "equipment", "target"];
+/** Target weight is offered only where it means something. */
+const TARGET_GOALS: FitnessGoal[] = ["weight-loss", "muscle"];
 
-function inchesToFtIn(totalInches: number): { ft: number; inch: number } {
-  const roundedInches = Math.round(totalInches);
-  return {
-    ft: Math.floor(roundedInches / 12),
-    inch: roundedInches % 12,
-  };
-}
+/* ---------- small building blocks ---------- */
 
-/**
- * Convert total inches to cm
- */
-function inchesToCm(totalInches: number): number {
-  return Math.round(totalInches * 2.54);
-}
-
-/**
- * Ruler tick mark component
- */
-function RulerTick({
-  value,
-  unit,
-  isSelected,
+function SectionCard({
+  title,
+  right,
+  children,
+  onLayout,
+  index = 0,
 }: {
-  value: number;
-  unit: Unit;
-  isSelected: boolean;
+  title: string;
+  right?: ReactNode;
+  children: ReactNode;
+  onLayout?: (e: LayoutChangeEvent) => void;
+  /** Entrance order (cards rise in one after another). */
+  index?: number;
 }) {
   const { colors } = useTheme();
-  const isMajor = unit === "cm" ? value % 10 === 0 : value % 12 === 0;
-  const isMinor = unit === "cm" ? value % 5 === 0 : true;
-
-  const displayValue =
-    unit === "cm"
-      ? isMajor
-        ? `${value}`
-        : ""
-      : value % 12 === 0
-        ? `${Math.floor(value / 12)}'`
-        : "";
-
   return (
-    <View style={tickStyles.tickContainer}>
-      <View
-        style={[
-          tickStyles.tickLine,
-          { backgroundColor: colors.textMuted },
-          isMajor && [tickStyles.tickMajor, { backgroundColor: colors.textPrimary }],
-          !isMajor && isMinor && tickStyles.tickMinor,
-          !isMajor && !isMinor && tickStyles.tickSmall,
-          isSelected && [tickStyles.tickSelected, { backgroundColor: colors.accent }],
-        ]}
-      />
-      {displayValue ? (
+    // Reveal carries onLayout so scroll-to-field still gets the card's position in the form.
+    <Reveal index={index} onLayout={onLayout} style={{ backgroundColor: colors.raised, borderRadius: radius.xl, padding: spacing.lg, gap: spacing.md }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm }}>
         <Text
-          style={[
-            tickStyles.tickLabel,
-            { color: colors.textMuted },
-            isSelected && [tickStyles.tickLabelSelected, { color: colors.accent }]
-          ]}
+          accessibilityRole="header"
+          style={[typography.labelMd, { color: colors.textSecondary, textTransform: "uppercase", letterSpacing: tracking.overline }]}
         >
-          {displayValue}
+          {title}
         </Text>
-      ) : null}
+        {right}
+      </View>
+      {children}
+    </Reveal>
+  );
+}
+
+function MetricField({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  suffix,
+  keyboardType = "default",
+  error,
+  inputRef,
+  returnKeyType,
+  onSubmitEditing,
+  autoComplete,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (t: string) => void;
+  placeholder?: string;
+  suffix?: string;
+  keyboardType?: KeyboardTypeOptions;
+  error?: string | null;
+  inputRef?: Ref<TextInput>;
+  returnKeyType?: "next" | "done";
+  onSubmitEditing?: () => void;
+  autoComplete?: "name" | "off";
+  /** One line under the field explaining what it is. */
+  hint?: string;
+}) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ gap: spacing.xs, flex: 1 }}>
+      <Text style={[typography.labelSm, { color: colors.textSecondary }]}>{label}</Text>
+      <View
+        style={{
+          height: size.control,
+          borderRadius: radius.md,
+          backgroundColor: colors.surfaceContainerLowest,
+          paddingHorizontal: spacing.md,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: spacing.sm,
+          borderWidth: error ? size.divider : 0,
+          borderColor: colors.danger,
+        }}
+      >
+        <TextInput
+          ref={inputRef}
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={colors.borderStrong}
+          keyboardType={keyboardType}
+          returnKeyType={returnKeyType}
+          onSubmitEditing={onSubmitEditing}
+          autoComplete={autoComplete}
+          accessibilityLabel={suffix ? `${label} in ${suffix}` : label}
+          accessibilityHint={error ?? undefined}
+          selectionColor={colors.accent}
+          cursorColor={colors.accent}
+          style={[typography.headlineSm, { flex: 1, height: size.control, color: colors.text, paddingVertical: 0 }]}
+        />
+        {suffix && <Text style={[typography.labelSm, { color: colors.borderStrong }]}>{suffix}</Text>}
+      </View>
+      {hint ? <Text style={[typography.labelSm, { color: colors.textSecondary }]}>{hint}</Text> : null}
+      <FadingMessage message={error} color={colors.danger} live />
     </View>
   );
 }
 
-/**
- * Progress indicator dots
- */
-function ProgressDots({ current, total }: { current: number; total: number }) {
+/** "Step 1 of 2" as two bars. */
+function StepDots({ step }: { step: 1 | 2 }) {
   const { colors } = useTheme();
-
   return (
-    <View style={styles.progressContainer}>
-      {Array.from({ length: total }).map((_, i) => (
-        <View
-          key={i}
-          style={[
-            styles.progressDot,
-            { backgroundColor: colors.border },
-            i === current && [styles.progressDotActive, { backgroundColor: colors.accent }],
-            i < current && { backgroundColor: colors.accent },
-          ]}
-        />
+    <View accessible accessibilityLabel={`Step ${step} of 2`} style={{ flexDirection: "row", gap: spacing.xs, paddingBottom: spacing.xs }}>
+      {[1, 2].map((n) => (
+        <View key={n} style={{ flex: 1, height: size.progressBar, borderRadius: radius.full, backgroundColor: n <= step ? colors.accent : colors.surfaceContainerHighest }} />
       ))}
     </View>
   );
 }
 
-export function OnboardingProfileSetup({
-  onComplete,
-  showBackButton = false,
-  onBack,
-}: OnboardingProfileSetupProps) {
-  const { colors, spacing, radius, typography, shadows } = useTheme();
+/* ---------- screen ---------- */
+
+export function OnboardingProfileSetup({ initialName = "", onComplete, onBack }: Props) {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const flatListRef = useRef<ScrollView>(null);
+  const { unit: weightUnit } = useUnitPreference();
 
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initialName);
   const [age, setAge] = useState("");
-  const [showPersonalizationSection, setShowPersonalizationSection] = useState(false);
-  const [unit, setUnit] = useState<Unit>("cm");
-  const [selectedHeight, setSelectedHeight] = useState(170);
-  const [selectedWeight, setSelectedWeight] = useState<number | null>(null);
-  const [selectedGoal, setSelectedGoal] = useState<FitnessGoal | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [nameError, setNameError] = useState<string | null>(null);
-  const [ageError, setAgeError] = useState<string | null>(null);
-  const [goalError, setGoalError] = useState<string | null>(null);
+  const [goal, setGoal] = useState<FitnessGoal | null>(null);
+  const [heightCm, setHeightCm] = useState(DEFAULT_HEIGHT_CM);
+  const [heightUnit, setHeightUnit] = useState<HeightUnit>("cm");
+  const [weight, setWeight] = useState("");
+  const [step, setStep] = useState<1 | 2>(1);
+  const [experience, setExperience] = useState<ExperienceLevel | null>(null);
+  const [days, setDays] = useState<Weekday[]>(DEFAULT_TRAINING_DAYS);
+  const [session, setSession] = useState<SessionMinutes>(DEFAULT_SESSION_MINUTES);
+  const [equipment, setEquipment] = useState<Equipment | null>(null);
+  const [fineTune, setFineTune] = useState(false);
+  const [target, setTarget] = useState("");
+  const [avoid, setAvoid] = useState<AvoidArea[]>([]);
+  const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
-  const heightValues = generateHeightValues(unit);
-  const ITEM_HEIGHT = 12;
-  const toggleProgress = useSharedValue(0);
-  const buttonScale = useSharedValue(1);
-
-  // The ruler only renders inside the optional section, so scroll it to the
-  // selected height each time the section opens (it mounts at offset 0).
-  useEffect(() => {
-    if (!showPersonalizationSection) return;
-    const index = heightValues.indexOf(selectedHeight);
-    if (index === -1) return;
-    const timer = setTimeout(() => {
-      flatListRef.current?.scrollTo({ y: index * ITEM_HEIGHT, animated: false });
-    }, 50);
-    return () => clearTimeout(timer);
-    // Only when the section opens — not on every height change while scrolling.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPersonalizationSection]);
-
-  const handleBack = () => {
-    if (onBack) {
-      onBack();
-    }
+  const scrollRef = useRef<ElementRef<typeof KeyboardAwareScrollView>>(null);
+  const ageRef = useRef<TextInput>(null);
+  const offsets = useRef<Partial<Record<Field, number>>>({});
+  const track = (field: Field, also?: Field) => (e: LayoutChangeEvent) => {
+    offsets.current[field] = e.nativeEvent.layout.y;
+    if (also) offsets.current[also] = e.nativeEvent.layout.y;
   };
 
-  const handleUnitToggle = (newUnit: Unit) => {
-    if (newUnit === unit) return;
+  const clearError = (field: Field) => setErrors((prev) => (prev[field] ? { ...prev, [field]: undefined } : prev));
 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  const parseKg = (text: string) => toKg(Number(text.replace(",", ".")), weightUnit);
+  const weightRangeError =
+    weightUnit === "kg"
+      ? `Enter a weight from ${WEIGHT_MIN_KG} to ${WEIGHT_MAX_KG} kg.`
+      : `Enter a weight from ${Math.ceil(kgToLbs(WEIGHT_MIN_KG))} to ${Math.floor(kgToLbs(WEIGHT_MAX_KG))} lbs.`;
 
-    let newHeight: number;
-    if (newUnit === "ft") {
-      const { ft, inch } = cmToFtIn(selectedHeight);
-      newHeight = ft * 12 + inch;
-    } else {
-      newHeight = inchesToCm(selectedHeight);
-    }
-
-    setSelectedHeight(newHeight);
-    setUnit(newUnit);
-    toggleProgress.value = withSpring(newUnit === "ft" ? 1 : 0);
-
-    // ✅ Adjust scroll position to show equivalent height in new unit
-    // Prevents scroll position from feeling stuck or jerky
-    const newHeightValues = generateHeightValues(newUnit);
-    const newIndex = newHeightValues.indexOf(newHeight);
-    if (newIndex !== -1 && flatListRef.current) {
-      // Use setTimeout to let state update complete first
-      setTimeout(() => {
-        flatListRef.current?.scrollTo({
-          y: newIndex * ITEM_HEIGHT,
-          animated: false, // instant adjustment, not animated
-        });
-      }, 50);
-    }
-  };
-
-  const handleScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const offsetY = event.nativeEvent.contentOffset.y;
-      const index = Math.max(
-        0,
-        Math.min(Math.round(offsetY / ITEM_HEIGHT), heightValues.length - 1),
-      );
-      const newValue = heightValues[index];
-
-      if (newValue !== selectedHeight) {
-        setSelectedHeight(newValue);
-        Haptics.selectionAsync();
+  const validate = (which: 1 | 2) => {
+    const next: Partial<Record<Field, string>> = {};
+    if (which === 1) {
+      if (!name.trim()) next.name = "Enter your name.";
+      const ageNum = Number(age);
+      if (!age.trim() || !Number.isInteger(ageNum) || ageNum < AGE_MIN || ageNum > AGE_MAX) {
+        next.age = `Enter an age from ${AGE_MIN} to ${AGE_MAX}.`;
       }
-    },
-    [heightValues, selectedHeight, ITEM_HEIGHT]
-  );
-
-  const handleMomentumScrollEnd = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const offsetY = event.nativeEvent.contentOffset.y;
-      const index = Math.max(
-        0,
-        Math.min(Math.round(offsetY / ITEM_HEIGHT), heightValues.length - 1),
-      );
-      // Snap to nearest item for better UX
-      flatListRef.current?.scrollTo({
-        y: index * ITEM_HEIGHT,
-        animated: true,
-      });
-    },
-    [ITEM_HEIGHT, heightValues.length]
-  );
-
-  const handleComplete = async () => {
-    // Validate name
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setNameError("Please enter your name");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      return;
+      if (weight.trim()) {
+        const kg = parseKg(weight);
+        if (!Number.isFinite(kg) || kg < WEIGHT_MIN_KG || kg > WEIGHT_MAX_KG) next.weight = weightRangeError;
+      }
+    } else {
+      if (!goal) next.goal = "Choose a goal.";
+      if (!experience) next.experience = "Choose your experience.";
+      if (days.length === 0) next.days = "Pick at least one training day.";
+      if (!equipment) next.equipment = "Choose your equipment.";
+      if (showTarget && target.trim()) {
+        const kg = parseKg(target);
+        if (!Number.isFinite(kg) || kg < WEIGHT_MIN_KG || kg > WEIGHT_MAX_KG) next.target = weightRangeError;
+      }
     }
+    return next;
+  };
 
-    if (trimmedName.length < 2) {
-      setNameError("Name must be at least 2 characters");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      return;
-    }
+  const showErrors = (next: Partial<Record<Field, string>>, fields: Field[]) => {
+    setErrors(next);
+    const firstInvalid = fields.find((f) => next[f]);
+    if (!firstInvalid) return false;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+    if (firstInvalid === "target") setFineTune(true);
+    scrollRef.current?.scrollTo({ y: Math.max(0, (offsets.current[firstInvalid] ?? 0) - spacing.lg), animated: true });
+    return true;
+  };
 
-    // Validate age
-    const ageNum = parseInt(age, 10);
-    if (!age || isNaN(ageNum)) {
-      setAgeError("Please enter your age");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      return;
-    }
+  const next = () => {
+    if (showErrors(validate(1), STEP1_FIELDS)) return;
+    setStep(2);
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  };
 
-    if (ageNum < 13) {
-      setAgeError("You must be at least 13 years old");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      return;
-    }
+  const back = () => {
+    if (step === 2) {
+      setErrors({});
+      setStep(1);
+      scrollRef.current?.scrollTo({ y: 0, animated: false });
+    } else onBack();
+  };
 
-    if (ageNum > 120) {
-      setAgeError("Please enter a valid age");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      return;
-    }
+  const finish = async () => {
+    if (savingRef.current) return;
+    if (showErrors(validate(2), STEP2_FIELDS)) return;
 
-    // Validate fitness goal (mandatory in V1.1.1)
-    if (!selectedGoal) {
-      setGoalError("Please select a fitness goal");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      return;
-    }
-
+    savingRef.current = true;
+    setSaving(true);
     try {
-      setIsLoading(true);
-      buttonScale.value = withSpring(0.96);
-
-      // Height is optional
-      const heightCm = showPersonalizationSection && selectedHeight
-        ? unit === "cm"
-          ? selectedHeight
-          : inchesToCm(selectedHeight)
-        : null;
-
-      // Weight is optional
-      const weightKg = selectedWeight || null;
-
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-      // Delay slightly for visual feedback
-      await new Promise((resolve) => setTimeout(resolve, 200));
-
-      onComplete(trimmedName, ageNum, selectedGoal, heightCm, weightKg);
+      const ok = await onComplete({
+        name: name.trim(),
+        age: Number(age),
+        fitnessGoal: goal!,
+        heightCm,
+        weightKg: weight.trim() ? Math.round(parseKg(weight) * 10) / 10 : null,
+        weeklyGoal: days.length,
+        experienceLevel: experience!,
+        equipment: equipment!,
+        sessionMinutes: session,
+        trainingDays: days,
+        avoidAreas: avoid,
+        targetWeightKg: showTarget && target.trim() ? Math.round(parseKg(target) * 10) / 10 : null,
+      });
+      if (!ok) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
     } finally {
-      setIsLoading(false);
-      buttonScale.value = withSpring(1);
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
-  const displayHeight =
-    unit === "cm"
-      ? `${selectedHeight} cm`
-      : (() => {
-          const { ft, inch } = inchesToFtIn(selectedHeight);
-          return `${ft}'${inch}"`;
-        })();
 
-  const toggleStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: interpolate(toggleProgress.value, [0, 1], [0, 87]) }],
-  }));
-
-  const buttonAnimStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: buttonScale.value }],
-  }));
+  const showTarget = !!goal && TARGET_GOALS.includes(goal);
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={insets.top + 12}
-    >
-      <LinearGradient
-        colors={[colors.background, colors.surfaceElevated, colors.background]}
-        locations={[0, 0.5, 1]}
-        style={StyleSheet.absoluteFill}
-      />
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top, paddingBottom: insets.bottom }}>
+      {/* Header */}
+      <View style={{ height: size.appBar, paddingHorizontal: spacing.sm, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <PressableScale
+          onPress={back}
+          accessibilityRole="button"
+          accessibilityLabel={step === 2 ? "Back to about you" : "Back to intro"}
+          style={{ width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center" }}
+        >
+          {({ pressed }) => <MaterialIcons name="arrow-back" size={size.iconLg} color={pressed ? colors.text : colors.textSecondary} />}
+        </PressableScale>
+        <Text
+          accessibilityRole="header"
+          style={[typography.headlineSm, { color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]}
+        >
+          {step === 1 ? "About you" : "Your training"}
+        </Text>
+        <View style={{ width: touchTarget }} />
+      </View>
 
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingBottom: insets.bottom + spacing.xxl, flexGrow: 1 },
-        ]}
+      <KeyboardAwareScrollView
+        ref={scrollRef}
+        bottomOffset={size.keyboardClearance}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        automaticallyAdjustKeyboardInsets
+        contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: spacing.xl, gap: spacing.lg }}
       >
-        {/* Header */}
-        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.lg }}>
-          {showBackButton && (
-            <Pressable
-              onPress={handleBack}
-              style={{ marginRight: spacing.md, padding: spacing.xs }}
-            >
-              <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
-            </Pressable>
-          )}
-          <View style={{ flex: 1 }}>
-            <ProgressDots current={2} total={3} />
-          </View>
+        <View style={{ paddingTop: spacing.sm, gap: spacing.xs }}>
+          <StepDots step={step} />
+          <Text style={[typography.headlineSm, { color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]}>
+            {step === 1 ? "Set your baseline" : "How you train"}
+          </Text>
+          <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
+            {step === 1 ? "These numbers tune your plans, targets and stats." : "Your AI plan is built from these. Change them anytime in Profile."}
+          </Text>
         </View>
 
-        {/* Title */}
-        <Animated.View entering={FadeInDown.delay(100)}>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>
-            Let&apos;s Get to Know You
-          </Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            Complete your profile to personalize your experience
-          </Text>
-        </Animated.View>
+        {step === 1 && (
+          <>
 
-        {/* Name Input Section */}
-        <Animated.View entering={FadeInUp.delay(200).duration(400)}>
-          <View
-            style={[
-              styles.section,
-              {
-                backgroundColor: colors.surface,
-                borderColor: nameError ? colors.error : colors.cardBorder,
-              },
-            ]}
-          >
-            <Text style={[styles.label, { color: colors.textMuted }]}>
-              FULL NAME *
-            </Text>
-            <TextInput
-              placeholder="Enter your name"
-              placeholderTextColor={colors.textMuted}
-              value={name}
-              onChangeText={(text) => {
-                setName(text);
-                if (nameError) setNameError(null);
-              }}
-              maxLength={50}
-              style={[
-                styles.nameInput,
-                {
-                  backgroundColor: colors.surfaceElevated,
-                  color: colors.textPrimary,
-                  borderColor: nameError ? colors.error : "transparent",
-                },
-              ]}
-            />
-            {nameError && (
-              <View style={{ flexDirection: "row", alignItems: "center", marginTop: spacing.xs }}>
-                <Ionicons
-                  name="alert-circle"
-                  size={14}
-                  color={colors.error}
-                  style={{ marginRight: spacing.xs }}
-                />
-                <Text style={[styles.errorText, { color: colors.error }]}>
-                  {nameError}
-                </Text>
-              </View>
-            )}
-          </View>
-        </Animated.View>
-
-        {/* Age Input Section */}
-        <Animated.View entering={FadeInUp.delay(250).duration(400)}>
-          <View
-            style={[
-              styles.section,
-              {
-                backgroundColor: colors.surface,
-                borderColor: ageError ? colors.error : colors.cardBorder,
-              },
-            ]}
-          >
-            <Text style={[styles.label, { color: colors.textMuted }]}>
-              AGE * 
-              <Text style={{ fontSize: 12, fontWeight: "400" }}>
-                {" "}
-              </Text>
-            </Text>
-            <TextInput
-              placeholder="Enter your age"
-              placeholderTextColor={colors.textMuted}
-              value={age}
-              onChangeText={(text) => {
-                setAge(text);
-                if (ageError) setAgeError(null);
-              }}
-              maxLength={3}
-              keyboardType="number-pad"
-              style={[
-                styles.nameInput,
-                {
-                  backgroundColor: colors.surfaceElevated,
-                  color: colors.textPrimary,
-                  borderColor: ageError ? colors.error : "transparent",
-                },
-              ]}
-            />
-            {ageError && (
-              <View style={{ flexDirection: "row", alignItems: "center", marginTop: spacing.xs }}>
-                <Ionicons
-                  name="alert-circle"
-                  size={14}
-                  color={colors.error}
-                  style={{ marginRight: spacing.xs }}
-                />
-                <Text style={[styles.errorText, { color: colors.error }]}>
-                  {ageError}
-                </Text>
-              </View>
-            )}
-          </View>
-        </Animated.View>
-
-        {/* Personalization Section (Height & Weight) - Optional */}
-        <Animated.View entering={FadeInUp.delay(300).duration(400)}>
-          {!showPersonalizationSection ? (
-            <Pressable
-              onPress={() => setShowPersonalizationSection(true)}
-              style={[
-                styles.section,
-                {
-                  backgroundColor: colors.accentLight,
-                  borderColor: colors.accent + "30",
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                },
-              ]}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.label, { color: colors.accent, marginBottom: 6 }]}>
-                  PERSONALIZATION (OPTIONAL)
-                </Text>
-                <Text style={[styles.bodyText, { color: colors.textSecondary }]}>
-                  Tap to add height & weight for better recommendations
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={colors.accent} />
-            </Pressable>
-          ) : (
-            <View
-              style={[
-                styles.section,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: colors.cardBorder,
-                },
-              ]}
-            >
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
-                <Text style={[styles.label, { color: colors.textMuted }]}>
-                  HEIGHT
-                </Text>
-
-                {/* Unit Toggle */}
-                <View
-                  style={[
-                    styles.unitToggle,
-                    { backgroundColor: colors.surfaceElevated },
-                  ]}
-                >
-                  <Animated.View
-                    style={[
-                      styles.unitToggleBackground,
-                      {
-                        backgroundColor: colors.accent,
-                      },
-                      toggleStyle,
-                    ]}
-                  />
-                  <Pressable
-                    onPress={() => handleUnitToggle("cm")}
-                    style={{ flex: 1, alignItems: "center", zIndex: 1 }}
-                  >
-                    <Text
-                      style={[
-                        styles.unitToggleText,
-                        {
-                          color: unit === "cm" ? "#fff" : colors.textSecondary,
-                          fontWeight: unit === "cm" ? "700" : "500",
-                        },
-                      ]}
-                    >
-                      cm
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => handleUnitToggle("ft")}
-                    style={{ flex: 1, alignItems: "center", zIndex: 1 }}
-                  >
-                    <Text
-                      style={[
-                        styles.unitToggleText,
-                        {
-                          color: unit === "ft" ? "#fff" : colors.textSecondary,
-                          fontWeight: unit === "ft" ? "700" : "500",
-                        },
-                      ]}
-                    >
-                      ft/in
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
-
-              {/* Height Display */}
-              <View
-                style={[
-                  styles.heightDisplay,
-                  {
-                    backgroundColor: colors.surfaceElevated,
-                    borderColor: colors.cardBorder,
-                  },
-                ]}
-              >
-                <Ionicons
-                  name="resize-outline"
-                  size={20}
-                  color={colors.accent}
-                  style={{ marginRight: spacing.sm }}
-                />
-                <Text style={[styles.heightValue, { color: colors.textPrimary }]}>
-                  {unit === "cm"
-                    ? `${selectedHeight} cm`
-                    : (() => {
-                        const { ft, inch } = inchesToFtIn(selectedHeight);
-                        return `${ft}'${inch}"`;
-                      })()}
-                </Text>
-              </View>
-
-              {/* Height Ruler */}
-              <View style={[styles.rulerBorder, { borderColor: colors.cardBorder }]}>
-                <ScrollView
-                  ref={flatListRef}
-                  style={[styles.rulerContainer, { height: 180 }]}
-                  contentContainerStyle={{ paddingVertical: 84 }}
-                  snapToInterval={ITEM_HEIGHT}
-                  decelerationRate="fast"
-                  scrollEventThrottle={16}
-                  onScroll={handleScroll}
-                  onMomentumScrollEnd={handleMomentumScrollEnd}
-                  showsVerticalScrollIndicator={false}
-                  scrollEnabled={true}
-                  nestedScrollEnabled={true}
-                >
-                  {heightValues.map((item, index) => (
-                    <RulerTick
-                      key={`${item}-${index}`}
-                      value={item}
-                      unit={unit}
-                      isSelected={item === selectedHeight}
-                    />
-                  ))}
-                </ScrollView>
-              </View>
-
-              {/* Weight Input */}
-              <View
-                style={[{
-                  marginTop: spacing.lg,
-                  paddingTop: spacing.lg,
-                  borderTopWidth: 1,
-                  borderTopColor: colors.cardBorder,
-                }]}>
-                <Text style={[styles.label, { color: colors.textMuted }]}>
-                  WEIGHT (KG) - OPTIONAL
-                </Text>
-                <TextInput
-                  placeholder="Enter your weight in kg"
-                  placeholderTextColor={colors.textMuted}
-                  value={selectedWeight ? selectedWeight.toString() : ""}
-                  onChangeText={(text) => {
-                    const weight = text ? parseInt(text, 10) : null;
-                    if (!text || (weight !== null && !isNaN(weight) && weight > 0 && weight < 500)) {
-                      setSelectedWeight(weight);
-                    }
-                  }}
-                  maxLength={3}
-                  keyboardType="number-pad"
-                  style={{
-                    backgroundColor: colors.surfaceElevated,
-                    color: colors.textPrimary,
-                    borderRadius: radius.lg,
-                    borderWidth: 1,
-                    borderColor: colors.cardBorder,
-                    padding: spacing.md,
-                    fontSize: typography.body.fontSize,
-                    marginTop: spacing.sm,
-                  }}
-                />
-              </View>
-
-              <Pressable
-                onPress={() => setShowPersonalizationSection(false)}
-                style={[styles.skipButton, { borderColor: colors.textMuted }]}
-              >
-                <Text style={[styles.skipButtonText, { color: colors.textMuted }]}>
-                  Skip for now
-                </Text>
-              </Pressable>
-            </View>
-          )}
-        </Animated.View>
-
-        {/* Fitness Goal Section - MANDATORY in V1.1.1 */}
-        <Animated.View entering={FadeInUp.delay(350).duration(400)}>
-          <View
-            style={{
-              backgroundColor: goalError ? colors.errorLight || colors.error + "20" : "transparent",
-              borderRadius: radius.lg,
-              padding: goalError ? spacing.sm : 0,
-              marginBottom: goalError ? spacing.sm : 0,
+        {/* 1. Identity */}
+        <SectionCard index={0} title="Athlete identity" onLayout={track("name", "age")}>
+          <MetricField
+            label="Display name"
+            value={name}
+            onChangeText={(t) => {
+              setName(t);
+              clearError("name");
             }}
-          >
-            <Text style={[styles.label, { color: colors.textMuted, marginVertical: spacing.md }]}>
-              YOUR FITNESS GOAL *
-            </Text>
-            {goalError && (
-              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
-                <Ionicons
-                  name="alert-circle"
-                  size={14}
-                  color={colors.error}
-                  style={{ marginRight: spacing.xs }}
-                />
-                <Text style={{ color: colors.error, fontSize: 12, flex: 1 }}>
-                  {goalError}
-                </Text>
-              </View>
-            )}
+            placeholder="Your name"
+            autoComplete="name"
+            returnKeyType="next"
+            onSubmitEditing={() => ageRef.current?.focus()}
+            error={errors.name}
+          />
+          <View style={{ flexDirection: "row", gap: spacing.md }}>
+            <MetricField
+              label="Age"
+              inputRef={ageRef}
+              value={age}
+              onChangeText={(t) => {
+                setAge(t.replace(/[^0-9]/g, ""));
+                clearError("age");
+              }}
+              placeholder="Age"
+              suffix="yrs"
+              keyboardType="number-pad"
+              returnKeyType="done"
+              error={errors.age}
+            />
+            <View style={{ flex: 1 }} />
           </View>
-          <View style={{ gap: spacing.sm }}>
-            {FITNESS_GOALS.map((goal) => (
-              <Pressable
-                key={goal.id}
-                onPress={() => {
-                  setSelectedGoal(goal.id);
-                  setGoalError(null); // Clear error when user selects
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }}
-                style={[
-                  styles.goalCard,
-                  {
-                    backgroundColor: selectedGoal === goal.id ? colors.accentLight : colors.surface,
-                    borderColor: selectedGoal === goal.id ? colors.accent : colors.cardBorder,
-                  },
-                ]}
-              >
-                <Text style={{ fontSize: 24, marginRight: spacing.md }}>
-                  {goal.emoji}
-                </Text>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={[
-                      styles.goalLabel,
-                      {
-                        color:
-                          selectedGoal === goal.id ? colors.accent : colors.textPrimary,
-                      },
-                    ]}
-                  >
-                    {goal.label}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.goalDescription,
-                      { color: colors.textSecondary },
-                    ]}
-                  >
-                    {goal.description}
-                  </Text>
-                </View>
-                {selectedGoal === goal.id && (
-                  <View
+        </SectionCard>
+
+        {/* 3. Stature */}
+        <SectionCard index={1}
+          title="Stature"
+          right={
+            <View
+              accessibilityRole="radiogroup"
+              style={{
+                height: size.linkMin,
+                padding: spacing.xxs,
+                borderRadius: radius.md,
+                flexDirection: "row",
+                backgroundColor: colors.surfaceContainerLowest,
+              }}
+            >
+              {(["cm", "ft"] as HeightUnit[]).map((u) => {
+                const active = heightUnit === u;
+                return (
+                  <PressableScale
+                    key={u}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      setHeightUnit(u);
+                    }}
+                    hitSlop={{ top: (touchTarget - size.linkMin) / 2, bottom: (touchTarget - size.linkMin) / 2 }}
+                    accessibilityRole="radio"
+                    accessibilityLabel={u === "cm" ? "Centimetres" : "Feet and inches"}
+                    accessibilityState={{ selected: active }}
                     style={{
-                      width: 20,
-                      height: 20,
-                      borderRadius: 10,
-                      backgroundColor: colors.accent,
+                      height: "100%",
+                      paddingHorizontal: spacing.md,
+                      borderRadius: radius.sm,
                       justifyContent: "center",
-                      alignItems: "center",
+                      backgroundColor: active ? colors.surfaceContainerHigh : "transparent",
                     }}
                   >
-                    <Ionicons name="checkmark" size={14} color="#fff" />
+                    <Text style={[typography.labelSm, { color: active ? colors.accent : colors.borderStrong }]}>
+                      {u === "cm" ? "cm" : "ft-in"}
+                    </Text>
+                  </PressableScale>
+                );
+              })}
+            </View>
+          }
+        >
+          <View style={{ backgroundColor: colors.surfaceContainerLowest, borderRadius: radius.lg, padding: spacing.md, alignItems: "center", gap: spacing.md }}>
+            {/* The ruler shows its own live readout (smooth scrolling: the form only updates when it settles). */}
+            <View style={{ alignSelf: "stretch" }}>
+              <HeightRuler cm={heightCm} unit={heightUnit} onChangeCm={setHeightCm} />
+            </View>
+            <Text style={[typography.labelSm, { color: colors.borderStrong, textAlign: "center" }]}>
+              Used to tune your plans and stats.
+            </Text>
+          </View>
+        </SectionCard>
+
+        {/* 4. Weight (optional) */}
+        <SectionCard index={2}
+          title="Weight"
+          onLayout={track("weight")}
+          right={<Text style={[typography.labelSm, { color: colors.borderStrong }]}>Optional</Text>}
+        >
+          <MetricField
+            label="Current weight"
+            value={weight}
+            onChangeText={(t) => {
+              setWeight(t.replace(/[^0-9.,]/g, ""));
+              clearError("weight");
+            }}
+            placeholder={weightUnit === "kg" ? "e.g. 78.5" : "e.g. 173"}
+            suffix={weightLabel(weightUnit)}
+            keyboardType="decimal-pad"
+            returnKeyType="done"
+            error={errors.weight}
+          />
+          <Text style={[typography.labelSm, { color: colors.borderStrong }]}>You can log this anytime in the Weight tab.</Text>
+        </SectionCard>
+
+          </>
+        )}
+
+        {step === 2 && (
+          <>
+        {/* Goal */}
+        <SectionCard index={0}
+          title="Primary objective"
+          onLayout={track("goal")}
+          right={<Text style={[typography.labelSm, { color: goal ? colors.accent : colors.textSecondary }]}>{goal ? "1 selected" : "Choose one"}</Text>}
+        >
+          <View accessibilityRole="radiogroup" style={{ gap: spacing.sm }}>
+            {GOAL_ROWS.map((row) => (
+              <View key={row[0].id} style={{ flexDirection: "row", gap: spacing.sm }}>
+                {row.map((g) => {
+              const selected = goal === g.id;
+              return (
+                <PressableScale
+                  key={g.id}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {});
+                    setGoal(g.id);
+                    clearError("goal");
+                  }}
+                  accessibilityRole="radio"
+                  accessibilityLabel={`${g.title}. ${g.description}`}
+                  accessibilityState={{ selected }}
+                  style={{
+                    flex: 1,
+                    height: size.goalCard,
+                    padding: spacing.md,
+                    borderRadius: radius.md,
+                    justifyContent: "space-between",
+                    backgroundColor: selected ? colors.surfaceContainerHigh : colors.surfaceContainerLowest,
+                  }}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <MaterialIcons name={g.icon} size={size.iconLg} color={selected ? colors.accent : colors.borderStrong} />
+                    <View
+                      style={{
+                        width: size.goalDot,
+                        height: size.goalDot,
+                        borderRadius: radius.full,
+                        backgroundColor: selected ? colors.accent : colors.surfaceContainerHighest,
+                      }}
+                    />
                   </View>
-                )}
-              </Pressable>
+                  <View>
+                    <Text style={[typography.headlineSm, { color: selected ? colors.accent : colors.text }]}>{g.title}</Text>
+                    <Text style={[typography.labelSm, { color: colors.textSecondary }]} numberOfLines={2}>
+                      {g.description}
+                    </Text>
+                  </View>
+                </PressableScale>
+              );
+            })}
+                {row.length === 1 && <View style={{ flex: 1 }} />}
+              </View>
             ))}
           </View>
-        </Animated.View>
+          <FadingMessage message={errors.goal} color={colors.danger} live />
+        </SectionCard>
 
-        <View style={{ height: spacing.xl }} />
 
-        <Animated.View
-          entering={FadeInUp.delay(400).duration(400)}
-          style={[
-            styles.buttonContainer,
-            {
-              paddingBottom: insets.bottom + spacing.lg,
-              backgroundColor: "transparent",
-            },
-          ]}
-        >
-          <Animated.View style={buttonAnimStyle}>
-            <Pressable
-              onPress={handleComplete}
-              disabled={isLoading}
-              style={[
-                styles.button,
-                {
-                  backgroundColor: colors.accent,
-                  opacity: isLoading ? 0.7 : 1,
-                },
-              ]}
-            >
-              {isLoading ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <>
-                  <Text style={[styles.buttonText, { color: "#fff" }]}>Complete Setup</Text>
-                  <Ionicons
-                    name="arrow-forward"
-                    size={18}
-                    color="#fff"
-                    style={{ marginLeft: spacing.xs }}
-                  />
-                </>
+            <SectionCard index={1} title="Experience" onLayout={track("experience")}>
+              <ChoiceChips accessibilityLabel="Training experience" options={EXPERIENCE_OPTIONS} value={experience} onChange={(v) => { setExperience(v); clearError("experience"); }} />
+              <Text style={[typography.labelSm, { color: colors.borderStrong }]}>Sets how hard and how fast your plan progresses.</Text>
+              <FadingMessage message={errors.experience} color={colors.danger} live />
+            </SectionCard>
+
+            <SectionCard index={2} title="Which days do you train?" onLayout={track("days")}>
+              <TrainingDaysPicker value={days} onChange={(d) => { setDays(d); clearError("days"); }} />
+              <Text style={[typography.labelSm, { color: colors.borderStrong }]}>Your plan, weekly goal and reminders follow these days.</Text>
+              <FadingMessage message={errors.days} color={colors.danger} live />
+            </SectionCard>
+
+            <SectionCard index={3} title="Session length">
+              <ChoiceChips accessibilityLabel="Session length" options={SESSION_OPTIONS} value={session} onChange={setSession} columns={2} />
+            </SectionCard>
+
+            <SectionCard index={4} title="Equipment" onLayout={track("equipment")}>
+              <ChoiceChips accessibilityLabel="Equipment" options={EQUIPMENT_OPTIONS} value={equipment} onChange={(v) => { setEquipment(v); clearError("equipment"); }} />
+              <FadingMessage message={errors.equipment} color={colors.danger} live />
+            </SectionCard>
+
+            {/* Optional fine-tuning, collapsed */}
+            <SectionCard index={5} title="Fine-tune" onLayout={track("target")} right={<Text style={[typography.labelSm, { color: colors.borderStrong }]}>Optional</Text>}>
+              <PressableScale
+                onPress={() => setFineTune((v) => !v)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: fineTune }}
+                accessibilityLabel={fineTune ? "Hide optional settings" : "Show optional settings"}
+                style={{ minHeight: touchTarget, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
+              >
+                <Text style={[typography.bodyMd, { color: colors.textSecondary, flex: 1 }]}>
+                  {showTarget ? "Body weight goal and areas to go easy on" : "Areas to go easy on"}
+                </Text>
+                <MaterialIcons name={fineTune ? "expand-less" : "expand-more"} size={size.iconLg} color={colors.textSecondary} />
+              </PressableScale>
+              {fineTune && (
+                <View style={{ gap: spacing.md }}>
+                  {showTarget && (
+                    <MetricField
+                      label="Your body weight goal"
+                      value={target}
+                      onChangeText={(t) => {
+                        setTarget(t.replace(/[^0-9.,]/g, ""));
+                        clearError("target");
+                      }}
+                      placeholder={weightUnit === "kg" ? "e.g. 72" : "e.g. 160"}
+                      hint="The body weight you are aiming for. It becomes your goal on the Weight page."
+                      suffix={weightLabel(weightUnit)}
+                      keyboardType="decimal-pad"
+                      returnKeyType="done"
+                      error={errors.target}
+                    />
+                  )}
+                  <View style={{ gap: spacing.xs }}>
+                    <Text style={[typography.labelSm, { color: colors.textSecondary }]}>Go easy on</Text>
+                    <ChoiceChips<AvoidArea> accessibilityLabel="Areas to go easy on" multiple options={AVOID_OPTIONS} value={avoid} onChange={setAvoid} columns={2} />
+                    <Text style={[typography.labelSm, { color: colors.borderStrong }]}>Your plan avoids exercises that load these areas heavily.</Text>
+                  </View>
+                </View>
               )}
-            </Pressable>
-          </Animated.View>
-        </Animated.View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+            </SectionCard>
+          </>
+        )}
+
+        {/* Finish: at the natural end of the scroll, never overlapping fields */}
+        <View style={{ paddingTop: spacing.sm, gap: spacing.md }}>
+          <Button
+            title={step === 1 ? "Continue" : "Finish setup"}
+            trailingIcon="arrow-forward"
+            uppercase
+            haptic
+            onPress={step === 1 ? next : finish}
+            loading={saving}
+            disabled={saving}
+            fullWidth
+            style={{ minHeight: size.ctaTall }}
+          />
+          <Text style={[typography.labelSm, { color: colors.borderStrong, textAlign: "center" }]}>
+            You can change all of this later in Profile.
+          </Text>
+        </View>
+      </KeyboardAwareScrollView>
+    </View>
   );
 }
 
-const tickStyles = StyleSheet.create({
-  tickContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: 12,
-    marginVertical: 0,
-  },
-  tickLine: {
-    width: 20,
-    height: 2,
-    marginRight: 8,
-  },
-  tickMajor: {
-    height: 3,
-    width: 30,
-  },
-  tickMinor: {
-    width: 20,
-  },
-  tickSmall: {
-    width: 10,
-  },
-  tickSelected: {
-    height: 3,
-  },
-  tickLabel: {
-    fontSize: 12,
-    marginLeft: 8,
-    width: 30,
-  },
-  tickLabelSelected: {
-    fontWeight: "600",
-  },
-});
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scroll: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingTop: 10,
-  },
-  progressContainer: {
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 6,
-  },
-  progressDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  progressDotActive: {
-    width: 24,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    marginBottom: 24,
-  },
-  section: {
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-  },
-  label: {
-    fontSize: 12,
-    fontWeight: "600",
-    marginBottom: 12,
-    textTransform: "uppercase",
-  },
-  nameInput: {
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 16,
-    borderWidth: 1,
-  },
-  errorText: {
-    fontSize: 13,
-  },
-  bodyText: {
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  unitToggle: {
-    flexDirection: "row",
-    borderRadius: 10,
-    padding: 3,
-    position: "relative",
-    overflow: "hidden",
-    height: 36,
-    backgroundColor: "transparent",
-    minWidth: 180, // Fixed width for predictable sizing
-  },
-  unitToggleBackground: {
-    position: "absolute",
-    top: 3,
-    bottom: 3,
-    left: 3,
-    width: 84, // Fixed width: (180 - 3*2) / 2 = 87, minus padding
-    borderRadius: 8,
-  },
-  unitToggleText: {
-    fontSize: 13,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    fontWeight: "600",
-  },
-  heightDisplay: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-  },
-  heightValue: {
-    fontSize: 18,
-    fontWeight: "600",
-  },
-  rulerContainer: {
-    backgroundColor: "transparent",
-    overflow: "hidden",
-  },
-  rulerBorder: {
-    borderRadius: 12,
-    borderWidth: 1,
-    marginBottom: 16,
-    overflow: "hidden",
-  },
-  skipButton: {
-    borderRadius: 10,
-    borderWidth: 1,
-    paddingVertical: 10,
-    alignItems: "center",
-    marginTop: 8,
-  },
-  skipButtonText: {
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  goalCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 12,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  goalLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 2,
-  },
-  goalDescription: {
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  buttonContainer: {
-    padding: 20,
-    paddingTop: 12,
-  },
-  button: {
-    flexDirection: "row",
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  buttonText: {
-    fontSize: 16,
-    fontWeight: "700",
-  },
-});
+export default OnboardingProfileSetup;

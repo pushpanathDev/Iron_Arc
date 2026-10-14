@@ -5,6 +5,8 @@ export function useCustomExercises(category?: string) {
   return useQuery({
     queryKey: ["exercises", category],
     queryFn: () => exerciseApi.list(category),
+    // Changes only through useCreateExercise/useDeleteExercise, which invalidate it.
+    staleTime: 5 * 60 * 1000,
   });
 }
 

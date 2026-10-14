@@ -1,362 +1,135 @@
-import { Ionicons } from "@expo/vector-icons";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { useState } from "react";
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
-import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
-import { useTheme } from "../theme/theme";
-import { auth } from "../firebase/config";
+import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import { sendPasswordResetEmail } from "firebase/auth";
+import { useEffect, useState } from "react";
+import { Text, View } from "react-native";
+import { auth } from "../firebase/config";
+import { useTheme } from "../theme/theme";
+import { radius, size, spacing, typography } from "../theme/tokens";
+import { isValidEmailFormat } from "../utils/emailPasswordValidation";
+import { Button } from "./ui/Button";
+import { Sheet } from "./ui/Sheet";
+import { TextField } from "./ui/TextField";
 
 interface ForgotPasswordModalProps {
   visible: boolean;
   onClose: () => void;
+  /** The email already typed on the sign-in form. */
+  initialEmail?: string;
 }
 
-export function ForgotPasswordModal({
-  visible,
-  onClose,
-}: ForgotPasswordModalProps) {
-  const { colors, spacing, radius, typography, shadows } = useTheme();
-  const [email, setEmail] = useState("");
+/** Friendly words for Firebase reset errors (never reveals whether an account exists). */
+function resetErrorMessage(code: string | undefined): string {
+  switch (code) {
+    case "auth/invalid-email":
+      return "That doesn't look like a valid email address.";
+    case "auth/too-many-requests":
+      return "Too many attempts. Please wait a few minutes and try again.";
+    case "auth/network-request-failed":
+      return "Couldn't connect. Check your internet and try again.";
+    default:
+      return "Couldn't send the reset email. Please try again.";
+  }
+}
+
+/** Password reset: email → link sent. Same sheet, field and buttons as the rest of the app. */
+export function ForgotPasswordModal({ visible, onClose, initialEmail = "" }: ForgotPasswordModalProps) {
+  const { colors } = useTheme();
+  const [email, setEmail] = useState(initialEmail);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
 
-  const handleSendReset = async () => {
-    if (!email.trim()) {
-      setError("Please enter your email address");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  // Fresh each time it opens, starting from the sign-in form's email.
+  useEffect(() => {
+    if (!visible) return;
+    setEmail(initialEmail.trim());
+    setError(null);
+    setSentTo(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  const send = async () => {
+    const value = email.trim();
+    if (!isValidEmailFormat(value)) {
+      setError("Enter the email you signed up with.");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
       return;
     }
-
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
-
-      await sendPasswordResetEmail(auth, email.trim());
-
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setSuccess(true);
-      console.log("✅ Password reset email sent to:", email);
-    } catch (err: any) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      console.error("Password reset error:", err);
-
-      // Translate Firebase errors to user-friendly messages
-      let userMessage = "Failed to send reset email";
-      if (err.code === "auth/user-not-found") {
-        userMessage = "No account found with this email";
-      } else if (err.code === "auth/invalid-email") {
-        userMessage = "Invalid email address";
-      } else if (err.code === "auth/too-many-requests") {
-        userMessage = "Too many requests. Try again later";
+      await sendPasswordResetEmail(auth, value);
+      setSentTo(value);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      // An unknown account still reads as "sent": the reset form never tells anyone which emails have accounts.
+      if (code === "auth/user-not-found") {
+        setSentTo(value);
       } else {
-        userMessage = err.message || "Failed to send reset email";
+        setError(resetErrorMessage(code));
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       }
-
-      setError(userMessage);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleClose = () => {
-    setEmail("");
-    setError(null);
-    setSuccess(false);
-    onClose();
-  };
-
   return (
-    <Modal
+    <Sheet
       visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={handleClose}
+      onClose={loading ? undefined : onClose}
+      title={sentTo ? "Check your email" : "Reset password"}
+      subtitle={sentTo ? undefined : "Enter your email and we'll send you a link to set a new password."}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-      >
-        <Animated.View
-          entering={FadeIn.duration(300)}
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0, 0, 0, 0.5)",
-            justifyContent: "flex-end",
-          }}
-        >
-          <Pressable
-            style={{ flex: 1 }}
-            onPress={handleClose}
-            hitSlop={10}
-          />
-
-          <Animated.View
-            entering={FadeInDown.duration(400)}
-            style={{
-              backgroundColor: colors.surface,
-              borderTopLeftRadius: radius.xxl,
-              borderTopRightRadius: radius.xxl,
-              padding: spacing.lg,
-              paddingBottom: spacing.lg,
-            }}
-          >
-            {/* HEADER */}
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: spacing.lg,
-              }}
-            >
-              <Text style={{ ...typography.h2, color: colors.textPrimary }}>
-                {success ? "Check Your Email" : "Reset Password"}
-              </Text>
-              <Pressable
-                onPress={handleClose}
-                hitSlop={8}
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: radius.lg,
-                  backgroundColor: colors.surfaceElevated,
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <Ionicons name="close" size={18} color={colors.textPrimary} />
-              </Pressable>
+      {sentTo ? (
+        <>
+          <View style={{ alignItems: "center", gap: spacing.md }}>
+            <View style={{ width: size.iconBadge, height: size.iconBadge, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: colors.accentSubtle }}>
+              <MaterialIcons name="mark-email-read" size={size.iconLg + spacing.sm} color={colors.accent} />
             </View>
-
-            {success ? (
-              <View>
-                {/* SUCCESS STATE */}
-                <View
-                  style={{
-                    alignItems: "center",
-                    marginBottom: spacing.lg,
-                  }}
-                >
-                  <View
-                    style={{
-                      width: 64,
-                      height: 64,
-                      borderRadius: radius.full,
-                      backgroundColor: colors.success + "20",
-                      justifyContent: "center",
-                      alignItems: "center",
-                      marginBottom: spacing.md,
-                    }}
-                  >
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={40}
-                      color={colors.success}
-                    />
-                  </View>
-                </View>
-
-                <Text
-                  style={{
-                    ...typography.body,
-                    color: colors.textPrimary,
-                    marginBottom: spacing.md,
-                    textAlign: "center",
-                  }}
-                >
-                  We've sent a password reset link to:
-                </Text>
-
-                <View
-                  style={{
-                    backgroundColor: colors.surfaceElevated,
-                    padding: spacing.md,
-                    borderRadius: radius.lg,
-                    marginBottom: spacing.lg,
-                    borderWidth: 1,
-                    borderColor: colors.cardBorder,
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: colors.accent,
-                      fontWeight: "600",
-                      textAlign: "center",
-                    }}
-                  >
-                    {email}
-                  </Text>
-                </View>
-
-                <Text
-                  style={{
-                    ...typography.caption,
-                    color: colors.textSecondary,
-                    marginBottom: spacing.lg,
-                    textAlign: "center",
-                    lineHeight: 20,
-                  }}
-                >
-                  Click the link in the email to create a new password. If you
-                  don't see it, check your spam folder.
-                </Text>
-
-                <Pressable
-                  onPress={handleClose}
-                  style={{
-                    backgroundColor: colors.accent,
-                    padding: spacing.md,
-                    borderRadius: radius.lg,
-                    alignItems: "center",
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: "#fff",
-                      fontWeight: "600",
-                      fontSize: typography.body.fontSize,
-                    }}
-                  >
-                    Got It
-                  </Text>
-                </Pressable>
-              </View>
-            ) : (
-              <View>
-                {/* FORM STATE */}
-                <Text
-                  style={{
-                    ...typography.body,
-                    color: colors.textSecondary,
-                    marginBottom: spacing.lg,
-                  }}
-                >
-                  Enter your email address and we'll send you a link to reset
-                  your password.
-                </Text>
-
-                {/* EMAIL INPUT */}
-                <View style={{ marginBottom: spacing.md }}>
-                  <Text
-                    style={{
-                      ...typography.caption,
-                      color: colors.textSecondary,
-                      marginBottom: spacing.xs,
-                    }}
-                  >
-                    Email
-                  </Text>
-                  <TextInput
-                    placeholder="your@email.com"
-                    placeholderTextColor={colors.textMuted}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    value={email}
-                    onChangeText={(text) => {
-                      setEmail(text);
-                      setError(null);
-                    }}
-                    editable={!loading}
-                    style={{
-                      backgroundColor: colors.surfaceElevated,
-                      borderWidth: 1,
-                      borderColor:
-                        error && !email ? colors.error : colors.cardBorder,
-                      borderRadius: radius.lg,
-                      padding: spacing.md,
-                      color: colors.textPrimary,
-                      fontSize: typography.body.fontSize,
-                    }}
-                  />
-                </View>
-
-                {/* ERROR MESSAGE */}
-                {error && (
-                  <View
-                    style={{
-                      backgroundColor: colors.error + "15",
-                      borderLeftWidth: 3,
-                      borderLeftColor: colors.error,
-                      padding: spacing.md,
-                      borderRadius: radius.lg,
-                      marginBottom: spacing.md,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: colors.error,
-                        fontSize: 12,
-                        fontWeight: "500",
-                      }}
-                    >
-                      {error}
-                    </Text>
-                  </View>
-                )}
-
-                {/* BUTTONS */}
-                <View style={{ gap: spacing.md }}>
-                  <Pressable
-                    onPress={handleSendReset}
-                    disabled={loading || !email.trim()}
-                    style={{
-                      backgroundColor: colors.accent,
-                      padding: spacing.md,
-                      borderRadius: radius.lg,
-                      alignItems: "center",
-                      opacity: loading || !email.trim() ? 0.6 : 1,
-                      flexDirection: "row",
-                      justifyContent: "center",
-                      gap: spacing.xs,
-                    }}
-                  >
-                    {loading && (
-                      <ActivityIndicator color="#fff" size="small" />
-                    )}
-                    <Text
-                      style={{
-                        color: "#fff",
-                        fontWeight: "600",
-                        fontSize: typography.body.fontSize,
-                      }}
-                    >
-                      {loading ? "Sending..." : "Send Reset Link"}
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={handleClose}
-                    disabled={loading}
-                    style={{
-                      padding: spacing.md,
-                      borderRadius: radius.lg,
-                      alignItems: "center",
-                      borderWidth: 1,
-                      borderColor: colors.cardBorder,
-                      opacity: loading ? 0.6 : 1,
-                    }}
-                  >
-                    <Text style={{ color: colors.textPrimary, fontWeight: "500" }}>
-                      Cancel
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
-            )}
-          </Animated.View>
-        </Animated.View>
-      </KeyboardAvoidingView>
-    </Modal>
+            <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center" }]}>If an account exists for</Text>
+            <View style={{ alignSelf: "stretch", padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.surfaceContainerHigh }}>
+              <Text style={[typography.bodyMdMedium, { color: colors.accent, textAlign: "center" }]} numberOfLines={1}>
+                {sentTo}
+              </Text>
+            </View>
+            <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center" }]}>
+              a reset link is on its way. Open it to choose a new password. Not there in a few minutes? Check your spam folder.
+            </Text>
+          </View>
+          <Button title="Got it" onPress={onClose} fullWidth />
+        </>
+      ) : (
+        <>
+          <TextField
+            label="Email"
+            value={email}
+            onChangeText={(t) => {
+              setEmail(t);
+              setError(null);
+            }}
+            placeholder="you@example.com"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            textContentType="emailAddress"
+            autoComplete="email"
+            returnKeyType="send"
+            onSubmitEditing={() => void send()}
+            editable={!loading}
+            error={error}
+            autoFocus={!initialEmail}
+          />
+          <View style={{ gap: spacing.sm }}>
+            <Button title={loading ? "Sending…" : "Send reset link"} icon="mail-outline" onPress={() => void send()} loading={loading} disabled={loading || !email.trim()} fullWidth />
+            <Button title="Cancel" variant="neutral" onPress={onClose} disabled={loading} fullWidth />
+          </View>
+        </>
+      )}
+    </Sheet>
   );
 }
+
+export default ForgotPasswordModal;

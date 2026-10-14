@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, Tabs } from "expo-router";
-import { useCallback } from "react";
-import { BackHandler } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter, Tabs } from "expo-router";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { OfflineBanner } from "../../components/connection/OfflineBanner";
+import { AppTabBar } from "../../components/ui/AppTabBar";
 import { useTheme } from "../../theme/theme";
+import { perfStart } from "../../utils/perf";
 
 // Forces Expo Router to always reset to "index" on reload/state restore.
 export const unstable_settings = {
@@ -12,43 +13,28 @@ export const unstable_settings = {
 };
 
 export default function TabLayout() {
-  const { colors, shadows } = useTheme();
+  const { colors } = useTheme();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  // Consume hardware back presses at the tab root so the unhandled-action
-  // warning doesn't fire in dev when there is nothing to go back to.
-  useFocusEffect(
-    useCallback(() => {
-      const sub = BackHandler.addEventListener("hardwareBackPress", () => true);
-      return () => sub.remove();
-    }, []),
-  );
-
+  // The status-bar inset is applied here, outside every tab's ScrollView (as on
+  // Sign In), so scrolled content stops at the status bar instead of under it.
   return (
-    <SafeAreaView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      edges={["top"]}
-    >
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
+      <OfflineBanner />
       <Tabs
         initialRouteName="index"
+        // Back returns to the tab you came from (e.g. Analytics → History → back = Analytics); back on the first one exits.
+        backBehavior="history"
+        tabBar={(props) => (
+          <AppTabBar {...props} onLogPress={() => {
+            perfStart("open picker");
+            router.push("/log/pick");
+          }} />
+        )}
         screenOptions={{
           headerShown: false,
           animation: "shift",
-          tabBarActiveTintColor: colors.accent,
-          tabBarInactiveTintColor: colors.textMuted,
-          tabBarStyle: {
-            backgroundColor: colors.surface,
-            borderTopColor: colors.cardBorder,
-            borderTopWidth: 1,
-            paddingTop: 8,
-            paddingBottom: Math.max(8, insets.bottom),
-            minHeight: 60 + Math.max(0, insets.bottom),
-            ...shadows.sm,
-          },
-          tabBarLabelStyle: {
-            fontSize: 11,
-            fontWeight: "500",
-          },
           tabBarHideOnKeyboard: true,
         }}
       >
@@ -104,6 +90,6 @@ export default function TabLayout() {
           }}
         />
       </Tabs>
-    </SafeAreaView>
+    </View>
   );
 }

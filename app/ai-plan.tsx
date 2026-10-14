@@ -1,606 +1,330 @@
 /**
- * AI Plan Library Screen
- *
- * Lists all of the user's saved workout plans as cards.
- * Tapping a card → navigates to /plan-detail?id=...
- * A floating "New Plan" button opens the criteria sheet to generate another plan.
+ * AI plans (AI_Plans_Plan_List mockup): the active routine, other saved
+ * plans, and "Generate new plan" (settings sheet → honest loading screen).
  */
-import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useState } from "react";
-import {
-  ActivityIndicator,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  Text,
-  View,
-  Alert,
-} from "react-native";
-import Animated, { FadeInDown } from "react-native-reanimated";
+import { useMemo, useState, type ComponentProps } from "react";
+import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { useProfile } from "../hooks/useProfile";
-import {
-  usePlans,
-  useGeneratePlan,
-  useActivatePlan,
-  useDeletePlan,
-} from "../hooks/usePlan";
+import { GeneratingOverlay } from "../components/plans/GeneratingOverlay";
+import { aiErrorMessage, PlanActions } from "../components/plans/PlanActions";
+import { PlanSettingsSheet } from "../components/plans/PlanSettingsSheet";
+import { Button } from "../components/ui/Button";
+import { Reveal } from "../components/ui/Reveal";
+import { SkeletonBlock } from "../components/ui/Skeleton";
+import { EQUIPMENT_OPTIONS, EXPERIENCE_OPTIONS, effectiveWeeklyGoal, formatDays } from "../constants/trainingProfile";
 import { useToast } from "../context/ToastContext";
+import { useActivatePlan, useGeneratePlan, usePlans } from "../hooks/usePlan";
+import { useProfile } from "../hooks/useProfile";
+import { useAllWorkouts } from "../hooks/useWorkouts";
+import type { Plan, PlanCriteriaPayload } from "../services/api";
 import { useTheme } from "../theme/theme";
-import { Plan } from "../services/api";
-import {
-  PlanCriteriaSheet,
-  PlanCriteria,
-  DEFAULT_CRITERIA,
-} from "../components/PlanCriteriaSheet";
-import { PlanProfileForm, isPlanProfileComplete } from "../components/PlanProfileForm";
+import { radius, size, spacing, tracking, typography } from "../theme/tokens";
+import { planSummary } from "../utils/planData";
 
-/* ─────────────────────────────────────────────────────────────
-   Helpers
-───────────────────────────────────────────────────────────── */
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+type IconName = ComponentProps<typeof MaterialIcons>["name"];
+
+const DAY_MS = 86_400_000;
+/** "today", "yesterday", "3 days ago", "12 Sep". */
+function ago(iso: string) {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / DAY_MS);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
+const shortDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+/** The plan's own summary, cut to its first two sentences. */
+const firstSentences = (text: string) => (text.match(/[^.!?]+[.!?]+/g)?.slice(0, 2).join(" ") ?? text).trim();
 
-function getPlanSummary(plan: Plan): { days: number; split: string; intensity: string } {
-  const criteria = plan.criteria as any;
-  const planData = plan.planData as any;
-
-  const days =
-    planData?.weeks?.[0]?.days?.filter((d: any) => d.sessionType === "training").length ??
-    planData?.days?.filter((d: any) => d.sessionType !== "rest").length ??
-    0;
-
-  const split = criteria?.splitPreference
-    ? criteria.splitPreference.replace(/_/g, " ")
-    : planData?.planExplanation
-    ? "Custom"
-    : "AI Generated";
-
-  const intensity = criteria?.intensity ?? "moderate";
-
-  return { days, split, intensity };
-}
-
-// Theme token names; resolved against `colors` at render time.
-const INTENSITY_COLOR_TOKEN: Record<string, "success" | "warning" | "error"> = {
-  conservative: "success",
-  moderate: "warning",
-  aggressive: "error",
-};
-
-/* ─────────────────────────────────────────────────────────────
-   Plan Card
-───────────────────────────────────────────────────────────── */
-function PlanCard({
-  plan,
-  index,
-  onActivate,
-  onDelete,
-  colors,
-  spacing,
-  radius,
-  shadows,
-  typography,
-}: {
-  plan: Plan;
-  index: number;
-  onActivate: (id: string) => void;
-  onDelete: (id: string, name: string) => void;
-  colors: any;
-  spacing: any;
-  radius: any;
-  shadows: any;
-  typography: any;
-}) {
-  const summary = getPlanSummary(plan);
-  const intensityToken = INTENSITY_COLOR_TOKEN[summary.intensity];
-  const intensityColor = intensityToken ? colors[intensityToken] : colors.accent;
-
-  return (
-    <Animated.View
-      entering={FadeInDown.delay(index * 60).duration(350)}
-      style={{ marginBottom: spacing.md }}
-    >
-      <Pressable
-        onPress={() => router.navigate(`/plan-detail?id=${plan.id}`)}
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: radius.xl,
-          borderWidth: plan.isActive ? 2 : 1,
-          borderColor: plan.isActive ? colors.accent : colors.cardBorder,
-          overflow: "hidden",
-          ...shadows.sm,
-        }}
-      >
-        {/* Active plan top strip */}
-        {plan.isActive && (
-          <View
-            style={{
-              backgroundColor: colors.accent,
-              paddingHorizontal: spacing.lg,
-              paddingVertical: 5,
-              flexDirection: "row",
-              alignItems: "center",
-              gap: spacing.xs,
-            }}
-          >
-            <Ionicons name="checkmark-circle" size={14} color={colors.textOnAccent} />
-            <Text style={{ color: colors.textOnAccent, fontSize: 12, fontWeight: "700", letterSpacing: 0.5 }}>
-              ACTIVE PLAN
-            </Text>
-          </View>
-        )}
-
-        <View style={{ padding: spacing.lg }}>
-          {/* Plan name + actions */}
-          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
-            <View
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: radius.full,
-                backgroundColor: plan.isActive ? colors.accentLight : colors.surfaceElevated,
-                justifyContent: "center",
-                alignItems: "center",
-                marginRight: spacing.md,
-              }}
-            >
-              <Ionicons
-                name="barbell-outline"
-                size={20}
-                color={plan.isActive ? colors.accent : colors.textSecondary}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text
-                style={{
-                  ...typography.bodyMedium,
-                  color: colors.textPrimary,
-                  fontWeight: "700",
-                  fontSize: 16,
-                }}
-                numberOfLines={1}
-              >
-                {plan.name}
-              </Text>
-              <Text style={{ ...typography.caption, color: colors.textMuted }}>
-                Created {formatDate(plan.createdAt)}
-              </Text>
-            </View>
-            <Pressable
-              onPress={() =>
-                onDelete(plan.id, plan.name)
-              }
-              style={{ padding: spacing.sm }}
-              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-            >
-              <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
-            </Pressable>
-          </View>
-
-          {/* Meta chips */}
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md }}>
-            {summary.days > 0 && (
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  backgroundColor: colors.surfaceElevated,
-                  borderRadius: radius.full,
-                  paddingHorizontal: spacing.sm,
-                  paddingVertical: 4,
-                }}
-              >
-                <Ionicons name="calendar-outline" size={12} color={colors.textSecondary} />
-                <Text style={{ ...typography.caption, color: colors.textSecondary, marginLeft: 4, fontWeight: "600" }}>
-                  {summary.days}×/week
-                </Text>
-              </View>
-            )}
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                backgroundColor: colors.surfaceElevated,
-                borderRadius: radius.full,
-                paddingHorizontal: spacing.sm,
-                paddingVertical: 4,
-              }}
-            >
-              <Ionicons name="layers-outline" size={12} color={colors.textSecondary} />
-              <Text
-                style={{
-                  ...typography.caption,
-                  color: colors.textSecondary,
-                  marginLeft: 4,
-                  fontWeight: "600",
-                  textTransform: "capitalize",
-                }}
-              >
-                {summary.split}
-              </Text>
-            </View>
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                backgroundColor: intensityColor + "20",
-                borderRadius: radius.full,
-                paddingHorizontal: spacing.sm,
-                paddingVertical: 4,
-              }}
-            >
-              <Ionicons name="flame-outline" size={12} color={intensityColor} />
-              <Text
-                style={{
-                  ...typography.caption,
-                  color: intensityColor,
-                  marginLeft: 4,
-                  fontWeight: "600",
-                  textTransform: "capitalize",
-                }}
-              >
-                {summary.intensity}
-              </Text>
-            </View>
-          </View>
-
-          {/* Actions row */}
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            <Pressable
-              onPress={() => router.navigate(`/plan-detail?id=${plan.id}`)}
-              style={{
-                flex: 1,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: plan.isActive ? colors.accentLight : colors.surfaceElevated,
-                borderRadius: radius.lg,
-                paddingVertical: spacing.sm,
-                gap: spacing.xs,
-              }}
-            >
-              <Ionicons
-                name="eye-outline"
-                size={16}
-                color={plan.isActive ? colors.accent : colors.textSecondary}
-              />
-              <Text
-                style={{
-                  ...typography.caption,
-                  color: plan.isActive ? colors.accent : colors.textSecondary,
-                  fontWeight: "600",
-                }}
-              >
-                View Details
-              </Text>
-            </Pressable>
-            {!plan.isActive && (
-              <Pressable
-                onPress={() => onActivate(plan.id)}
-                style={{
-                  flex: 1,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: colors.accentLight,
-                  borderRadius: radius.lg,
-                  paddingVertical: spacing.sm,
-                  gap: spacing.xs,
-                }}
-              >
-                <Ionicons name="checkmark-circle-outline" size={16} color={colors.accent} />
-                <Text
-                  style={{ ...typography.caption, color: colors.accent, fontWeight: "700" }}
-                >
-                  Set Active
-                </Text>
-              </Pressable>
-            )}
-          </View>
-        </View>
-      </Pressable>
-    </Animated.View>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────
-   Main Screen
-───────────────────────────────────────────────────────────── */
 export default function AIPlanScreen() {
-  const { colors, spacing, radius, shadows, typography } = useTheme();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { showToast } = useToast();
-
   const { data: profile } = useProfile();
-  const { data: plans = [], isLoading, refetch, isRefetching } = usePlans();
-  const generatePlan = useGeneratePlan();
-  const activatePlan = useActivatePlan();
-  const deletePlan = useDeletePlan();
+  const { data: workouts } = useAllWorkouts();
+  const { data, isLoading, isError, refetch } = usePlans();
+  const generate = useGeneratePlan();
+  const activate = useActivatePlan();
 
-  const [showCriteriaSheet, setShowCriteriaSheet] = useState(false);
-  const [criteria, setCriteria] = useState<PlanCriteria>(DEFAULT_CRITERIA);
-  const [showProfileForm, setShowProfileForm] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [waiting, setWaiting] = useState(false);
+  const [menuFor, setMenuFor] = useState<Plan | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const handleNewPlan = () => {
-    // Ask only for what's missing; complete profiles go straight to criteria.
-    if (!isPlanProfileComplete(profile)) {
-      setShowProfileForm(true);
-      return;
-    }
-    setShowCriteriaSheet(true);
-  };
+  const plans = useMemo(() => [...(data ?? [])].sort((a, b) => Number(b.isActive) - Number(a.isActive) || b.updatedAt.localeCompare(a.updatedAt)), [data]);
+  const active = plans.find((p) => p.isActive) ?? null;
+  const others = plans.filter((p) => !p.isActive);
 
-  const handleProfileFormComplete = () => {
-    setShowProfileForm(false);
-    // iOS drops a Modal presented while another is still dismissing.
-    setTimeout(() => setShowCriteriaSheet(true), Platform.OS === "ios" ? 350 : 0);
-  };
-
-  const handleGenerate = () => {
-    generatePlan.mutate(criteria, {
-      onSuccess: () => {
-        showToast({ message: "New plan created!", type: "success" });
-        setShowCriteriaSheet(false);
-      },
-      onError: () => {
-        showToast({ message: "Failed to generate plan. Please try again.", type: "error" });
-      },
-    });
-  };
-
-  const handleActivate = (planId: string) => {
-    activatePlan.mutate(planId, {
-      onSuccess: () => showToast({ message: "Plan set as active.", type: "success" }),
-      onError: () => showToast({ message: "Failed to activate plan.", type: "error" }),
-    });
-  };
-
-  const handleDelete = (planId: string, planName: string) => {
-    Alert.alert(
-      "Delete Plan?",
-      `"${planName}" will be permanently removed.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () => {
-            deletePlan.mutate(planId, {
-              onSuccess: () => showToast({ message: "Plan deleted.", type: "info" }),
-              onError: () => showToast({ message: "Failed to delete plan.", type: "error" }),
-            });
-          },
-        },
-      ],
+  /** Exactly what the server builds from (shown while generating). */
+  const inputs = useMemo(() => {
+    const days = profile?.trainingDays?.length ? `${profile.trainingDays.length} training days (${formatDays(profile.trainingDays)})` : `${effectiveWeeklyGoal(profile) ?? 4} training days a week`;
+    const eq = EQUIPMENT_OPTIONS.find((o) => o.value === profile?.equipment)?.label;
+    const xp = EXPERIENCE_OPTIONS.find((o) => o.value === profile?.experienceLevel)?.label;
+    return [days, profile?.sessionMinutes ? `${profile.sessionMinutes} min sessions` : null, eq, xp, workouts?.length ? "Your recent workouts" : "No workout history yet: starting conservatively"].filter(
+      (x): x is string => !!x,
     );
+  }, [profile, workouts?.length]);
+
+  const onGenerate = (criteria: PlanCriteriaPayload) => {
+    setSettingsOpen(false);
+    setWaiting(true);
+    generate.mutate(criteria, {
+      onSuccess: ({ data: plan }) => {
+        showToast({ type: "success", message: "Your new plan is ready", subtitle: plan.name });
+        router.push({ pathname: "/plan-detail", params: { id: plan.id } });
+      },
+      onError: (e) => showToast({ type: "error", message: "Couldn't create the plan", subtitle: aiErrorMessage(e) }),
+      onSettled: () => setWaiting(false),
+    });
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refetch();
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
       {/* Header */}
-      <LinearGradient
-        // Same background as the tab screens, so the status bar area matches the app.
-        colors={[colors.background, colors.background]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={{
-          paddingTop: insets.top + spacing.sm,
-          paddingBottom: spacing.xl,
-          paddingHorizontal: spacing.md,
-        }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.xs }}>
-          <Pressable onPress={() => router.back()} style={{ marginRight: spacing.md, padding: spacing.xs }}>
-            <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
-          </Pressable>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "500" }}>
-              {/* Powered by Groq AI · Llama 3.3 70B */}
-              Powered By AI
-            </Text>
-            <Text style={{ color: colors.textPrimary, fontSize: 22, fontWeight: "700" }}>
-              My Plans
-            </Text>
-          </View>
-          <View
-            style={{
-              backgroundColor: colors.accentDim,
-              borderRadius: radius.full,
-              width: 36,
-              height: 36,
-              justifyContent: "center",
-              alignItems: "center",
-            }}
-          >
-            <Text style={{ color: colors.accent, fontWeight: "700", fontSize: 16 }}>
-              {plans.length}
-            </Text>
-          </View>
-        </View>
-      </LinearGradient>
-
-      {/* Content */}
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{
-          padding: spacing.md,
-          paddingBottom: insets.bottom + 100,
-        }}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={refetch}
-            tintColor={colors.accent}
-          />
-        }
-      >
-        {isLoading ? (
-          <View style={{ alignItems: "center", marginTop: 80 }}>
-            <ActivityIndicator size="large" color={colors.accent} />
-            <Text style={{ ...typography.body, color: colors.textSecondary, marginTop: spacing.md }}>
-              Loading your plans…
-            </Text>
-          </View>
-        ) : plans.length === 0 ? (
-          /* Empty state */
-          <Animated.View
-            entering={FadeInDown.duration(400)}
-            style={{ alignItems: "center", marginTop: 60 }}
-          >
-            <View
-              style={{
-                width: 80,
-                height: 80,
-                borderRadius: radius.full,
-                backgroundColor: colors.accentDim,
-                justifyContent: "center",
-                alignItems: "center",
-                marginBottom: spacing.lg,
-              }}
-            >
-              <Ionicons name="sparkles" size={36} color={colors.accent} />
-            </View>
-            <Text style={{ ...typography.h2, color: colors.textPrimary, textAlign: "center" }}>
-              No Plans Yet
-            </Text>
-            <Text
-              style={{
-                ...typography.body,
-                color: colors.textSecondary,
-                textAlign: "center",
-                marginTop: spacing.sm,
-                marginBottom: spacing.xl,
-                paddingHorizontal: spacing.lg,
-                lineHeight: 22,
-              }}
-            >
-              Generate your first AI-powered workout plan. You can have multiple plans and switch between them.
-            </Text>
-
-            <Pressable
-              onPress={handleNewPlan}
-              style={{
-                backgroundColor: colors.accent,
-                borderRadius: radius.xl,
-                paddingVertical: spacing.md,
-                paddingHorizontal: spacing.xl,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: spacing.sm,
-              }}
-            >
-              <Ionicons name="sparkles" size={20} color={colors.textOnAccent} />
-              <Text style={{ color: colors.textOnAccent, fontWeight: "700", fontSize: 16 }}>
-                Generate My First Plan
-              </Text>
-            </Pressable>
-          </Animated.View>
-        ) : (
-          <>
-            {/* Plan cards */}
-            {plans.map((plan, i) => (
-              <PlanCard
-                key={plan.id}
-                plan={plan}
-                index={i}
-                onActivate={handleActivate}
-                onDelete={handleDelete}
-                colors={colors}
-                spacing={spacing}
-                radius={radius}
-                shadows={shadows}
-                typography={typography}
-              />
-            ))}
-
-            {/* Info note */}
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                backgroundColor: colors.surfaceElevated,
-                borderRadius: radius.lg,
-                padding: spacing.md,
-                gap: spacing.sm,
-                marginTop: spacing.sm,
-              }}
-            >
-              <Ionicons name="information-circle-outline" size={18} color={colors.textMuted} />
-              <Text style={{ ...typography.caption, color: colors.textMuted, flex: 1 }}>
-                Tap a plan to view its full schedule and swap exercises. Only the active plan is followed.
-              </Text>
-            </View>
-          </>
-        )}
-      </ScrollView>
-
-      {/* Floating New Plan button */}
-      {plans.length > 0 && (
-        <View
-          style={{
-            position: "absolute",
-            bottom: insets.bottom + spacing.lg,
-            right: spacing.lg,
-          }}
+      <View style={{ height: size.appBar, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.xs, paddingRight: spacing.screen }}>
+        <Pressable
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          style={({ pressed }) => ({ width: size.control, height: size.control, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.surfaceContainerHigh : "transparent" })}
         >
-          <Pressable
-            onPress={handleNewPlan}
-            disabled={generatePlan.isPending}
-            style={{
-              backgroundColor: colors.accent,
-              borderRadius: radius.full,
-              paddingVertical: spacing.md,
-              paddingHorizontal: spacing.lg,
-              flexDirection: "row",
-              alignItems: "center",
-              gap: spacing.sm,
-              elevation: 6,
-              shadowColor: colors.accent,
-              shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.4,
-              shadowRadius: 8,
-            }}
-          >
-            {generatePlan.isPending ? (
-              <ActivityIndicator size="small" color={colors.textOnAccent} />
-            ) : (
-              <Ionicons name="add" size={20} color={colors.textOnAccent} />
-            )}
-            <Text style={{ color: colors.textOnAccent, fontWeight: "700", fontSize: 15 }}>
-              New Plan
-            </Text>
-          </Pressable>
+          <MaterialIcons name="arrow-back" size={size.iconLg} color={colors.text} />
+        </Pressable>
+        <Text style={[typography.headlineMd, { flex: 1, color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]} accessibilityRole="header">
+          AI plans
+        </Text>
+        {active && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: radius.full, backgroundColor: colors.accentSubtle }}>
+            <View style={{ width: size.dot, height: size.dot, borderRadius: radius.full, backgroundColor: colors.accent }} />
+            <Text style={[typography.labelMd, { color: colors.accent }]}>1 Active</Text>
+          </View>
+        )}
+      </View>
+
+      {isLoading && plans.length === 0 ? (
+        <View style={{ padding: spacing.screen, gap: spacing.lg }} accessibilityLabel="Loading plans">
+          <SkeletonBlock height={size.goalCard * 2.2} radius="xl" />
+          <SkeletonBlock height={size.goalCard * 1.3} radius="xl" />
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: spacing.xxl, gap: spacing.lg }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} progressBackgroundColor={colors.card} />}
+        >
+          {isError && plans.length === 0 ? (
+            <EmptyCard icon="cloud-off" title="Couldn't load your plans" body="Check your connection and pull down to try again." />
+          ) : plans.length === 0 ? (
+            <Reveal index={0}>
+              <IntroCard onGenerate={() => setSettingsOpen(true)} busy={generate.isPending} />
+            </Reveal>
+          ) : null}
+
+          {active && (
+            <Reveal index={0} style={{ gap: spacing.sm }}>
+              <SectionLabel left="Current routine" right={`Updated ${ago(active.updatedAt)}`} />
+              <ActiveCard plan={active} onMenu={() => setMenuFor(active)} />
+            </Reveal>
+          )}
+
+          {others.length > 0 && (
+            <Reveal index={1} style={{ gap: spacing.sm }}>
+              <SectionLabel left={active ? "Other plans" : "Your plans"} right={`${others.length} saved`} />
+              {others.map((p) => (
+                <OtherCard
+                  key={p.id}
+                  plan={p}
+                  onMenu={() => setMenuFor(p)}
+                  activating={activate.isPending && activate.variables === p.id}
+                  onActivate={() =>
+                    activate.mutate(p.id, {
+                      onSuccess: () => showToast({ type: "success", message: `${p.name} is now active` }),
+                      onError: (e) => showToast({ type: "error", message: "Couldn't make it active", subtitle: aiErrorMessage(e) }),
+                    })
+                  }
+                />
+              ))}
+            </Reveal>
+          )}
+        </ScrollView>
+      )}
+
+      {/* Generate (the intro card has its own button before the first plan) */}
+      {plans.length > 0 && (
+        <View style={{ paddingHorizontal: spacing.screen, paddingTop: spacing.sm, paddingBottom: insets.bottom + spacing.sm, backgroundColor: colors.bg }}>
+          <Button title="Generate new plan" icon="add" onPress={() => setSettingsOpen(true)} disabled={generate.isPending} loading={generate.isPending && !waiting} fullWidth />
         </View>
       )}
 
-      {/* Missing profile fields */}
-      <PlanProfileForm
-        visible={showProfileForm}
-        profile={profile}
-        onClose={() => setShowProfileForm(false)}
-        onComplete={handleProfileFormComplete}
-      />
+      <PlanSettingsSheet visible={settingsOpen} profile={profile} generating={generate.isPending} onClose={() => setSettingsOpen(false)} onGenerate={onGenerate} />
+      <GeneratingOverlay visible={waiting} title="Building your week…" inputs={inputs} onStopWaiting={() => setWaiting(false)} />
+      <PlanActions plan={menuFor} onClose={() => setMenuFor(null)} />
+    </View>
+  );
+}
 
-      {/* Criteria sheet */}
-      <PlanCriteriaSheet
-        visible={showCriteriaSheet}
-        criteria={criteria}
-        onChange={(updated) => setCriteria((prev) => ({ ...prev, ...updated }))}
-        onGenerate={handleGenerate}
-        onClose={() => setShowCriteriaSheet(false)}
-        isGenerating={generatePlan.isPending}
-        isRegenerate={false}
-      />
+/* ==============================
+   PIECES
+   ============================== */
+
+function SectionLabel({ left, right }: { left: string; right?: string }) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between" }}>
+      <Text style={[typography.labelMd, { color: colors.textSecondary, textTransform: "uppercase", letterSpacing: tracking.overline }]}>{left}</Text>
+      {right ? <Text style={[typography.labelSm, { color: colors.textMuted }]}>{right}</Text> : null}
+    </View>
+  );
+}
+
+function Chip({ label, tone }: { label: string; tone: "accent" | "muted" }) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: radius.md, backgroundColor: tone === "accent" ? colors.accentSubtle : colors.surfaceContainerHigh }}>
+      <Text style={[typography.labelSm, { color: tone === "accent" ? colors.accent : colors.textSecondary }]}>{label}</Text>
+    </View>
+  );
+}
+
+function MenuButton({ onPress, label }: { onPress: () => void; label: string }) {
+  const { colors } = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${label} options`}
+      style={({ pressed }) => ({ width: size.control, height: size.control, marginRight: -spacing.sm, marginTop: -spacing.sm, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.surfaceContainerHigh : "transparent" })}
+    >
+      <MaterialIcons name="more-vert" size={size.icon} color={colors.textSecondary} />
+    </Pressable>
+  );
+}
+
+function Stat({ icon, label, value }: { icon: IconName; label: string; value: string }) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ flex: 1, flexDirection: "row", gap: spacing.sm, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.surfaceContainerHigh }}>
+      <MaterialIcons name={icon} size={size.iconSm} color={colors.textSecondary} />
+      <View style={{ flex: 1 }}>
+        <Text style={[typography.labelSm, { color: colors.textSecondary }]}>{label}</Text>
+        <Text style={[typography.bodyMdMedium, { color: colors.text }]}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function ActiveCard({ plan, onMenu }: { plan: Plan; onMenu: () => void }) {
+  const { colors } = useTheme();
+  const s = planSummary(plan);
+  return (
+    <View style={{ gap: spacing.lg, padding: spacing.lg, borderRadius: radius.xl, backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.accentSubtle }}>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+        <View style={{ flex: 1, gap: spacing.sm }}>
+          <View style={{ flexDirection: "row", gap: spacing.xs }}>
+            <Chip label="Active" tone="accent" />
+            <Chip label={`Week ${plan.weekNumber || 1}`} tone="muted" />
+          </View>
+          <Text style={[typography.headlineLg, { color: colors.text }]}>{plan.name}</Text>
+        </View>
+        <MenuButton onPress={onMenu} label={plan.name} />
+      </View>
+      {s.explanation ? <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>{firstSentences(s.explanation)}</Text> : null}
+      <View style={{ flexDirection: "row", gap: spacing.sm }}>
+        <Stat icon="event" label="Frequency" value={`${s.trainingDays} ${s.trainingDays === 1 ? "day" : "days"} a week`} />
+        {s.minutes ? <Stat icon="schedule" label="Duration" value={`${s.minutes} min / session`} /> : null}
+      </View>
+      <Button title="View day-by-day plan" trailingIcon="chevron-forward" variant="tonal" onPress={() => router.push({ pathname: "/plan-detail", params: { id: plan.id } })} fullWidth />
+    </View>
+  );
+}
+
+function OtherCard({ plan, onMenu, onActivate, activating }: { plan: Plan; onMenu: () => void; onActivate: () => void; activating: boolean }) {
+  const { colors } = useTheme();
+  const s = planSummary(plan);
+  return (
+    <Pressable
+      onPress={() => router.push({ pathname: "/plan-detail", params: { id: plan.id } })}
+      accessibilityRole="button"
+      accessibilityLabel={`${plan.name}. ${s.trainingDays} days a week${s.minutes ? `, ${s.minutes} minute sessions` : ""}. Opens the plan`}
+      style={({ pressed }) => ({ gap: spacing.md, padding: spacing.lg, borderRadius: radius.xl, backgroundColor: pressed ? colors.surfaceContainerHigh : colors.raised })}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+        <Chip label="Saved" tone="muted" />
+        <Text style={[typography.labelSm, { flex: 1, color: colors.textMuted }]}>Created {shortDate(plan.createdAt)}</Text>
+        <Pressable onPress={onActivate} disabled={activating} accessibilityRole="button" hitSlop={spacing.sm} style={({ pressed }) => ({ opacity: pressed || activating ? 0.6 : 1 })}>
+          <Text style={[typography.labelLg, { color: colors.accent }]}>{activating ? "Activating…" : "Make active"}</Text>
+        </Pressable>
+        <MenuButton onPress={onMenu} label={plan.name} />
+      </View>
+      <Text style={[typography.headlineSm, { color: colors.text }]}>{plan.name}</Text>
+      {s.explanation ? (
+        <Text style={[typography.bodyMd, { color: colors.textSecondary }]} numberOfLines={2}>
+          {firstSentences(s.explanation)}
+        </Text>
+      ) : null}
+      <Text style={[typography.labelMd, { color: colors.textSecondary }]}>
+        • {s.trainingDays} {s.trainingDays === 1 ? "day" : "days"} a week{s.minutes ? `   • ${s.minutes} min sessions` : ""}
+      </Text>
+    </Pressable>
+  );
+}
+
+/** Before the first plan: what you get, and the one button. */
+function IntroCard({ onGenerate, busy }: { onGenerate: () => void; busy: boolean }) {
+  const { colors } = useTheme();
+  const points: [IconName, string, string][] = [
+    ["event", "A week built around you", "Your training days, session length, equipment and experience"],
+    ["swap-horiz", "Swap anything", "Don't like an exercise? The AI picks one for the same muscles"],
+    ["forum", "Ask the coach", "\"Make it 3 days\" or \"shorter sessions\" and the plan changes"],
+    ["play-arrow", "Start in one tap", "Each day opens straight into the log with its sets"],
+  ];
+  return (
+    <View style={{ gap: spacing.lg, padding: spacing.xl, borderRadius: radius.xl, backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.accentSubtle }}>
+      <View style={{ alignItems: "center", gap: spacing.md }}>
+        <View style={{ width: size.iconBadge, height: size.iconBadge, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: colors.accentTint, borderWidth: 1, borderColor: colors.accent }}>
+          <MaterialIcons name="auto-awesome" size={size.iconLg} color={colors.accent} />
+        </View>
+        <Text style={[typography.headlineMd, { color: colors.text, textAlign: "center" }]}>Your first AI plan</Text>
+        <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center" }]}>Built from your profile in about a minute.</Text>
+      </View>
+      <View style={{ gap: spacing.md }}>
+        {points.map(([icon, title, body]) => (
+          <View key={title} style={{ flexDirection: "row", gap: spacing.md }}>
+            <View style={{ width: size.rowIcon, height: size.rowIcon, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh }}>
+              <MaterialIcons name={icon} size={size.icon} color={colors.accent} />
+            </View>
+            <View style={{ flex: 1, gap: spacing.xxs }}>
+              <Text style={[typography.bodyMdMedium, { color: colors.text }]}>{title}</Text>
+              <Text style={[typography.labelSm, { color: colors.textSecondary }]}>{body}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+      <Button title="Generate my plan" icon="sparkles" onPress={onGenerate} loading={busy} disabled={busy} fullWidth />
+    </View>
+  );
+}
+
+function EmptyCard({ icon, title, body }: { icon: IconName; title: string; body: string }) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ alignItems: "center", gap: spacing.md, padding: spacing.xl, borderRadius: radius.xl, backgroundColor: colors.raised }}>
+      <View style={{ width: size.iconBadge, height: size.iconBadge, borderRadius: radius.lg, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh }}>
+        <MaterialIcons name={icon} size={size.iconLg} color={colors.accent} />
+      </View>
+      <Text style={[typography.headlineSm, { color: colors.text, textAlign: "center", textTransform: "uppercase", letterSpacing: tracking.headlineWide }]}>{title}</Text>
+      <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center" }]}>{body}</Text>
     </View>
   );
 }

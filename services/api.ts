@@ -20,6 +20,15 @@ export interface User {
   age: number | null;
   fitnessGoal: string | null;
   weeklyGoal: number;
+  /** Optional target body weight in kg (null = no goal set). Older servers omit it. */
+  targetWeight?: number | null;
+  /** Training profile (asked once at onboarding). Older servers omit these. */
+  experienceLevel?: "beginner" | "intermediate" | "advanced" | null;
+  equipment?: "full_gym" | "dumbbells" | "bodyweight" | null;
+  sessionMinutes?: 30 | 45 | 60 | 90 | null;
+  /** ISO weekdays, 1 = Monday … 7 = Sunday. */
+  trainingDays?: number[];
+  avoidAreas?: ("knees" | "lower_back" | "shoulders" | "wrists")[];
   activePlan: unknown | null;
   isAdmin: boolean;
   isActive: boolean;
@@ -166,6 +175,23 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Public health check (no auth). Resolves true when the server answers OK
+ * within the timeout; false on timeout, network error or a bad response.
+ */
+export async function checkServerHealth(timeoutMs: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${BASE_URL}/api/health`, { signal: controller.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function isNetworkApiError(error: unknown): error is ApiError {
   return error instanceof ApiError && (error.kind === "network" || error.kind === "timeout");
 }
@@ -197,6 +223,7 @@ async function requestEnvelope(
       },
     });
     hasCompletedRequest = true;
+    if (__DEV__ && options.method === "DELETE") console.log(`[API] DELETE ${endpoint} → HTTP ${res.status}`);
   } catch (error) {
     const timedOut = error instanceof Error && error.name === "AbortError";
     throw new ApiError(
@@ -214,7 +241,11 @@ async function requestEnvelope(
   try {
     data = await res.json();
   } catch {
+    if (__DEV__ && endpoint.includes("/chat")) console.log(`[Coach] HTTP ${res.status} from ${endpoint}: response was not JSON`);
     throw new ApiError(`Request failed (${res.status})`, res.status);
+  }
+  if (__DEV__ && endpoint.includes("/chat")) {
+    console.log(`[Coach] HTTP ${res.status} · success=${data?.success} · ${data?.success ? "reply received" : `server says: "${data?.message}"`}`);
   }
 
   if (!res.ok || !data.success) {
@@ -291,7 +322,7 @@ export const userApi = {
 
   getProfile: () => request<User>("/api/user/profile"),
 
-  updateProfile: (data: Partial<Pick<User, "displayName" | "avatarUrl" | "height" | "weight" | "age" | "fitnessGoal" | "weeklyGoal">>) =>
+  updateProfile: (data: Partial<Pick<User, "displayName" | "avatarUrl" | "authProvider" | "height" | "weight" | "age" | "fitnessGoal" | "weeklyGoal" | "targetWeight" | "experienceLevel" | "equipment" | "sessionMinutes" | "trainingDays" | "avoidAreas">>) =>
     request<User>("/api/user/profile", {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -316,6 +347,21 @@ export const workoutApi = {
       body: JSON.stringify(data),
     });
     return { ...res, data: normalizeWorkout(res.data) };
+  },
+
+  /**
+   * POST /api/workouts/batch: a whole session in one transaction (all saved
+   * or none). Entries are the single-create shape without the date.
+   */
+  createBatch: async (data: {
+    date: string;
+    entries: { exercise: string; category: string; notes?: string; sets: { reps: number; weight?: number }[] }[];
+  }): Promise<WithUnlocks<Workout[]>> => {
+    const res = await requestWithUnlocks<Workout[]>("/api/workouts/batch", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return { ...res, data: res.data.map(normalizeWorkout) };
   },
 
   list: async (params?: {

@@ -24,14 +24,3 @@ export function useUpdateProfile() {
     },
   });
 }
-
-export function useDeleteAccount() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: userApi.deleteAccount,
-    onSuccess: () => {
-      queryClient.clear();
-    },
-  });
-}

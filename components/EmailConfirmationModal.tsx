@@ -1,22 +1,15 @@
 /**
- * Email Confirmation Modal (V1.2.0)
- * ================================
- * Typo Prevention Layer - Shows email confirmation BEFORE signup
- * 
- * Prevents users from creating accounts with typos like:
- * - test@gmial.com (missing 'a')
- * - test@gmil.com (missing second 'a')
- * - test@gmai.com (missing 'l')
- * 
- * Provides [Correct] and [Edit] buttons to verify or correct.
+ * Confirms the address before sign-up so a typo (e.g. gmial.com) doesn't
+ * create an account nobody can verify.
  */
 
 import { Ionicons } from "@expo/vector-icons";
-import { Modal, Pressable, Text, View } from "react-native";
-import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
-import { useTheme } from "../theme/theme";
 import * as Haptics from "expo-haptics";
+import { Modal, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useTheme } from "../theme/theme";
+import { radius, size, spacing, typography } from "../theme/tokens";
+import { Button } from "./ui";
 
 interface EmailConfirmationModalProps {
   visible: boolean;
@@ -26,235 +19,96 @@ interface EmailConfirmationModalProps {
   onCancel: () => void; // Cancel signup
 }
 
-export function EmailConfirmationModal({
-  visible,
-  email,
-  onConfirm,
-  onEdit,
-  onCancel,
-}: EmailConfirmationModalProps) {
-  const { colors, spacing, radius, typography, shadows } = useTheme();
+const EMAIL_MIN_SCALE = 0.75;
+
+export function EmailConfirmationModal({ visible, email, onConfirm, onEdit, onCancel }: EmailConfirmationModalProps) {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-
-  const handleConfirm = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    onConfirm();
-  };
-
-  const handleEdit = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    onEdit();
-  };
-
-  const handleCancel = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    onCancel();
-  };
 
   if (!visible) return null;
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onCancel}
-    >
+    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={onCancel}>
       <View
         style={{
           flex: 1,
-          backgroundColor: colors.background + "CC",
+          backgroundColor: colors.scrim,
           justifyContent: "center",
-          alignItems: "center",
-          padding: spacing.lg,
+          paddingTop: insets.top + spacing.lg,
+          paddingBottom: insets.bottom + spacing.lg,
+          paddingHorizontal: spacing.screen,
         }}
       >
-        <Animated.View
-          entering={FadeInDown.duration(400)}
+        <View
+          accessibilityViewIsModal
           style={{
-            backgroundColor: colors.surface,
+            width: "100%",
+            maxWidth: size.dialogMax,
+            alignSelf: "center",
+            backgroundColor: colors.card,
             borderRadius: radius.xl,
-            padding: spacing.lg,
-            maxWidth: "90%",
-            ...shadows.lg,
+            padding: spacing.xl,
+            gap: spacing.lg,
           }}
         >
-          {/* Icon */}
-          <Animated.View
-            entering={FadeInUp.delay(100)}
-            style={{
-              alignItems: "center",
-              marginBottom: spacing.lg,
-            }}
-          >
+          <View style={{ alignItems: "center", gap: spacing.md }}>
             <View
               style={{
-                width: 70,
-                height: 70,
-                borderRadius: 35,
-                backgroundColor: colors.accentLight || colors.accent + "20",
-                justifyContent: "center",
+                width: size.logoTile,
+                height: size.logoTile,
+                borderRadius: radius.xl,
+                backgroundColor: colors.raised,
                 alignItems: "center",
-                marginBottom: spacing.md,
+                justifyContent: "center",
               }}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
             >
-              <Ionicons
-                name="mail-outline"
-                size={36}
-                color={colors.accent}
-              />
+              <Ionicons name="mail-outline" size={size.logoMark} color={colors.accent} />
             </View>
-          </Animated.View>
-
-          {/* Title */}
-          <Animated.View entering={FadeInUp.delay(200)}>
-            <Text
-              style={[
-                typography.h2,
-                {
-                  color: colors.textPrimary,
-                  marginBottom: spacing.sm,
-                  textAlign: "center",
-                },
-              ]}
-            >
-              Confirm Your Email
+            <Text accessibilityRole="header" style={[typography.headlineLg, { color: colors.text, textAlign: "center" }]}>
+              Confirm your email
             </Text>
-          </Animated.View>
-
-          {/* Description */}
-          <Animated.View entering={FadeInUp.delay(300)}>
-            <Text
-              style={[
-                typography.body,
-                {
-                  color: colors.textSecondary,
-                  marginBottom: spacing.lg,
-                  textAlign: "center",
-                  lineHeight: 22,
-                },
-              ]}
-            >
-              Make sure this email is correct. We'll send a verification link to this address.
+            <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center" }]}>
+              Make sure this is correct. We&apos;ll send a verification link to it.
             </Text>
-          </Animated.View>
+          </View>
 
-          {/* Email Display */}
-          <Animated.View
-            entering={FadeInUp.delay(400)}
+          <View
             style={{
-              backgroundColor: colors.surfaceElevated,
+              backgroundColor: colors.raised,
               borderRadius: radius.lg,
-              borderWidth: 2,
-              borderColor: colors.accent,
-              padding: spacing.md,
-              marginBottom: spacing.lg,
-              alignItems: "center",
+              paddingVertical: spacing.md,
+              paddingHorizontal: spacing.lg,
+              gap: spacing.xs,
             }}
           >
+            <Text style={[typography.labelMd, { color: colors.textSecondary }]}>Email address</Text>
             <Text
-              style={[
-                typography.caption,
-                {
-                  color: colors.textMuted,
-                  marginBottom: spacing.xs,
-                },
-              ]}
-            >
-              Email Address
-            </Text>
-            <Text
-              style={[
-                typography.body,
-                {
-                  color: colors.accent,
-                  textAlign: "center",
-                  fontSize: 16,
-                  fontWeight: "600",
-                },
-              ]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={EMAIL_MIN_SCALE}
+              style={[typography.bodyLg, { color: colors.text, fontFamily: typography.bodyMdMedium.fontFamily }]}
             >
               {email}
             </Text>
-          </Animated.View>
+          </View>
 
-          {/* Buttons */}
-          <Animated.View
-            entering={FadeInUp.delay(500)}
-            style={{
-              gap: spacing.md,
-            }}
-          >
-            {/* Confirm Button */}
-            <Pressable
-              onPress={handleConfirm}
-              style={{
-                backgroundColor: colors.accent,
-                borderRadius: radius.lg,
-                paddingVertical: spacing.md,
-                paddingHorizontal: spacing.lg,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: spacing.sm,
+          <View style={{ gap: spacing.md }}>
+            <Button
+              title="Correct – continue"
+              icon="checkmark"
+              uppercase
+              onPress={() => {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                onConfirm();
               }}
-            >
-              <Ionicons name="checkmark" size={20} color="#fff" />
-              <Text
-                style={{
-                  color: "#fff",
-                  fontWeight: "600",
-                  fontSize: 16,
-                }}
-              >
-                Correct - Continue
-              </Text>
-            </Pressable>
-
-            {/* Edit Button */}
-            <Pressable
-              onPress={handleEdit}
-              style={{
-                backgroundColor: colors.surface,
-                borderWidth: 1.5,
-                borderColor: colors.accent,
-                borderRadius: radius.lg,
-                paddingVertical: spacing.md,
-                paddingHorizontal: spacing.lg,
-                alignItems: "center",
-              }}
-            >
-              <Text
-                style={{
-                  color: colors.accent,
-                  fontWeight: "600",
-                  fontSize: 16,
-                }}
-              >
-                Edit Email
-              </Text>
-            </Pressable>
-
-            {/* Cancel Button */}
-            <Pressable
-              onPress={handleCancel}
-              style={{
-                paddingVertical: spacing.md,
-                alignItems: "center",
-              }}
-            >
-              <Text
-                style={{
-                  color: colors.textSecondary,
-                  fontWeight: "500",
-                  fontSize: 14,
-                }}
-              >
-                Cancel
-              </Text>
-            </Pressable>
-          </Animated.View>
-        </Animated.View>
+              fullWidth
+            />
+            <Button title="Edit email" variant="tonal" haptic onPress={onEdit} fullWidth />
+            <Button title="Cancel" variant="ghost" onPress={onCancel} style={{ alignSelf: "center" }} />
+          </View>
+        </View>
       </View>
     </Modal>
   );

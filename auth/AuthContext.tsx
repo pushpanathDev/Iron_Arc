@@ -19,7 +19,7 @@ import {
   userApi,
 } from "../services/api";
 import { cancelAllScheduledNotifications } from "../notifications/notificationService";
-import { GoogleSignin } from "@react-native-google-signin/google-signin";
+import { getGoogleSignin } from "../utils/googleSignin";
 
 const VERIFICATION_PENDING_KEY = "@awaiting_email_verification_uid";
 
@@ -318,7 +318,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     await cancelAllScheduledNotifications();
     await AsyncStorage.removeItem(LAST_UID_KEY).catch(() => {});
-    try { await GoogleSignin.signOut(); } catch {}
+    try { await getGoogleSignin()?.GoogleSignin.signOut(); } catch {}
     await signOut(auth);
     setUser(null);
   };

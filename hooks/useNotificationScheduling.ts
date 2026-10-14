@@ -20,10 +20,11 @@ export function useNotificationScheduling(): void {
       weights,
       displayName: profile?.displayName,
       weeklyGoal: profile?.weeklyGoal,
+      trainingDays: profile?.trainingDays,
     };
 
     void refreshNotificationSchedule(state);
-  }, [user, status, profile?.displayName, profile?.weeklyGoal, workouts, weights]);
+  }, [user, status, profile?.displayName, profile?.weeklyGoal, profile?.trainingDays, workouts, weights]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
@@ -33,9 +34,10 @@ export function useNotificationScheduling(): void {
         weights,
         displayName: profile?.displayName,
         weeklyGoal: profile?.weeklyGoal,
+        trainingDays: profile?.trainingDays,
       });
     });
 
     return () => subscription.remove();
-  }, [user, profile?.displayName, profile?.weeklyGoal, workouts, weights]);
+  }, [user, profile?.displayName, profile?.weeklyGoal, profile?.trainingDays, workouts, weights]);
 }

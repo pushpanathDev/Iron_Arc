@@ -1,6 +1,6 @@
 /**
  * Email Validation & Security Utilities
- * 
+ *
  * Prevents:
  * 1. Invalid email formats
  * 2. Temporary/disposable email addresses
@@ -138,17 +138,17 @@ export function isSuspiciousEmailDomain(email: string): boolean {
 
   // Keywords that suggest temporary/spam email services
   const suspiciousKeywords = [
-    "temp",      // tempmail, temporary, etc
-    "trash",     // trashmail, trash-mail
-    "spam",      // spammail, spam4me
-    "fake",      // fakeemail, fakemail
-    "minute",    // 10minutemail, minutemail
-    "quick",     // quickmail, fast-mail
-    "throw",     // throwaway
-    "nada",      // nada.email
+    "temp", // tempmail, temporary, etc
+    "trash", // trashmail, trash-mail
+    "spam", // spammail, spam4me
+    "fake", // fakeemail, fakemail
+    "minute", // 10minutemail, minutemail
+    "quick", // quickmail, fast-mail
+    "throw", // throwaway
+    "nada", // nada.email
     "mail-temp", // mail-temp, mailtemp
     "mail-trash", // mail-trash
-    "testmail",  // testmail
+    "testmail", // testmail
     "test-mail", // test-mail
     "temp-email", // temp-email
     "test-email", // test-email
@@ -183,7 +183,7 @@ export interface PasswordStrengthResult {
 }
 
 export function validatePasswordStrength(
-  password: string
+  password: string,
 ): PasswordStrengthResult {
   const errors: string[] = [];
   const suggestions: string[] = [];
@@ -228,9 +228,7 @@ export function validatePasswordStrength(
 
   // Special character check (optional)
   if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
-    suggestions.push(
-      "Add special characters (!@#$%^&*) for stronger security"
-    );
+    suggestions.push("Add special characters (!@#$%^&*) for stronger security");
   } else {
     score += 15;
   }
@@ -281,16 +279,16 @@ export function validateEmail(email: string): EmailValidationResult {
   // Disposable email check (hard block)
   if (isDisposableEmail(trimmedEmail)) {
     errors.push(
-      "Temporary email addresses are not allowed. Please use a permanent email address."
+      "Temporary email addresses are not allowed. Please use a permanent email address.",
     );
     warnings.push(
-      "We detected you're using a temporary email service. These cannot be used for security reasons."
+      "We detected you're using a temporary email service. These cannot be used for security reasons.",
     );
   }
   // Suspicious domain pattern check (warning, not hard block)
   else if (isSuspiciousEmailDomain(trimmedEmail)) {
     warnings.push(
-      "⚠️ This email domain looks like a temporary email service. We recommend using a permanent email (Gmail, Outlook, Yahoo, etc) for better account security."
+      "⚠️ This email domain looks like a temporary email service. We recommend using a permanent email (Gmail, Outlook, Yahoo, etc) for better account security.",
     );
   }
 
@@ -335,17 +333,13 @@ export function getEmailValidationMessage(email: string): string {
 
   if (validation.errors.length > 0) {
     // Check if it's a disposable email
-    if (
-      validation.errors.some((e) =>
-        e.toLowerCase().includes("temporary")
-      )
-    ) {
+    if (validation.errors.some((e) => e.toLowerCase().includes("temporary"))) {
       return "Please use a real email address (not a temporary one). This helps us protect your account.";
     }
 
     // Check if it's format issue
     if (validation.errors.some((e) => e.toLowerCase().includes("format"))) {
-      return "Please enter a valid email address (e.g., yourname@example.com)";
+      return "Please enter a valid email address (e.g., yourname@gmail.com)";
     }
 
     // Default to first error
@@ -360,9 +354,7 @@ export function getEmailValidationMessage(email: string): string {
  * @param password - Password to check
  * @returns User-friendly feedback
  */
-export function getPasswordStrengthMessage(
-  password: string
-): {
+export function getPasswordStrengthMessage(password: string): {
   message: string;
   color: "error" | "warning" | "success";
   score: number;

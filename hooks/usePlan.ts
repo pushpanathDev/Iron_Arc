@@ -9,7 +9,10 @@ export function usePlans() {
   return useQuery({
     queryKey: PLANS_KEY,
     queryFn: plansApi.list,
-    staleTime: 1000 * 60 * 5, // 5 min
+    // Cheap call, and plans change from several screens (and from a generate that
+    // timed out on the phone but finished on the server): always re-check on open.
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }
 
@@ -37,6 +40,7 @@ export function useGeneratePlan() {
     },
     onError: () => {
       queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
+      queryClient.invalidateQueries({ queryKey: PLANS_KEY });
     },
   });
 }
@@ -127,21 +131,43 @@ export function usePlanChat(planId: string | undefined) {
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
-    mutationFn: (message: string) => plansApi.chat(planId!, message),
+    mutationFn: async (message: string) => {
+      const started = Date.now();
+      if (__DEV__) console.log(`[Coach] → sending to plan ${planId} (${message.length} chars): "${message.slice(0, 60)}"`);
+      try {
+        const response = await plansApi.chat(planId!, message);
+        if (__DEV__) {
+          const hist = Array.isArray(response?.chatHistory) ? response.chatHistory.length : "none";
+          console.log(`[Coach] ← reply in ${Date.now() - started} ms · planUpdated=${response?.planUpdated} · reply ${response?.message?.length ?? 0} chars · history ${hist}`);
+        }
+        return response;
+      } catch (e) {
+        if (__DEV__) {
+          const err = e as { name?: string; status?: number; kind?: string; message?: string };
+          console.log(`[Coach] ✗ failed after ${Date.now() - started} ms · ${err?.name} · status=${err?.status ?? "-"} · kind=${err?.kind ?? "-"} · "${err?.message}"`);
+        }
+        throw e;
+      }
+    },
     retry: 0, // AI call — a retry would append the message to the chat twice
     onSettled: () => queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY }),
     onSuccess: (response) => {
-      // Update the plan cache with the new planData and chatHistory
-      queryClient.setQueryData(["plans", planId], (old: any) => {
-        if (!old) return old;
-        return {
-          ...old,
-          planData: response.planData,
-          chatHistory: response.chatHistory,
-        };
-      });
-      if (response.planUpdated) {
-        queryClient.invalidateQueries({ queryKey: PLANS_KEY });
+      // Keep the cached plan in step. Never let a cache problem turn an answered
+      // message into "not sent" (an error thrown here would fail the mutation).
+      try {
+        queryClient.setQueryData(["plans", planId], (old: any) => {
+          if (!old) return old;
+          return {
+            ...old,
+            planData: response.planData ?? old.planData,
+            chatHistory: response.chatHistory ?? old.chatHistory,
+          };
+        });
+        if (response.planUpdated) {
+          queryClient.invalidateQueries({ queryKey: PLANS_KEY });
+        }
+      } catch (e) {
+        console.warn("[Coach] reply received but updating the cached plan failed:", e);
       }
     },
   });

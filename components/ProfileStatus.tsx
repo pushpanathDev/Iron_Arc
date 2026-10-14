@@ -1,66 +1,45 @@
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { MaterialIcons } from "@expo/vector-icons";
+import { Text, View } from "react-native";
 import { useTheme } from "../theme/theme";
+import { radius, size, spacing, typography } from "../theme/tokens";
+import { Button } from "./ui/Button";
 
 interface ProfileStatusProps {
   title: string;
   message: string;
   onRetry: () => void;
+  /** Slim banner (cached profile shown) instead of the full card. */
   compact?: boolean;
   retrying?: boolean;
 }
 
-export function ProfileStatus({
-  title,
-  message,
-  onRetry,
-  compact = false,
-  retrying = false,
-}: ProfileStatusProps) {
-  const { colors, spacing, radius, typography } = useTheme();
-
+/** "Profile unavailable" / "Showing saved profile" with a Retry button. */
+export function ProfileStatus({ title, message, onRetry, compact = false, retrying = false }: ProfileStatusProps) {
+  const { colors } = useTheme();
   return (
     <View
+      accessibilityRole="alert"
       style={{
-        backgroundColor: colors.surface,
-        borderRadius: radius.lg,
+        flexDirection: compact ? "row" : "column",
+        alignItems: compact ? "center" : "flex-start",
+        gap: spacing.md,
         padding: compact ? spacing.md : spacing.lg,
+        borderRadius: radius.xl,
         borderWidth: 1,
-        borderColor: colors.cardBorder,
-        marginBottom: spacing.md,
+        borderColor: colors.warning,
+        backgroundColor: colors.raised,
       }}
     >
-      <Text style={{ ...typography.bodyMedium, color: colors.textPrimary }}>
-        {title}
-      </Text>
-      <Text
-        style={{
-          ...typography.caption,
-          color: colors.textSecondary,
-          marginTop: spacing.xs,
-        }}
-      >
-        {message}
-      </Text>
-      <Pressable
-        onPress={onRetry}
-        disabled={retrying}
-        style={{
-          alignSelf: "flex-start",
-          marginTop: spacing.md,
-          paddingHorizontal: spacing.md,
-          paddingVertical: spacing.sm,
-          borderRadius: radius.md,
-          backgroundColor: colors.accent,
-        }}
-      >
-        {retrying ? (
-          <ActivityIndicator size="small" color={colors.textOnAccent} />
-        ) : (
-          <Text style={{ ...typography.bodyMedium, color: colors.textOnAccent }}>
-            Retry
-          </Text>
-        )}
-      </Pressable>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.md, flex: compact ? 1 : undefined }}>
+        <MaterialIcons name="cloud-off" size={size.iconLg} color={colors.warning} />
+        <View style={{ flex: 1, gap: spacing.xxs }}>
+          <Text style={[typography.bodyMdMedium, { color: colors.text }]}>{title}</Text>
+          <Text style={[typography.labelSm, { color: colors.textSecondary }]}>{message}</Text>
+        </View>
+      </View>
+      <Button title="Retry" icon="refresh" variant="tonal" onPress={onRetry} loading={retrying} disabled={retrying} fullWidth={!compact} />
     </View>
   );
 }
+
+export default ProfileStatus;

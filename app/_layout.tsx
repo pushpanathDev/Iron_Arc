@@ -1,4 +1,3 @@
-import { useColorScheme } from "@/hooks/use-color-scheme";
 import {
   DarkTheme,
   DefaultTheme,
@@ -14,24 +13,37 @@ import {
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { SplashScreen, Stack, useRouter, useSegments } from "expo-router";
+import { useFonts } from "expo-font";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Animated as NativeAnimated, AppState, Platform, Pressable, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AppState, Platform, View } from "react-native";
 import type { AppStateStatus } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import "react-native-reanimated";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuth } from "../auth/AuthContext";
 import { AnimatedSplashScreen } from "../components/AnimatedSplashScreen";
+import { BadgeUnlockHost } from "../components/achievements/BadgeUnlockHost";
 import { BatteryOptimizationPrompt } from "../components/BatteryOptimizationPrompt";
+import { CantReachScreen } from "../components/connection/CantReachScreen";
+import { StartupScreen } from "../components/connection/StartupScreen";
+import { ConnectionProvider, useConnection } from "../context/ConnectionContext";
 import { ThemeProvider as AppThemeProvider } from "../context/ThemeContext";
-import { ToastProvider } from "../context/ToastContext";
+import { ToastProvider, useToast } from "../context/ToastContext";
 import { useAppReady } from "../hooks/useAppReady";
 import { useProfile } from "../hooks/useProfile";
+import { configureWorkoutDeleteQueue, recoverWorkoutDeletes } from "../hooks/workoutDeleteQueue";
 import { useNotificationScheduling } from "../hooks/useNotificationScheduling";
+import { useNotificationTaps } from "../hooks/useNotificationTaps";
 import { initNotifications } from "../notifications/notificationService";
 import { isNetworkApiError } from "../services/api";
+import { fontAssets } from "../theme/fonts";
+import { useTheme } from "../theme/theme";
+import { configureGoogle } from "../utils/googleSignin";
+
+configureGoogle();
 
 // Ensures Expo Router always starts at (tabs) even after dev reload state restore
 export const unstable_settings = {
@@ -100,7 +112,6 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
     profile,
     loading: authLoading,
     status,
-    bootstrapError,
     retryBootstrap,
     awaitingEmailVerification,
   } = useAuth();
@@ -109,6 +120,37 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
   const { data: cachedProfile } = useProfile();
   const availableProfile = profile ?? cachedProfile;
   useNotificationScheduling();
+  useNotificationTaps();
+  const { isDark } = useTheme();
+  const connection = useConnection();
+  const { showToast } = useToast();
+
+  // Workout deletes run outside any screen (see hooks/workoutDeleteQueue).
+  useEffect(() => {
+    configureWorkoutDeleteQueue(queryClient, (_id, error) =>
+      showToast({
+        type: "error",
+        message: "Couldn't delete workout",
+        subtitle: isNetworkApiError(error) ? "Can't reach the server. It's back in your list." : "It's back in your list.",
+      }),
+    );
+  }, [showToast]);
+  // Deletes still pending when the app was killed are sent once signed in.
+  const userId = user?.uid;
+  useEffect(() => {
+    if (userId) void recoverWorkoutDeletes(queryClient);
+  }, [userId]);
+
+  const [openSavedData, setOpenSavedData] = useState(false);
+  // Whether saved data existed when the app opened (for dev outage simulation).
+  const startedWithCache = useRef<boolean | null>(null);
+  if (startedWithCache.current === null) startedWithCache.current = connection.hasCachedData;
+
+  // When the server comes back after a failed start, load the account again.
+  const authFailed = status === "backendUnreachable" || status === "bootstrapError";
+  useEffect(() => {
+    if (connection.serverReachable && authFailed) void retryBootstrap();
+  }, [connection.serverReachable, authFailed, retryBootstrap]);
 
   // Track splash visibility (starts true, set false after animation completes)
   const [splashVisible, setSplashVisible] = useState(true);
@@ -185,13 +227,15 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
     const currentSegment = segments[0] as string;
     const isProtectedRoute =
       currentSegment === "(tabs)" ||
-      currentSegment === "add-workout" ||
-      currentSegment === "modal" ||
+      currentSegment === "log" ||
       currentSegment === "admin-catalog" ||
       currentSegment === "ai-plan" ||
       currentSegment === "notification-settings" ||
       currentSegment === "plan-detail" ||
-      currentSegment === "achievements";
+      currentSegment === "plan-chat" ||
+      currentSegment === "achievements" ||
+      currentSegment === "exercise" ||
+      (__DEV__ && currentSegment === "dev-components");
     const isLoginRoute = currentSegment === "login";
     const isOnboardingRoute = currentSegment === "onboarding";
 
@@ -217,18 +261,37 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
 
   // Render animated splash overlay when visible
   // The splash handles its own exit animation based on isReady
+  const retryStartup = useCallback(() => {
+    connection.retry();
+    void retryBootstrap();
+  }, [connection, retryBootstrap]);
+
   if (splashVisible) {
     return (
-      <AnimatedSplashScreen
-        isAppReady={isReadyForSplash}
-        onAnimationComplete={handleSplashComplete}
-      />
+      <>
+        <StatusBar style="light" />
+        <AnimatedSplashScreen
+          isAppReady={isReadyForSplash}
+          onAnimationComplete={handleSplashComplete}
+        />
+      </>
     );
   }
 
+  // Cold start with nothing saved: gate the app behind the startup screens.
+  // With a saved profile we skip this and refresh in the background.
+  const bootstrapping = authLoading || status === "loading" || status === "bootstrapping";
+  const simulatedOutage =
+    __DEV__ && connection.simulation !== "none" && !connection.serverReachable && !startedWithCache.current;
+  const coldStart =
+    !!user && !openSavedData && (simulatedOutage || (!availableProfile && (bootstrapping || authFailed)));
+  const startFailed =
+    connection.state === "offline" || connection.state === "unreachable" || (authFailed && !simulatedOutage);
+  const stagesDone = !connection.networkUp ? 0 : connection.serverReachable ? 2 : 1;
+
   return (
     <View style={{ flex: 1 }}>
-      {status === "backendUnreachable" && <OfflineBanner />}
+      <StatusBar style={isDark ? "light" : "dark"} />
       <Stack
         screenOptions={{
           headerShown: false,
@@ -242,201 +305,64 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
         <Stack.Screen name="(tabs)" options={{ animation: "fade" }} />
         <Stack.Screen name="login" options={{ animation: "fade" }} />
         <Stack.Screen name="onboarding" options={{ animation: "fade" }} />
-        <Stack.Screen
-          name="add-workout"
-          options={{ presentation: "modal", animation: "slide_from_bottom" }}
-        />
-        <Stack.Screen
-          name="modal"
-          options={{ presentation: "modal", animation: "slide_from_bottom" }}
-        />
+        <Stack.Screen name="log/pick" options={{ animation: "slide_from_bottom" }} />
+        {/* Back is intercepted to protect completed sets (Leave workout?). */}
+        <Stack.Screen name="log/session" options={{ animation: "slide_from_right", fullScreenGestureEnabled: false }} />
+        <Stack.Screen name="log/edit" options={{ animation: "slide_from_right", fullScreenGestureEnabled: false }} />
+        <Stack.Screen name="exercise/[name]" options={{ animation: "slide_from_right" }} />
         <Stack.Screen name="admin-catalog" />
         <Stack.Screen name="ai-plan" />
         <Stack.Screen name="notification-settings" />
         <Stack.Screen name="plan-detail" />
+        <Stack.Screen name="plan-chat" options={{ animation: "slide_from_right" }} />
         <Stack.Screen name="achievements" />
+        <Stack.Screen name="dev-components" />
       </Stack>
-      {(authLoading || status === "loading" || status === "bootstrapping") && (
-        <View style={stateOverlayStyle}>
-          <BootstrapState />
+      <BadgeUnlockHost />
+      {coldStart && (
+        <View style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 10 }}>
+          {startFailed && !connection.hasCachedData ? (
+            <CantReachScreen
+              offline={connection.state === "offline"}
+              retrying={connection.checking}
+              onRetry={retryStartup}
+              lastSyncedAt={connection.lastSyncedAt}
+            />
+          ) : (
+            <StartupScreen
+              stagesDone={stagesDone}
+              showActions={startFailed}
+              hasCachedData={connection.hasCachedData}
+              retrying={connection.checking}
+              onRetry={retryStartup}
+              onOpenSaved={() => setOpenSavedData(true)}
+            />
+          )}
         </View>
       )}
-      {!authLoading &&
-        (status === "backendUnreachable" || status === "bootstrapError") &&
-        !availableProfile && (
-          <View style={stateOverlayStyle}>
-            <BackendUnavailableState
-              title={status === "backendUnreachable" ? "Can't reach the server" : "Couldn't load your account"}
-              message={bootstrapError}
-              onRetry={retryBootstrap}
-            />
-          </View>
-        )}
     </View>
   );
 }
 
-function BootstrapState() {
-  const [loaderMessage, setLoaderMessage] = useState("Waking up the server...");
-  const pulse = useRef(new NativeAnimated.Value(0)).current;
-
-  useEffect(() => {
-    const firstNoticeTimer = setTimeout(
-      () => setLoaderMessage("The first launch can take up to a minute while the server wakes up."),
-      10_000,
-    );
-    const stillTryingTimer = setTimeout(
-      () => setLoaderMessage("Still trying..."),
-      25_000,
-    );
-    const animation = NativeAnimated.loop(
-      NativeAnimated.sequence([
-        NativeAnimated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
-        NativeAnimated.timing(pulse, { toValue: 0, duration: 700, useNativeDriver: true }),
-      ]),
-    );
-    animation.start();
-    return () => {
-      clearTimeout(firstNoticeTimer);
-      clearTimeout(stillTryingTimer);
-      animation.stop();
+/** React Navigation's theme follows the in-app theme, not only the system setting. */
+function NavigationThemeBridge({ children }: { children: ReactNode }) {
+  const { colors, isDark } = useTheme();
+  const navTheme = useMemo(() => {
+    const base = isDark ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      colors: {
+        ...base.colors,
+        primary: colors.accent,
+        background: colors.bg,
+        card: colors.card,
+        text: colors.text,
+        border: colors.border,
+      },
     };
-  }, [pulse]);
-
-  return (
-    <View style={stateContainerStyle}>
-      <View style={loaderStyle}>
-        <ActivityIndicator size="large" color="#10B981" />
-        <NativeAnimated.View
-          style={{
-            ...loaderPulseStyle,
-            opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }),
-            transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.15] }) }],
-          }}
-        />
-      </View>
-      <Text style={stateTitleStyle}>Getting your account ready</Text>
-      <Text style={stateMessageStyle}>{loaderMessage}</Text>
-    </View>
-  );
+  }, [isDark, colors]);
+  return <ThemeProvider value={navTheme}>{children}</ThemeProvider>;
 }
-
-function BackendUnavailableState({
-  title,
-  message,
-  onRetry,
-}: {
-  title: string;
-  message: string | null;
-  onRetry: () => Promise<void>;
-}) {
-  const [retrying, setRetrying] = useState(false);
-
-  const retry = async () => {
-    setRetrying(true);
-    try {
-      await onRetry();
-    } finally {
-      setRetrying(false);
-    }
-  };
-
-  return (
-    <View style={stateContainerStyle}>
-      <Text style={stateTitleStyle}>{title}</Text>
-      <Text style={stateMessageStyle}>
-        {message || "Check your connection and try again."}
-      </Text>
-      <Pressable onPress={retry} disabled={retrying} style={retryButtonStyle}>
-        <Text style={retryButtonTextStyle}>{retrying ? "Retrying..." : "Retry"}</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function OfflineBanner() {
-  return (
-    <View style={offlineBannerStyle}>
-      <Text style={offlineBannerTextStyle}>Offline: showing cached data</Text>
-    </View>
-  );
-}
-
-const stateContainerStyle = {
-  flex: 1,
-  justifyContent: "center" as const,
-  alignItems: "center" as const,
-  padding: 24,
-  backgroundColor: "#0B1220",
-};
-
-const stateOverlayStyle = {
-  ...stateContainerStyle,
-  position: "absolute" as const,
-  top: 0,
-  right: 0,
-  bottom: 0,
-  left: 0,
-  zIndex: 10,
-};
-
-const stateTitleStyle = {
-  color: "#FFFFFF",
-  fontSize: 22,
-  fontWeight: "700" as const,
-  textAlign: "center" as const,
-};
-
-const loaderStyle = {
-  width: 76,
-  height: 76,
-  justifyContent: "center" as const,
-  alignItems: "center" as const,
-  marginBottom: 24,
-};
-
-const loaderPulseStyle = {
-  position: "absolute" as const,
-  width: 68,
-  height: 68,
-  borderRadius: 34,
-  borderWidth: 2,
-  borderColor: "#10B981",
-};
-
-const stateMessageStyle = {
-  color: "#B8C2D1",
-  fontSize: 15,
-  textAlign: "center" as const,
-  marginTop: 10,
-  maxWidth: 340,
-};
-
-const retryButtonStyle = {
-  marginTop: 22,
-  paddingHorizontal: 24,
-  paddingVertical: 12,
-  borderRadius: 8,
-  backgroundColor: "#10B981",
-};
-
-const retryButtonTextStyle = {
-  color: "#FFFFFF",
-  fontSize: 16,
-  fontWeight: "700" as const,
-};
-
-const offlineBannerStyle = {
-  backgroundColor: "#7C2D12",
-  paddingVertical: 8,
-  paddingHorizontal: 16,
-};
-
-const offlineBannerTextStyle = {
-  color: "#FFEDD5",
-  textAlign: "center" as const,
-  fontSize: 13,
-};
 
 /**
  * Root Layout
@@ -456,10 +382,12 @@ const offlineBannerTextStyle = {
  * 6. App interface becomes visible
  */
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
   const [dbReady, setDbReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [nativeSplashHidden, setNativeSplashHidden] = useState(false);
+  const [fontsLoaded, fontError] = useFonts(fontAssets);
+  // A font failure falls back to the system font rather than blocking startup.
+  const fontsReady = fontsLoaded || !!fontError;
 
   // Subscribe to AppState changes for focusManager
   useEffect(() => {
@@ -476,10 +404,10 @@ export default function RootLayout() {
       try {
         console.log("[RootLayout] Starting app initialization...");
 
-        // Initialize local Expo notifications
-        console.log("[RootLayout] Initializing notifications...");
-        await initNotifications();
-        console.log(`[RootLayout] ✓ initNotifications complete (${Date.now() - initStartTime}ms)`);
+        // Local notifications set up in the background: they took 3.5–7 s on a phone and
+        // must never hold the splash (reminders are re-planned once data loads anyway).
+        console.log("[RootLayout] Initializing notifications (background)...");
+        void initNotifications().then(() => console.log(`[RootLayout] ✓ initNotifications complete (${Date.now() - initStartTime}ms)`));
 
         // Optional: Add artificial delay in dev for testing splash duration
         if (SPLASH_TEST_MS > 0 && __DEV__) {
@@ -493,18 +421,6 @@ export default function RootLayout() {
           console.log(`[RootLayout] ✓ DB ready (${Date.now() - initStartTime}ms)`);
         }
 
-        // Hide the native splash screen now (allow animated splash to show)
-        if (mounted) {
-          try {
-            await SplashScreen.hideAsync();
-            setNativeSplashHidden(true);
-            console.log(`[RootLayout] ✓ Native splash hidden (${Date.now() - initStartTime}ms)`);
-          } catch (e) {
-            console.warn("[RootLayout] Native splash already hidden or error:", e);
-            setNativeSplashHidden(true);
-          }
-        }
-
       } catch (error: any) {
         console.error("[RootLayout] Initialization error:", error?.message || error);
         setInitError(error?.message || "Unknown error");
@@ -512,12 +428,6 @@ export default function RootLayout() {
         // Still mark as ready to allow recovery UI or fallback
         if (mounted) {
           setDbReady(true);
-          try {
-            await SplashScreen.hideAsync();
-            setNativeSplashHidden(true);
-          } catch (e) {
-            // Ignore nested errors
-          }
         }
       }
     };
@@ -528,6 +438,18 @@ export default function RootLayout() {
       mounted = false;
     };
   }, []);
+
+  // Hide the native splash only once init has finished and fonts are loaded.
+  useEffect(() => {
+    if (!dbReady || !fontsReady) return;
+    if (fontError) console.warn("[RootLayout] Font loading failed, using system font:", fontError);
+    SplashScreen.hideAsync()
+      .catch((e) => console.warn("[RootLayout] Native splash already hidden or error:", e))
+      .finally(() => setNativeSplashHidden(true));
+  }, [dbReady, fontsReady, fontError]);
+
+  // Keep the native splash up until fonts are ready.
+  if (!fontsReady) return null;
 
   // Show error if initialization failed
   if (initError) {
@@ -548,24 +470,25 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
+        <KeyboardProvider>
         <PersistQueryClientProvider
           client={queryClient}
           persistOptions={{ persister: asyncStoragePersister }}
         >
-          <ThemeProvider
-            value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
-          >
-            <AppThemeProvider>
+          <AppThemeProvider>
+            <NavigationThemeBridge>
+              <ConnectionProvider>
               <AuthProvider>
                 <ToastProvider>
                   <BatteryOptimizationPrompt />
                   <RootNavigator dbReady={dbReady} />
                 </ToastProvider>
               </AuthProvider>
-            </AppThemeProvider>
-            <StatusBar style="auto" />
-          </ThemeProvider>
+              </ConnectionProvider>
+            </NavigationThemeBridge>
+          </AppThemeProvider>
         </PersistQueryClientProvider>
+        </KeyboardProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

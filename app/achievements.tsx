@@ -1,283 +1,227 @@
 /**
- * Achievements Screen
- *
- * Every badge from GET /api/achievements, grouped by category. Earned badges
- * show their unlock date; locked badges show a progress bar
- * (progress / targetValue). All rules and progress come from the server.
+ * Achievements (Achievements1_Screen mockup). Every badge, rule and progress
+ * value comes from the server (GET /api/achievements); this screen groups
+ * them, shows how far along each locked badge is, and opens the badge sheet.
  */
-import { Ionicons } from "@expo/vector-icons";
+import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  RefreshControl,
-  SectionList,
-  Text,
-  View,
-} from "react-native";
+import { memo, useMemo, useState } from "react";
+import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { BadgeSheet } from "../components/achievements/BadgeSheet";
+import { Button } from "../components/ui/Button";
+import { FilterChip } from "../components/ui/FilterChip";
+import { Reveal } from "../components/ui/Reveal";
+import { SkeletonBlock } from "../components/ui/Skeleton";
 import { useAchievements } from "../hooks/useAchievements";
-import {
-  badgeIcon,
-  CATEGORY_ORDER,
-  categoryLabel,
-  formatProgressValue,
-  TIER_COLORS,
-  TIER_LABELS,
-} from "../insights/achievements";
+import { useUnitPreference } from "../hooks/useUnitPreference";
+import { badgeIcon, CATEGORY_ORDER, categoryLabel, progressLabel, TIER_LABELS, tierColor, unlockDate } from "../insights/achievements";
 import type { Achievement } from "../services/api";
 import { useTheme } from "../theme/theme";
+import { radius, size, spacing, tracking, typography } from "../theme/tokens";
+import type { WeightUnit } from "../utils/unitConversion";
 
-function formatUnlockDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function BadgeRow({ badge }: { badge: Achievement }) {
-  const { colors, spacing, radius, typography } = useTheme();
-  const tierColor = TIER_COLORS[badge.tier];
-  const unlocked = Boolean(badge.unlockedAt);
-  const ratio = badge.targetValue > 0 ? Math.min(1, Math.max(0, badge.progress / badge.targetValue)) : 0;
-
-  const status = unlocked
-    ? `Unlocked ${formatUnlockDate(badge.unlockedAt!)}`
-    : `${formatProgressValue(badge.category, badge.progress)} / ${formatProgressValue(badge.category, badge.targetValue)}`;
-
-  return (
-    <View
-      accessible
-      accessibilityLabel={`${badge.title}, ${TIER_LABELS[badge.tier]}. ${badge.description}. ${unlocked ? status : `Locked, progress ${status}`}`}
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: colors.surface,
-        borderRadius: radius.lg,
-        borderWidth: 1,
-        borderColor: unlocked ? `${tierColor}66` : colors.cardBorder,
-        padding: spacing.md,
-        marginBottom: spacing.sm,
-      }}
-    >
-      <View
-        style={{
-          width: 48,
-          height: 48,
-          borderRadius: radius.full,
-          backgroundColor: unlocked ? `${tierColor}26` : colors.surfaceElevated,
-          justifyContent: "center",
-          alignItems: "center",
-          marginRight: spacing.md,
-        }}
-      >
-        <Ionicons
-          name={badgeIcon(badge.key)}
-          size={24}
-          color={unlocked ? tierColor : colors.textMuted}
-        />
-        {!unlocked && (
-          <View
-            style={{
-              position: "absolute",
-              right: -2,
-              bottom: -2,
-              backgroundColor: colors.surface,
-              borderRadius: radius.full,
-              padding: 2,
-            }}
-          >
-            <Ionicons name="lock-closed" size={12} color={colors.textMuted} />
-          </View>
-        )}
-      </View>
-
-      <View style={{ flex: 1 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
-          <Text
-            style={{
-              ...typography.bodyMedium,
-              color: unlocked ? colors.textPrimary : colors.textSecondary,
-              flexShrink: 1,
-            }}
-            numberOfLines={1}
-          >
-            {badge.title}
-          </Text>
-          <View
-            style={{
-              backgroundColor: `${tierColor}26`,
-              borderRadius: radius.full,
-              paddingHorizontal: spacing.xs,
-              paddingVertical: 2,
-            }}
-          >
-            <Text style={{ color: tierColor, fontSize: 11, fontWeight: "700" }}>
-              {TIER_LABELS[badge.tier]}
-            </Text>
-          </View>
-        </View>
-
-        <Text style={{ ...typography.caption, color: colors.textSecondary, marginTop: 2 }}>
-          {badge.description}
-        </Text>
-
-        {!unlocked && (
-          <View
-            style={{
-              height: 6,
-              borderRadius: radius.full,
-              backgroundColor: colors.surfaceElevated,
-              overflow: "hidden",
-              marginTop: spacing.xs,
-            }}
-          >
-            <View
-              style={{
-                width: `${Math.round(ratio * 100)}%`,
-                height: "100%",
-                backgroundColor: colors.accent,
-                borderRadius: radius.full,
-              }}
-            />
-          </View>
-        )}
-
-        <Text
-          style={{
-            ...typography.caption,
-            color: unlocked ? tierColor : colors.textMuted,
-            marginTop: 4,
-            fontWeight: unlocked ? "600" : "400",
-          }}
-        >
-          {status}
-        </Text>
-      </View>
-    </View>
-  );
-}
+const NO_BADGES: Achievement[] = [];
 
 export default function AchievementsScreen() {
-  const { colors, spacing, radius, typography } = useTheme();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { data: achievements = [], isLoading, isError, refetch, isRefetching } = useAchievements();
+  const { unit } = useUnitPreference();
+  const { data, isLoading, isError, refetch } = useAchievements();
+  const badges = data ?? NO_BADGES;
 
-  const sections = useMemo(() => {
-    const known = CATEGORY_ORDER.map(({ key, label }) => ({
-      key,
-      title: label,
-      data: achievements.filter((a) => a.category === key),
-    }));
-    // Any category the server adds later still shows up, after the known ones.
-    const extraKeys = [...new Set(achievements.map((a) => a.category))].filter(
-      (key) => !CATEGORY_ORDER.some((c) => c.key === key),
-    );
-    const extra = extraKeys.map((key) => ({
-      key,
-      title: categoryLabel(key),
-      data: achievements.filter((a) => a.category === key),
-    }));
-    return [...known, ...extra].filter((s) => s.data.length > 0);
-  }, [achievements]);
+  const [filter, setFilter] = useState<string | null>(null);
+  const [open, setOpen] = useState<Achievement | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const unlockedCount = achievements.filter((a) => a.unlockedAt).length;
-  const total = achievements.length;
+  // Known categories in order, then anything new the server adds.
+  const categories = useMemo(() => {
+    const present = new Set(badges.map((b) => b.category));
+    const known = CATEGORY_ORDER.map((c) => c.key).filter((k) => present.has(k));
+    return [...known, ...[...present].filter((k) => !known.includes(k))];
+  }, [badges]);
+  const sections = useMemo(
+    () => (filter ? [filter] : categories).map((key) => ({ key, items: badges.filter((b) => b.category === key) })),
+    [filter, categories, badges],
+  );
+
+  const unlocked = badges.filter((b) => b.unlockedAt).length;
+  const pct = badges.length ? Math.round((unlocked / badges.length) * 100) : 0;
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refetch();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
       {/* Header */}
-      <View
-        style={{
-          paddingTop: insets.top + spacing.sm,
-          paddingHorizontal: spacing.md,
-          paddingBottom: spacing.md,
-          flexDirection: "row",
-          alignItems: "center",
-        }}
-      >
+      <View style={{ height: size.appBar, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.xs, paddingRight: spacing.screen }}>
         <Pressable
-          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+          onPress={() => router.back()}
           accessibilityRole="button"
-          accessibilityLabel="Go back"
-          hitSlop={12}
-          style={{ marginRight: spacing.md, padding: spacing.xs }}
+          accessibilityLabel="Back"
+          style={({ pressed }) => ({ width: size.control, height: size.control, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.surfaceContainerHigh : "transparent" })}
         >
-          <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
+          <MaterialIcons name="arrow-back" size={size.iconLg} color={colors.text} />
         </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={{ ...typography.h2, color: colors.textPrimary }}>Achievements</Text>
-          {total > 0 && (
-            <Text style={{ ...typography.caption, color: colors.textSecondary }}>
-              {unlockedCount} of {total} unlocked
+        <Text style={[typography.headlineMd, { flex: 1, color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]} accessibilityRole="header">
+          Achievements
+        </Text>
+        {badges.length > 0 && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: radius.full, backgroundColor: colors.surfaceContainerHigh }}>
+            <MaterialIcons name="military-tech" size={size.iconSm} color={colors.amber} />
+            <Text style={[typography.labelLg, { color: colors.text }]}>
+              {unlocked} / {badges.length}
             </Text>
-          )}
-        </View>
+          </View>
+        )}
       </View>
 
-      {isLoading ? (
-        <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-          <ActivityIndicator size="large" color={colors.accent} />
+      {isLoading && badges.length === 0 ? (
+        <View style={{ padding: spacing.screen, gap: spacing.md }} accessibilityLabel="Loading achievements">
+          <SkeletonBlock height={size.control} radius="lg" />
+          <SkeletonBlock height={size.control} radius="lg" />
+          {[0, 1].map((r) => (
+            <View key={r} style={{ flexDirection: "row", gap: spacing.md }}>
+              <View style={{ flex: 1 }}>
+                <SkeletonBlock height={size.goalCard * 1.3} radius="xl" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <SkeletonBlock height={size.goalCard * 1.3} radius="xl" />
+              </View>
+            </View>
+          ))}
         </View>
-      ) : isError && total === 0 ? (
-        <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: spacing.lg }}>
-          <Ionicons name="cloud-offline-outline" size={36} color={colors.textMuted} />
-          <Text
-            style={{
-              ...typography.body,
-              color: colors.textSecondary,
-              textAlign: "center",
-              marginTop: spacing.sm,
-            }}
-          >
-            Couldn&apos;t load your achievements.
+      ) : badges.length === 0 ? (
+        <View style={{ padding: spacing.screen, gap: spacing.md, alignItems: "center" }}>
+          <MaterialIcons name="military-tech" size={size.iconLg * 2} color={colors.textMuted} />
+          <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center" }]}>
+            {isError ? "Couldn't load your badges. Check your connection." : "No badges yet."}
           </Text>
-          <Pressable
-            onPress={() => refetch()}
-            accessibilityRole="button"
-            accessibilityLabel="Retry loading achievements"
-            style={{
-              marginTop: spacing.md,
-              backgroundColor: colors.accent,
-              borderRadius: radius.lg,
-              paddingVertical: spacing.sm,
-              paddingHorizontal: spacing.lg,
-            }}
-          >
-            <Text style={{ color: colors.textOnAccent, fontWeight: "700" }}>Retry</Text>
-          </Pressable>
+          {isError && <Button title="Try again" variant="tonal" onPress={() => void refetch()} />}
         </View>
       ) : (
-        <SectionList
-          sections={sections}
-          keyExtractor={(item) => item.key}
-          renderItem={({ item }) => <BadgeRow badge={item} />}
-          renderSectionHeader={({ section }) => (
-            <Text
-              style={{
-                ...typography.label,
-                color: colors.textMuted,
-                marginTop: spacing.md,
-                marginBottom: spacing.sm,
-              }}
-            >
-              {section.title.toUpperCase()} ·{" "}
-              {section.data.filter((a) => a.unlockedAt).length}/{section.data.length}
-            </Text>
-          )}
-          stickySectionHeadersEnabled={false}
-          contentContainerStyle={{
-            paddingHorizontal: spacing.md,
-            paddingBottom: insets.bottom + spacing.xl,
-          }}
-          refreshControl={
-            <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.accent} />
-          }
-        />
+        <ScrollView
+          contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: insets.bottom + spacing.xxl, gap: spacing.xl }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} progressBackgroundColor={colors.card} />}
+        >
+          {/* Overall progress */}
+          <Reveal index={0} style={{ gap: spacing.sm }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>
+                {unlocked} of {badges.length} unlocked
+              </Text>
+              <Text style={[typography.labelLg, { color: colors.accent }]}>{pct}% completed</Text>
+            </View>
+            <View style={{ height: size.progressBar, borderRadius: radius.full, backgroundColor: colors.surfaceContainerHigh, overflow: "hidden" }} accessibilityLabel={`${pct} percent of badges unlocked`}>
+              <View style={{ width: `${pct}%`, height: "100%", backgroundColor: colors.accent }} />
+            </View>
+          </Reveal>
+
+          {/* Categories */}
+          <Reveal index={1}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+              <FilterChip label="All" active={!filter} onPress={() => setFilter(null)} />
+              {categories.map((c) => (
+                <FilterChip key={c} label={categoryLabel(c)} active={filter === c} onPress={() => setFilter((cur) => (cur === c ? null : c))} />
+              ))}
+            </ScrollView>
+          </Reveal>
+
+          {sections.map((section, i) => {
+            const done = section.items.filter((b) => b.unlockedAt).length;
+            return (
+              <Reveal key={section.key} index={2 + i} style={{ gap: spacing.md }}>
+                <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between" }}>
+                  <Text style={[typography.headlineSm, { color: colors.text }]} accessibilityRole="header">
+                    {categoryLabel(section.key)}
+                  </Text>
+                  <Text style={[typography.labelMd, { color: colors.textSecondary }]}>
+                    {done} of {section.items.length} unlocked
+                  </Text>
+                </View>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.md }}>
+                  {section.items.map((b) => (
+                    <BadgeCard key={b.key} badge={b} unit={unit} onPress={setOpen} />
+                  ))}
+                </View>
+              </Reveal>
+            );
+          })}
+        </ScrollView>
       )}
+
+      <BadgeSheet badge={open} unit={unit} primaryLabel="Close" onClose={() => setOpen(null)} />
     </View>
   );
 }
+
+/** Half-width card: icon + tier, title, rule, then the unlock date or progress. */
+const BadgeCard = memo(function BadgeCard({ badge, unit, onPress }: { badge: Achievement; unit: WeightUnit; onPress: (b: Achievement) => void }) {
+  const { colors } = useTheme();
+  const unlocked = !!badge.unlockedAt;
+  const tint = tierColor(colors, badge.tier);
+  const ratio = badge.targetValue > 0 ? Math.min(1, Math.max(0, badge.progress / badge.targetValue)) : 0;
+  const status = unlocked ? `Unlocked ${unlockDate(badge.unlockedAt!)}` : progressLabel(badge, unit);
+
+  return (
+    <Pressable
+      onPress={() => onPress(badge)}
+      accessibilityRole="button"
+      accessibilityLabel={`${badge.title}, ${TIER_LABELS[badge.tier]}. ${badge.description}. ${unlocked ? status : `Locked, ${status}`}`}
+      style={({ pressed }) => ({
+        flexBasis: "47%",
+        flexGrow: 1,
+        padding: spacing.md,
+        gap: spacing.sm,
+        justifyContent: "space-between",
+        borderRadius: radius.xl,
+        borderWidth: 1,
+        borderColor: unlocked ? tint : "transparent",
+        backgroundColor: pressed ? colors.surfaceContainerHigh : colors.raised,
+      })}
+    >
+      <View style={{ gap: spacing.sm }}>
+        <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" }}>
+          <View style={{ width: size.rowIcon, height: size.rowIcon, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh }}>
+            <MaterialIcons name={badgeIcon(badge.key)} size={size.icon} color={unlocked ? tint : colors.textMuted} />
+          </View>
+          <View style={{ paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: radius.full, borderWidth: 1, borderColor: unlocked ? tint : colors.border }}>
+            <Text style={[typography.labelSm, { color: unlocked ? tint : colors.textMuted }]}>{TIER_LABELS[badge.tier]}</Text>
+          </View>
+        </View>
+        <Text style={[typography.bodyMdMedium, { color: unlocked ? colors.text : colors.textSecondary }]} numberOfLines={1}>
+          {badge.title}
+        </Text>
+        <Text style={[typography.labelSm, { color: colors.textSecondary }]} numberOfLines={2}>
+          {badge.description}
+        </Text>
+      </View>
+
+      {unlocked ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+          <MaterialIcons name="check-circle" size={size.iconXs} color={colors.accent} />
+          <Text style={[typography.labelSm, { color: colors.accent }]}>{status}</Text>
+        </View>
+      ) : (
+        <View style={{ gap: spacing.xs }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", gap: spacing.xs }}>
+            <Text style={[typography.labelSm, { color: colors.textMuted }]}>Progress</Text>
+            <Text style={[typography.labelSm, { color: colors.textSecondary }]} numberOfLines={1}>
+              {status}
+            </Text>
+          </View>
+          <View style={{ height: size.progressBar, borderRadius: radius.full, backgroundColor: colors.surfaceContainerHigh, overflow: "hidden" }}>
+            <View style={{ width: `${ratio * 100}%`, height: "100%", backgroundColor: tint }} />
+          </View>
+        </View>
+      )}
+    </Pressable>
+  );
+});

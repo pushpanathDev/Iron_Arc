@@ -12,12 +12,17 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { aiErrorMessage } from "../components/plans/PlanActions";
 import { useToast } from "../context/ToastContext";
+import { requestPlanDay } from "../hooks/planDayRequest";
 import { usePlan, usePlanChat } from "../hooks/usePlan";
 import type { ChatMessage } from "../services/api";
+import { diffPlanWeek, type PlanChange } from "../utils/planData";
 import { useTheme } from "../theme/theme";
 import { radius, size, spacing, typography } from "../theme/tokens";
 
-type Message = ChatMessage & { planUpdated?: boolean; failed?: boolean; local?: boolean };
+type Message = ChatMessage & { planUpdated?: boolean; changes?: PlanChange[]; failed?: boolean; local?: boolean };
+
+/** Lines shown on the "Plan updated" card before "+ N more". */
+const MAX_CHANGE_LINES = 4;
 
 const MESSAGE_MAX = 500;
 const QUICK_REPLIES = ["Make it 3 days a week", "Shorter sessions", "Replace squats", "Make this week easier", "More arm work"];
@@ -56,11 +61,15 @@ export default function PlanChatScreen() {
     setInput("");
     const mine: Message = { role: "user", content: message, timestamp: new Date().toISOString(), local: true };
     setMessages((m) => (retryOf !== undefined ? m.map((x, i) => (i === retryOf ? { ...mine } : x)) : [...m, mine]));
+    // The plan as it was, to show what the coach changed.
+    const before = plan?.planData;
+    const week = plan?.weekNumber;
     chat.mutate(message, {
       onSuccess: (r) => {
+        const changes = r.planUpdated ? diffPlanWeek(before, r.planData, week) : undefined;
         setMessages((m) => [
           ...m.map((x) => (x === mine || (x.local && x.content === message && x.role === "user") ? { ...x, failed: false } : x)),
-          { role: "assistant", content: r.message, timestamp: new Date().toISOString(), planUpdated: r.planUpdated, local: true },
+          { role: "assistant", content: r.message, timestamp: new Date().toISOString(), planUpdated: r.planUpdated, changes, local: true },
         ]);
       },
       onError: (e) => {
@@ -108,7 +117,15 @@ export default function PlanChatScreen() {
       <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingVertical: spacing.lg, gap: spacing.md }} keyboardShouldPersistTaps="handled">
           {shown.map((m, i) => (
-            <Bubble key={`${m.timestamp}-${i}`} message={m} onRetry={m.failed ? () => send(m.content, i) : undefined} />
+            <Bubble
+              key={`${m.timestamp}-${i}`}
+              message={m}
+              onRetry={m.failed ? () => send(m.content, i) : undefined}
+              onViewPlan={() => {
+                if (id && m.changes?.length) requestPlanDay(id, m.changes[0].dayIndex);
+                router.back();
+              }}
+            />
           ))}
           {chat.isPending && <Thinking />}
         </ScrollView>
@@ -174,7 +191,7 @@ export default function PlanChatScreen() {
   );
 }
 
-function Bubble({ message, onRetry }: { message: Message; onRetry?: () => void }) {
+function Bubble({ message, onRetry, onViewPlan }: { message: Message; onRetry?: () => void; onViewPlan: () => void }) {
   const { colors } = useTheme();
   const mine = message.role === "user";
   return (
@@ -211,13 +228,12 @@ function Bubble({ message, onRetry }: { message: Message; onRetry?: () => void }
 
       {message.planUpdated && (
         <Pressable
-          onPress={() => router.back()}
+          onPress={onViewPlan}
           accessibilityRole="button"
-          accessibilityLabel="Plan updated. View the plan"
+          accessibilityLabel={`Plan updated. ${(message.changes ?? []).map((c) => c.text).join(". ")}. View the plan`}
           style={({ pressed }) => ({
-            flexDirection: "row",
-            alignItems: "center",
-            gap: spacing.md,
+            alignSelf: "stretch",
+            gap: spacing.sm,
             marginLeft: size.tileSm + spacing.sm,
             padding: spacing.md,
             borderRadius: radius.lg,
@@ -226,12 +242,26 @@ function Bubble({ message, onRetry }: { message: Message; onRetry?: () => void }
             backgroundColor: pressed ? colors.surfaceContainerHigh : colors.raised,
           })}
         >
-          <MaterialIcons name="check-circle" size={size.iconLg} color={colors.accent} />
-          <View style={{ gap: spacing.xxs }}>
-            <Text style={[typography.bodyMdMedium, { color: colors.text }]}>Plan updated</Text>
-            <Text style={[typography.labelSm, { color: colors.accent }]}>View plan</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <MaterialIcons name="check-circle" size={size.iconLg} color={colors.accent} />
+            <Text style={[typography.bodyMdMedium, { flex: 1, color: colors.text }]}>Plan updated</Text>
+            <Text style={[typography.labelLg, { color: colors.accent }]}>View plan</Text>
+            <MaterialIcons name="chevron-right" size={size.iconSm} color={colors.accent} />
           </View>
-          <MaterialIcons name="chevron-right" size={size.iconSm} color={colors.textSecondary} />
+          {message.changes && message.changes.length > 0 ? (
+            <View style={{ gap: spacing.xs, paddingLeft: size.iconLg + spacing.sm }}>
+              {message.changes.slice(0, MAX_CHANGE_LINES).map((c, i) => (
+                <Text key={i} style={[typography.labelMd, { color: colors.textSecondary }]}>
+                  • {c.text}
+                </Text>
+              ))}
+              {message.changes.length > MAX_CHANGE_LINES && (
+                <Text style={[typography.labelSm, { color: colors.textMuted }]}>+ {message.changes.length - MAX_CHANGE_LINES} more</Text>
+              )}
+            </View>
+          ) : message.changes ? (
+            <Text style={[typography.labelSm, { color: colors.textSecondary, paddingLeft: size.iconLg + spacing.sm }]}>Small adjustments; this week&apos;s days and exercises are the same.</Text>
+          ) : null}
         </Pressable>
       )}
     </View>

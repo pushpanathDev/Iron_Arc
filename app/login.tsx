@@ -818,6 +818,7 @@ export default function LoginScreen() {
       <ForgotPasswordModal
         visible={showForgotPassword}
         onClose={() => setShowForgotPassword(false)}
+        initialEmail={email}
       />
 
       {/* Email Confirmation Modal (Typo Prevention) */}

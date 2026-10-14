@@ -17,7 +17,6 @@ import { PRBanner, type NewRecord } from "../../components/log/PRBanner";
 import { formatClock, RestBar } from "../../components/log/RestBar";
 import { PendingSets, SetTable } from "../../components/log/SetTable";
 import { MuscleIcon } from "../../components/muscle/MuscleIcon";
-import { REST_DEFAULT_SECONDS } from "../../components/RestTimer";
 import { Button } from "../../components/ui/Button";
 import { Reveal } from "../../components/ui/Reveal";
 import { Sheet } from "../../components/ui/Sheet";
@@ -58,7 +57,7 @@ import {
 import { saveLogSession } from "../../hooks/logSessionSave";
 import { useAchievementUnlockHandler } from "../../hooks/useAchievements";
 import { historyPrefill, useExerciseIndex } from "../../hooks/useLogData";
-import { cancelRestEndNotification, getNotificationPreferences, scheduleRestEndNotification } from "../../notifications/notificationService";
+import { cancelRestEndNotification, DEFAULT_NOTIFICATION_PREFERENCES, getNotificationPreferences, scheduleRestEndNotification } from "../../notifications/notificationService";
 import { useTheme } from "../../theme/theme";
 import { motion, radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import {
@@ -158,7 +157,7 @@ export default function LogSession() {
   }, [rest]);
   const restRemaining = rest ? Math.max(0, Math.ceil((rest.endsAt - now) / 1000)) : 0;
   // Rest settings (Notifications → Rest timer): default length and in-app vibration.
-  const restPrefs = useRef({ seconds: REST_DEFAULT_SECONDS, vibrate: true });
+  const restPrefs = useRef({ seconds: DEFAULT_NOTIFICATION_PREFERENCES.restDefaultSeconds, vibrate: true });
   useFocusEffect(
     useCallback(() => {
       void getNotificationPreferences().then((p) => (restPrefs.current = { seconds: p.restDefaultSeconds, vibrate: p.restVibrate }));

@@ -125,3 +125,60 @@ export function restLabel(seconds: number | undefined): string | null {
   if (!seconds) return null;
   return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds} s`;
 }
+
+/* =========================================================
+   What changed (coach "Plan updated" card)
+   ========================================================= */
+
+export interface PlanChange {
+  /** 0 = Monday … 6 = Sunday */
+  dayIndex: number;
+  text: string;
+}
+
+const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const exKey = (e: PlanExercise) => (e.name ?? e.exerciseId ?? "").trim().toLowerCase();
+const scheme = (e: PlanExercise) => `${e.sets ?? "?"}×${e.reps ?? "?"}`;
+
+/**
+ * Plain-words differences for one week of a plan, Monday first:
+ * "Wed is now a rest day", "Sat: Legs, 4 exercises", "Thu: Barbell Squat → Leg Press",
+ * "Mon: + Lateral Raise", "Mon: − Bicep Curl", "Tue: Barbell Row 4×8 → 3×10".
+ */
+export function diffPlanWeek(before: unknown, after: unknown, weekNumber: number | undefined): PlanChange[] {
+  const a = daysByWeekday(getPlanWeekDays(before, weekNumber));
+  const b = daysByWeekday(getPlanWeekDays(after, weekNumber));
+  const out: PlanChange[] = [];
+  for (let i = 0; i < 7; i++) {
+    const was = a[i];
+    const now = b[i];
+    const day = DAY_SHORT[i];
+    const wasTraining = isTrainingDay(was);
+    const nowTraining = isTrainingDay(now);
+    if (wasTraining && !nowTraining) {
+      out.push({ dayIndex: i, text: `${day} is now a rest day` });
+      continue;
+    }
+    if (!wasTraining && nowTraining) {
+      const n = (now.exercises ?? []).length;
+      out.push({ dayIndex: i, text: `${day}: ${planDayShortName(now)}, ${n} ${n === 1 ? "exercise" : "exercises"}` });
+      continue;
+    }
+    if (!wasTraining || !nowTraining) continue;
+
+    const before = new Map((was.exercises ?? []).map((e) => [exKey(e), e]));
+    const after = new Map((now.exercises ?? []).map((e) => [exKey(e), e]));
+    const removed = [...before.keys()].filter((k) => !after.has(k));
+    const added = [...after.keys()].filter((k) => !before.has(k));
+    // Pair removals with additions as swaps, in order.
+    const swaps = Math.min(removed.length, added.length);
+    for (let s = 0; s < swaps; s++) out.push({ dayIndex: i, text: `${day}: ${before.get(removed[s])!.name} → ${after.get(added[s])!.name}` });
+    for (const k of added.slice(swaps)) out.push({ dayIndex: i, text: `${day}: + ${after.get(k)!.name}` });
+    for (const k of removed.slice(swaps)) out.push({ dayIndex: i, text: `${day}: − ${before.get(k)!.name}` });
+    for (const [k, e] of after) {
+      const old = before.get(k);
+      if (old && scheme(old) !== scheme(e)) out.push({ dayIndex: i, text: `${day}: ${e.name} ${scheme(old)} → ${scheme(e)}` });
+    }
+  }
+  return out;
+}

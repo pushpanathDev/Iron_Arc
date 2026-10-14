@@ -5,8 +5,8 @@
  * Navigate here with /plan-detail?id=<planId>.
  */
 import { MaterialIcons } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
-import { memo, useEffect, useMemo, useState } from "react";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -16,6 +16,7 @@ import { Sheet } from "../components/ui/Sheet";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 import { TextField } from "../components/ui/TextField";
 import { useToast } from "../context/ToastContext";
+import { takePlanDayRequest } from "../hooks/planDayRequest";
 import { useExerciseIndex } from "../hooks/useLogData";
 import { usePlan, useSubstituteExercise } from "../hooks/usePlan";
 import { useStartPlanSession } from "../hooks/useStartPlanSession";
@@ -96,6 +97,13 @@ function DayView({ plan }: { plan: Plan }) {
   useEffect(() => {
     if (selected > 6) setSelected(0);
   }, [selected]);
+  // Back from the coach's "View plan": open the first day it changed.
+  useFocusEffect(
+    useCallback(() => {
+      const day = takePlanDayRequest(plan.id);
+      if (day != null) setSelected(day);
+    }, [plan.id]),
+  );
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [swapTarget, setSwapTarget] = useState<PlanExercise | null>(null);

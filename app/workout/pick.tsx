@@ -1,47 +1,39 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, Pressable, Text, TextInput, View, type LayoutChangeEvent, type ListRenderItem, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FlatList, Pressable, Text, View, type LayoutChangeEvent, type ListRenderItem } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../providers/AuthContext";
+import { CategoryTile } from "../../components/workout/CategoryTile";
+import { CustomExerciseSheet } from "../../components/workout/CustomExerciseSheet";
 import { ExerciseRow } from "../../components/workout/ExerciseRow";
 import { ResumeWorkoutSheet } from "../../components/workout/ResumeWorkoutSheet";
-import { MuscleIcon } from "../../components/muscle/MuscleIcon";
-import type { MuscleGroup } from "../../components/muscle/musclePaths";
+import { SearchField } from "../../components/workout/SearchField";
+import { SectionTitle } from "../../components/workout/SectionTitle";
+import { buildPickerItems, countLabel, recentPickerExercises, ROW_HEIGHT, type PickerItem } from "../../components/workout/pickerList";
 import { Button } from "../../components/ui/Button";
 import { Reveal } from "../../components/ui/Reveal";
 import { Sheet } from "../../components/ui/Sheet";
 import { SkeletonBlock } from "../../components/ui/Skeleton";
-import { TextField } from "../../components/ui/TextField";
 import { useToast } from "../../providers/ToastContext";
 import { addExercises, beginDraft, createDraft, getDraft, updateDraft, useWorkoutDraft, type NewExercise } from "../../hooks/workoutDraft";
-import { useCreateExercise, useDeleteExercise } from "../../hooks/useExercises";
-import { historyPrefill, PICKER_TILES, tileForCategory, useExerciseCatalog, useExerciseIndex, type CatalogExercise, type TileKey } from "../../hooks/useWorkoutData";
+import { useDeleteExercise } from "../../hooks/useExercises";
+import { PICKER_TILES, tileForCategory, type CatalogExercise, type TileKey } from "../../data/pickerTiles";
+import { historyPrefill, useExerciseCatalog, useExerciseIndex } from "../../hooks/useWorkoutData";
+import { usePinnedSection } from "../../hooks/usePinnedSection";
 import { useUnitPreference } from "../../hooks/useUnitPreference";
-import { ApiError } from "../../services/api";
 import { useTheme } from "../../theme/theme";
-import { radius, size, spacing, typography } from "../../theme/tokens";
-import { exerciseKey, formatSet, indexAsOf, prWithin, recentExercises } from "../../utils/exerciseHistory";
+import { size, spacing, typography } from "../../theme/tokens";
+import { exerciseKey, formatSet, indexAsOf, prWithin } from "../../utils/exerciseHistory";
 import { perfEndAfterFrame, perfMark, perfStart } from "../../utils/perf";
 import { formatDate } from "../../utils/weekUtils";
 
-const RECENT_COUNT = 5;
 const GRID_COLUMNS = 3;
-/** Fixed item heights, so the list never measures rows (getItemLayout). */
-const ROW_HEIGHT = size.exerciseRow + spacing.sm;
-const HEADER_HEIGHT = size.control;
 const SKELETON_ROWS = 5;
-const NO_ITEMS: Item[] = [];
+const NO_ITEMS: PickerItem[] = [];
 
-type Item =
-  | { type: "header"; key: string; title: string; right?: string; sticky: boolean }
-  | { type: "row"; key: string; ex: CatalogExercise };
-
-const header = (key: string, title: string, right: string | undefined, sticky: boolean): Item => ({ type: "header", key, title, right, sticky });
-const rows = (prefix: string, list: CatalogExercise[]): Item[] => list.map((ex) => ({ type: "row", key: `${prefix}:${ex.name}`, ex }));
-const countLabel = (n: number) => `${n} ${n === 1 ? "exercise" : "exercises"}`;
-
-export default function LogPicker() {
+/** Pick exercises to start a session, or (mode=add) to add to the one in progress. */
+export default function ExercisePicker() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ mode?: string; category?: string }>();
@@ -89,104 +81,11 @@ export default function LogPicker() {
   }, [summaries, unit, todayKey]);
 
   const catalogByKey = useMemo(() => new Map(all.map((e) => [exerciseKey(e.name), e])), [all]);
-  const recent = useMemo(
-    () =>
-      recentExercises(index, RECENT_COUNT * 2)
-        // Exercises no longer in the catalog (e.g. a deleted custom one) still show under their tile.
-        .map((h): CatalogExercise | null => {
-          const known = catalogByKey.get(exerciseKey(h.name));
-          if (known) return known;
-          const t = tileForCategory(h.category); // Cardio has no tile: not loggable here
-          return t ? { name: h.name, category: t.category, subgroup: t.subgroup, tile: t.key, custom: false } : null;
-        })
-        .filter((e): e is CatalogExercise => !!e)
-        .slice(0, RECENT_COUNT),
-    [index, catalogByKey],
-  );
+  const recent = useMemo(() => recentPickerExercises(index, catalogByKey), [index, catalogByKey]);
 
   const q = query.trim().toLowerCase();
-  const items = useMemo<Item[]>(() => {
-    if (q) {
-      const results = all.filter((e) => e.name.toLowerCase().includes(q));
-      return results.length ? [header("results", "Results", countLabel(results.length), false), ...rows("q", results)] : [];
-    }
-    if (tile) {
-      const list = byTile.get(tile) ?? [];
-      const label = PICKER_TILES.find((t) => t.key === tile)!.label;
-      return [header(`h:${tile}`, label, countLabel(list.length), false), ...rows(tile, list)];
-    }
-    const out: Item[] = [];
-    if (recent.length) out.push(header("recent", "Recent", "Last performed", false), ...rows("recent", recent));
-    out.push(header("all", "All exercises", countLabel(all.length), false));
-    // Each exercise once, under its first tile (an unplaced arm exercise sits under Biceps).
-    for (const t of PICKER_TILES) {
-      const list = all.filter((e) => e.tile === t.key);
-      if (list.length) out.push(header(`h:${t.key}`, t.label, countLabel(list.length), true), ...rows(t.key, list));
-    }
-    return out;
-  }, [q, tile, all, byTile, recent]);
-
-  // Offsets for getItemLayout, and for each item the pinnable section header
-  // it falls under (index into items, or -1), used by the pinned title bar.
-  const { offsets, sectionOf } = useMemo(() => {
-    const offs: number[] = [];
-    const section: number[] = [];
-    let y = 0;
-    let current = -1;
-    items.forEach((it, i) => {
-      offs.push(y);
-      y += it.type === "row" ? ROW_HEIGHT : HEADER_HEIGHT;
-      if (it.type === "header") current = it.sticky ? i : -1;
-      section.push(current);
-    });
-    return { offsets: offs, sectionOf: section };
-  }, [items]);
-
-  /*
-   * Pinned category title. React Native's sticky headers re-position each
-   * header on every scroll frame, which on Android (new architecture) made the
-   * list's text look like it quivered while scrolling. Instead, one fixed title
-   * bar shows the section at the top of the list and only changes when a new
-   * section reaches the top: nothing moves per frame.
-   */
-  const [pinned, setPinned] = useState(-1);
-  const pinnedRef = useRef(-1);
-  const onScroll = useCallback(
-    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const y = e.nativeEvent.contentOffset.y - headerHeight;
-      let next = -1;
-      if (y >= 0 && offsets.length) {
-        // Last item whose top has reached the top of the list (binary search).
-        let lo = 0;
-        let hi = offsets.length - 1;
-        while (lo < hi) {
-          const mid = (lo + hi + 1) >> 1;
-          if (offsets[mid] <= y) lo = mid;
-          else hi = mid - 1;
-        }
-        next = sectionOf[lo] ?? -1;
-      }
-      if (next !== pinnedRef.current) {
-        pinnedRef.current = next;
-        setPinned(next);
-      }
-    },
-    [headerHeight, offsets, sectionOf],
-  );
-  // A new list (category, search) starts unpinned.
-  useEffect(() => {
-    pinnedRef.current = -1;
-    setPinned(-1);
-  }, [items]);
-
-  const getItemLayout = useCallback(
-    (_: ArrayLike<Item> | null | undefined, i: number) => ({
-      index: i,
-      offset: headerHeight + (offsets[i] ?? 0),
-      length: items[i]?.type === "row" ? ROW_HEIGHT : HEADER_HEIGHT,
-    }),
-    [headerHeight, offsets, items],
-  );
+  const items = useMemo(() => buildPickerItems({ query: q, tile, all, byTile, recent }), [q, tile, all, byTile, recent]);
+  const { pinnedHeader, onScroll, getItemLayout } = usePinnedSection(items, headerHeight);
 
   // Selection
   const inSession = useMemo(() => new Set(addMode ? (draft?.exercises ?? []).map((e) => e.name.toLowerCase()) : []), [addMode, draft]);
@@ -214,7 +113,7 @@ export default function LogPicker() {
     perfEndAfterFrame("category switch");
   }, [tile]);
 
-  const renderItem = useCallback<ListRenderItem<Item>>(
+  const renderItem = useCallback<ListRenderItem<PickerItem>>(
     ({ item }) => {
       if (item.type === "header") return <SectionTitle title={item.title} right={item.right} />;
       const info = rowInfo.get(exerciseKey(item.ex.name));
@@ -327,34 +226,34 @@ export default function LogPicker() {
       </View>
 
       <View style={{ flex: 1 }}>
-      <FlatList
-        data={listData}
-        keyExtractor={(it) => it.key}
-        renderItem={renderItem}
-        getItemLayout={getItemLayout}
-        onScroll={onScroll}
-        scrollEventThrottle={16}
-        extraData={pickedKeys}
-        ListHeaderComponent={listHeader}
-        ListFooterComponent={listFooter}
-        // A wider buffer ahead of the scroll, so a fast fling never outruns the
-        // rows being drawn (rows popping in looked like scattered text).
-        initialNumToRender={12}
-        maxToRenderPerBatch={8}
-        updateCellsBatchingPeriod={30}
-        windowSize={11}
-        // Must stay off: FlatList defaults it to true on Android, and with Fabric it
-        // detached views React still expected ("addViewAt: failed to insert view").
-        removeClippedSubviews={false}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: (picked.length ? size.ctaTall + spacing.xl : 0) + insets.bottom + spacing.xl }}
-      />
-      {pinned >= 0 && items[pinned]?.type === "header" && (
-        <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0, paddingHorizontal: spacing.screen, backgroundColor: colors.bg }}>
-          <SectionTitle title={(items[pinned] as Extract<Item, { type: "header" }>).title} right={(items[pinned] as Extract<Item, { type: "header" }>).right} />
-        </View>
-      )}
+        <FlatList
+          data={listData}
+          keyExtractor={(it) => it.key}
+          renderItem={renderItem}
+          getItemLayout={getItemLayout}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          extraData={pickedKeys}
+          ListHeaderComponent={listHeader}
+          ListFooterComponent={listFooter}
+          // A wider buffer ahead of the scroll, so a fast fling never outruns the
+          // rows being drawn (rows popping in looked like scattered text).
+          initialNumToRender={12}
+          maxToRenderPerBatch={8}
+          updateCellsBatchingPeriod={30}
+          windowSize={11}
+          // Must stay off: FlatList defaults it to true on Android, and with Fabric it
+          // detached views React still expected ("addViewAt: failed to insert view").
+          removeClippedSubviews={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: (picked.length ? size.ctaTall + spacing.xl : 0) + insets.bottom + spacing.xl }}
+        />
+        {pinnedHeader && (
+          <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0, paddingHorizontal: spacing.screen, backgroundColor: colors.bg }}>
+            <SectionTitle title={pinnedHeader.title} right={pinnedHeader.right} />
+          </View>
+        )}
       </View>
 
       {picked.length > 0 && (
@@ -410,191 +309,5 @@ export default function LogPicker() {
 
       {!addMode && <ResumeWorkoutSheet from="picker" />}
     </View>
-  );
-}
-
-// Pieces
-
-const CategoryTile = memo(function CategoryTile({
-  tileKey,
-  label,
-  group,
-  active,
-  onPress,
-}: {
-  tileKey: TileKey;
-  label: string;
-  group: MuscleGroup;
-  active: boolean;
-  onPress: (key: TileKey) => void;
-}) {
-  const { colors } = useTheme();
-  return (
-    <Pressable
-      onPress={() => onPress(tileKey)}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ selected: active }}
-      accessibilityHint={active ? "Shows all exercises again" : `Shows ${label} exercises`}
-      style={({ pressed }) => ({
-        flex: 1,
-        height: size.categoryTile,
-        borderRadius: radius.lg,
-        alignItems: "center",
-        justifyContent: "center",
-        gap: spacing.xs,
-        backgroundColor: active || pressed ? colors.surfaceContainerHigh : colors.raised,
-      })}
-    >
-      <MuscleIcon group={group} size={size.muscleIcon} active={active} />
-      <Text style={[typography.labelMd, { color: active ? colors.accent : colors.textSecondary }]} numberOfLines={1}>
-        {label}
-      </Text>
-    </Pressable>
-  );
-});
-
-const SectionTitle = memo(function SectionTitle({ title, right }: { title: string; right?: string }) {
-  const { colors } = useTheme();
-  return (
-    <View renderToHardwareTextureAndroid style={{ height: HEADER_HEIGHT, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, backgroundColor: colors.bg }}>
-      <Text style={[typography.headlineSm, { color: colors.text }]} accessibilityRole="header">
-        {title}
-      </Text>
-      {right ? <Text style={[typography.labelMd, { color: colors.textSecondary }]}>{right}</Text> : null}
-    </View>
-  );
-});
-
-function SearchField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const { colors } = useTheme();
-  const [focused, setFocused] = useState(false);
-  return (
-    <View
-      style={{
-        height: size.control,
-        flexDirection: "row",
-        alignItems: "center",
-        borderRadius: radius.lg,
-        paddingLeft: spacing.md,
-        backgroundColor: focused ? colors.surfaceContainerHigh : colors.raised,
-      }}
-    >
-      <MaterialIcons name="search" size={size.icon} color={colors.textSecondary} />
-      <TextInput
-        value={value}
-        onChangeText={onChange}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        placeholder="Search exercises"
-        placeholderTextColor={colors.textSecondary}
-        autoCorrect={false}
-        autoCapitalize="none"
-        returnKeyType="search"
-        accessibilityLabel="Search exercises"
-        style={[typography.bodyMd, { flex: 1, color: colors.text, paddingHorizontal: spacing.sm, paddingVertical: 0, height: size.control }]}
-      />
-      {value.length > 0 && (
-        <Pressable
-          onPress={() => onChange("")}
-          accessibilityRole="button"
-          accessibilityLabel="Clear search"
-          style={{ width: size.control, height: size.control, alignItems: "center", justifyContent: "center" }}
-        >
-          <MaterialIcons name="close" size={size.icon} color={colors.textSecondary} />
-        </Pressable>
-      )}
-    </View>
-  );
-}
-
-function CustomExerciseSheet({
-  visible,
-  initialName,
-  tile: initialTile,
-  onClose,
-  onCreated,
-}: {
-  visible: boolean;
-  initialName: string;
-  tile: TileKey;
-  onClose: () => void;
-  onCreated: (ex: CatalogExercise) => void;
-}) {
-  const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [tileKey, setTileKey] = useState<TileKey>(initialTile);
-  const create = useCreateExercise();
-  const t = PICKER_TILES.find((x) => x.key === tileKey)!;
-
-  const [wasOpen, setWasOpen] = useState(false);
-  if (visible && !wasOpen) {
-    setWasOpen(true);
-    setName(initialName);
-    setTileKey(initialTile);
-    setError(null);
-  } else if (!visible && wasOpen) {
-    setWasOpen(false);
-  }
-
-  const save = async () => {
-    const trimmed = name.trim();
-    if (!trimmed) {
-      setError("Enter a name");
-      return;
-    }
-    try {
-      // Arm exercises store their sub-group ("Biceps") so they land on the right tile; workouts save "Arms".
-      await create.mutateAsync({ category: t.subgroup ?? t.category, name: trimmed });
-      onCreated({ name: trimmed, category: t.category, subgroup: t.subgroup, tile: t.key, custom: true });
-    } catch (e) {
-      setError(e instanceof ApiError && e.status === 409 ? `You already have this exercise in ${t.label}` : "Couldn't save. Check your connection and try again.");
-    }
-  };
-
-  return (
-    <Sheet visible={visible} onClose={onClose} title="Custom exercise" subtitle={`Saved to your ${t.label} list`}>
-      <View style={{ gap: spacing.md }}>
-        <TextField
-          label="Exercise name"
-          value={name}
-          onChangeText={(v) => {
-            setName(v);
-            setError(null);
-          }}
-          error={error}
-          autoFocus
-          maxLength={100}
-          returnKeyType="done"
-          onSubmitEditing={save}
-        />
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-          {PICKER_TILES.map((x) => (
-            <CategoryChip key={x.key} label={x.label} active={x.key === tileKey} onPress={() => setTileKey(x.key)} />
-          ))}
-        </View>
-        <Button title="Save exercise" onPress={save} loading={create.isPending} fullWidth />
-      </View>
-    </Sheet>
-  );
-}
-
-function CategoryChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  const { colors } = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityState={{ selected: active }}
-      style={{
-        minHeight: size.control,
-        paddingHorizontal: spacing.md,
-        borderRadius: radius.lg,
-        justifyContent: "center",
-        backgroundColor: active ? colors.surfaceContainerHigh : colors.raised,
-      }}
-    >
-      <Text style={[typography.labelLg, { color: active ? colors.accent : colors.textSecondary }]}>{label}</Text>
-    </Pressable>
   );
 }

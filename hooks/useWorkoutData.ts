@@ -1,64 +1,13 @@
 import { useMemo } from "react";
-import type { MuscleGroup } from "../components/muscle/musclePaths";
 import { armSubgroupOf, isArmSubgroup, type ArmSubgroup } from "../data/armSubgroups";
 import { EXERCISES, type ExerciseCategory } from "../data/exercises";
 import { displayWeightRounded, exerciseIndexFor, type ExerciseHistory, previousSetAt } from "../utils/exerciseHistory";
 import type { WeightUnit } from "../utils/unitConversion";
+import { PICKER_TILES, TILE_CATEGORIES, tilesFor, type CatalogExercise, type TileKey } from "../data/pickerTiles";
 import { useCustomExercises } from "./useExercises";
 import type { SetValues } from "./workoutDraft";
 import { useAllWorkouts } from "./useWorkouts";
 
-/**
- * Tiles in the Log picker (3×3 grid, in order). Each tile filters the catalog;
- * `category` is what a workout saves. Arms is shown as Biceps / Triceps /
- * Forearms but still saves as "Arms" (see data/armSubgroups). Cardio is left
- * out: the set model is reps × weight only (no duration or distance). Core is
- * stored as "Abs".
- */
-export type TileKey = "chest" | "back" | "shoulders" | "biceps" | "triceps" | "forearms" | "legs" | "core" | "fullBody";
-
-export interface PickerTile {
-  key: TileKey;
-  label: string;
-  category: ExerciseCategory;
-  subgroup?: ArmSubgroup;
-  group: MuscleGroup;
-}
-
-export const PICKER_TILES: PickerTile[] = [
-  { key: "chest", label: "Chest", category: "Chest", group: "chest" },
-  { key: "back", label: "Back", category: "Back", group: "back" },
-  { key: "shoulders", label: "Shoulders", category: "Shoulders", group: "shoulders" },
-  { key: "biceps", label: "Biceps", category: "Arms", subgroup: "Biceps", group: "biceps" },
-  { key: "triceps", label: "Triceps", category: "Arms", subgroup: "Triceps", group: "triceps" },
-  { key: "forearms", label: "Forearms", category: "Arms", subgroup: "Forearms", group: "forearms" },
-  { key: "legs", label: "Legs", category: "Legs", group: "legs" },
-  { key: "core", label: "Core", category: "Abs", group: "core" },
-  { key: "fullBody", label: "Full body", category: "Full Body", group: "fullBody" },
-];
-
-const TILE_CATEGORIES = [...new Set(PICKER_TILES.map((t) => t.category))];
-
-/** Tile for a workout/catalog category (Home's "Suggested next: Arms" opens Biceps). */
-export const tileForCategory = (category: string | null | undefined) => PICKER_TILES.find((t) => t.category === category) ?? null;
-
-export interface CatalogExercise {
-  name: string;
-  /** What the workout saves (Arms for all three arm tiles). */
-  category: ExerciseCategory;
-  /** Biceps / Triceps / Forearms for arm exercises we can place. */
-  subgroup?: ArmSubgroup;
-  tile: TileKey;
-  custom: boolean;
-  /** Custom exercise id (for delete). */
-  customId?: string;
-}
-
-/** Tiles an exercise belongs to: arm exercises we can't place show under all three. */
-function tilesFor(category: ExerciseCategory, subgroup: ArmSubgroup | null): PickerTile[] {
-  if (category !== "Arms") return PICKER_TILES.filter((t) => t.category === category);
-  return subgroup ? PICKER_TILES.filter((t) => t.subgroup === subgroup) : PICKER_TILES.filter((t) => t.category === "Arms");
-}
 
 /**
  * Built-in catalog plus the user's custom

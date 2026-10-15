@@ -1,6 +1,6 @@
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
-import { router, useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { router } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
 import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { useAuth } from "../../providers/AuthContext";
 import { EmailVerificationPrompt } from "../../components/auth/EmailVerificationPrompt";
@@ -11,7 +11,7 @@ import { Avatar } from "../../components/ui/Avatar";
 import { Button, Card, EmptyState, ErrorState, PressableScale, Reveal, StatusPill } from "../../components/ui";
 import { verificationMessages } from "../../data/verificationMessages";
 import { useConnection } from "../../providers/ConnectionContext";
-import { clearEmailVerificationStart, getEmailVerificationStart, setEmailVerificationStart } from "../../services/verificationStore";
+import { useEmailVerificationGrace } from "../../hooks/useEmailVerificationGrace";
 import { usePlan, usePlans } from "../../hooks/usePlan";
 import { useProfile } from "../../hooks/useProfile";
 import { useAllWeights } from "../../hooks/useWeights";
@@ -33,9 +33,7 @@ import { WeekCard, StreakCard } from "../../components/home/WeekCards";
 import { YourPlanCard, AIPlanCard } from "../../components/home/PlanCards";
 import { RecentCard } from "../../components/home/RecentCard";
 import { HomeSkeleton } from "../../components/home/HomeSkeleton";
-import { DAY_MS } from "../../utils/dates";
 
-const VERIFICATION_GRACE_DAYS = 7;
 
 export default function Home() {
   const { colors } = useTheme();
@@ -69,8 +67,8 @@ export default function Home() {
   const activePlanQuery = usePlan(activePlanMeta?.id);
 
   const [refreshing, setRefreshing] = useState(false);
-  const [verificationDaysLeft, setVerificationDaysLeft] = useState<number | null>(null);
-  const [showVerificationPrompt, setShowVerificationPrompt] = useState(false);
+  const verification = useEmailVerificationGrace(user);
+  const daysLeft = verification.daysLeft;
   const [dismissVerificationBanner, setDismissVerificationBanner] = useState(false);
 
   // Suggested next only without an active plan; the plan card takes its slot.
@@ -85,42 +83,6 @@ export default function Home() {
     return planWeekDays.find((d) => d.day?.toLowerCase() === todayName) ?? null;
   }, [planWeekDays]);
 
-  // Email verification
-  const loadVerificationStatus = useCallback(async () => {
-    if (!user) return;
-    try {
-      await user.reload();
-    } catch {}
-
-    if (user.emailVerified) {
-      setVerificationDaysLeft(null);
-      setDismissVerificationBanner(false);
-      await clearEmailVerificationStart(user.uid);
-      return;
-    }
-
-    let start = await getEmailVerificationStart(user.uid);
-    if (!start) {
-      start = Date.now();
-      await setEmailVerificationStart(user.uid, start);
-    }
-    const elapsedDays = Math.floor((Date.now() - start) / DAY_MS);
-    setVerificationDaysLeft(Math.max(0, VERIFICATION_GRACE_DAYS - elapsedDays));
-  }, [user]);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadVerificationStatus();
-    }, [loadVerificationStatus]),
-  );
-
-  useEffect(() => {
-    if (!user || user.emailVerified) return;
-    if (verificationDaysLeft === 0 && !showVerificationPrompt) {
-      setShowVerificationPrompt(true);
-    }
-  }, [user, verificationDaysLeft, showVerificationPrompt]);
-
   // Refresh
   const refetchAll = useCallback(async () => {
     await Promise.all([
@@ -134,7 +96,7 @@ export default function Home() {
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await Promise.all([refetchAll(), loadVerificationStatus()]);
+      await Promise.all([refetchAll(), verification.reload()]);
     } catch (error) {
       console.log("Refresh error:", error);
     } finally {
@@ -206,17 +168,17 @@ export default function Home() {
         </View>
 
         {/* Email verification reminder (kept from the old Home) */}
-        {user && !user.emailVerified && verificationDaysLeft !== null && !dismissVerificationBanner && (
+        {user && !user.emailVerified && daysLeft !== null && !dismissVerificationBanner && (
           <Card style={{ gap: spacing.sm }}>
             <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
               <Ionicons
                 name="mail-unread-outline"
                 size={size.icon}
-                color={verificationDaysLeft > 0 ? colors.accent : colors.danger}
+                color={daysLeft > 0 ? colors.accent : colors.danger}
               />
               <Text style={[typography.bodyLg, { color: colors.text, ...semibold, flex: 1 }]}>
-                {verificationDaysLeft > 0
-                  ? verificationMessages.bannerTitleSoft(verificationDaysLeft)
+                {daysLeft > 0
+                  ? verificationMessages.bannerTitleSoft(daysLeft)
                   : verificationMessages.bannerTitleHard}
               </Text>
               <PressableScale
@@ -229,7 +191,7 @@ export default function Home() {
               </PressableScale>
             </View>
             <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>{verificationMessages.bannerBody}</Text>
-            <Button title={verificationMessages.bannerAction} variant="ghost" onPress={() => setShowVerificationPrompt(true)} />
+            <Button title={verificationMessages.bannerAction} variant="ghost" onPress={verification.openPrompt} />
           </Card>
         )}
 
@@ -373,17 +335,11 @@ export default function Home() {
       </ScrollView>
 
       <EmailVerificationPrompt
-        visible={showVerificationPrompt}
+        visible={verification.promptOpen}
         user={user}
-        dismissible={verificationDaysLeft !== 0}
-        onSkip={() => setShowVerificationPrompt(false)}
-        onVerified={async () => {
-          setShowVerificationPrompt(false);
-          if (user) {
-            await clearEmailVerificationStart(user.uid);
-          }
-          await loadVerificationStatus();
-        }}
+        dismissible={daysLeft !== 0}
+        onSkip={verification.closePrompt}
+        onVerified={verification.onVerified}
       />
 
       <ResumeWorkoutSheet from="home" />

@@ -1,5 +1,5 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import { useState, type ComponentProps } from "react";
+import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { DEFAULT_REPS_MAX, DEFAULT_REPS_MIN, useDefaultReps } from "../../hooks/useDefaultReps";
 import type { SetValues } from "../../hooks/workoutDraft";
@@ -12,6 +12,7 @@ import { Sheet } from "../ui/Sheet";
 import { PulsingDot } from "../ui/StatusIndicators";
 import { Stepper } from "../ui/Stepper";
 import { PlateSheet } from "./PlateSheet";
+import type { MaterialIconName } from "../ui/iconName";
 
 export type ActiveSetCardProps = {
   setNumber: number;
@@ -238,7 +239,7 @@ function SmallChip({
   onPress,
   accessibilityLabel,
 }: {
-  icon: ComponentProps<typeof MaterialIcons>["name"];
+  icon: MaterialIconName;
   label: string;
   onPress: () => void;
   accessibilityLabel: string;

@@ -1,9 +1,9 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import type { ComponentProps } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, typography } from "../../theme/tokens";
 import { Button } from "./Button";
+import type { MaterialIconName } from "./iconName";
 
 export type ConfirmDialogProps = {
   visible: boolean;
@@ -14,7 +14,7 @@ export type ConfirmDialogProps = {
   onCancel: () => void;
   /** Destructive (red) confirm button and icon. */
   destructive?: boolean;
-  icon?: ComponentProps<typeof MaterialIcons>["name"];
+  icon?: MaterialIconName;
   busy?: boolean;
 };
 

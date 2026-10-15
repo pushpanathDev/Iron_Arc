@@ -9,7 +9,7 @@
 
 import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { useRef, useState, type ComponentProps, type ElementRef, type ReactNode, type Ref } from "react";
+import { useRef, useState, type ElementRef, type ReactNode, type Ref } from "react";
 import { Reveal } from "../ui/Reveal";
 import { Text, TextInput, View, type KeyboardTypeOptions, type LayoutChangeEvent } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
@@ -35,6 +35,7 @@ import { ChoiceChips } from "../training/ChoiceChips";
 import { TrainingDaysPicker } from "../training/TrainingDaysPicker";
 import { HeightRuler, type HeightUnit } from "./HeightRuler";
 import { Button, FadingMessage, PressableScale } from "../ui";
+import type { MaterialIconName } from "../ui/iconName";
 
 export type FitnessGoal = "strength" | "muscle" | "endurance" | "weight-loss" | "general";
 
@@ -61,7 +62,6 @@ type Props = {
   onBack: () => void;
 };
 
-type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
 
 /** Fitness goals (onboarding cards; Profile → Fitness goal). */
 export const GOALS: { id: FitnessGoal; title: string; description: string; icon: MaterialIconName }[] = [

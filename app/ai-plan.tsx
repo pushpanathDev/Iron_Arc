@@ -4,7 +4,7 @@
  */
 import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo, useState, type ComponentProps } from "react";
+import { useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -24,8 +24,8 @@ import { useTheme } from "../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../theme/tokens";
 import { planSummary } from "../utils/planData";
 import { DAY_MS } from "../utils/dates";
+import type { MaterialIconName } from "../components/ui/iconName";
 
-type IconName = ComponentProps<typeof MaterialIcons>["name"];
 
 /** "today", "yesterday", "3 days ago", "12 Sep". */
 function ago(iso: string) {
@@ -211,7 +211,7 @@ function MenuButton({ onPress, label }: { onPress: () => void; label: string }) 
   );
 }
 
-function Stat({ icon, label, value }: { icon: IconName; label: string; value: string }) {
+function Stat({ icon, label, value }: { icon: MaterialIconName; label: string; value: string }) {
   const { colors } = useTheme();
   return (
     <View style={{ flex: 1, flexDirection: "row", gap: spacing.sm, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.surfaceContainerHigh }}>
@@ -283,7 +283,7 @@ function OtherCard({ plan, onMenu, onActivate, activating }: { plan: Plan; onMen
 /** Before the first plan: what you get, and the one button. */
 function IntroCard({ onGenerate, busy }: { onGenerate: () => void; busy: boolean }) {
   const { colors } = useTheme();
-  const points: [IconName, string, string][] = [
+  const points: [MaterialIconName, string, string][] = [
     ["event", "A week built around you", "Your training days, session length, equipment and experience"],
     ["swap-horiz", "Swap anything", "Don't like an exercise? The AI picks one for the same muscles"],
     ["forum", "Ask the coach", "\"Make it 3 days\" or \"shorter sessions\" and the plan changes"],
@@ -316,7 +316,7 @@ function IntroCard({ onGenerate, busy }: { onGenerate: () => void; busy: boolean
   );
 }
 
-function EmptyCard({ icon, title, body }: { icon: IconName; title: string; body: string }) {
+function EmptyCard({ icon, title, body }: { icon: MaterialIconName; title: string; body: string }) {
   const { colors } = useTheme();
   return (
     <View style={{ alignItems: "center", gap: spacing.md, padding: spacing.xl, borderRadius: radius.xl, backgroundColor: colors.raised }}>

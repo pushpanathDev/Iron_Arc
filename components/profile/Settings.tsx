@@ -1,10 +1,10 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import { Children, Fragment, type ComponentProps, type ReactNode } from "react";
+import { Children, Fragment, type ReactNode } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
+import type { MaterialIconName } from "../ui/iconName";
 
-type IconName = ComponentProps<typeof MaterialIcons>["name"];
 
 /** Titled card of rows separated by hairlines (Profile & Settings mockup). */
 export function SettingsGroup({ title, note, children }: { title?: string; note?: string; children: ReactNode }) {
@@ -33,7 +33,7 @@ export function SettingsGroup({ title, note, children }: { title?: string; note?
 }
 
 export type SettingsRowProps = {
-  icon: IconName;
+  icon: MaterialIconName;
   label: string;
   /** Second line under the label. */
   detail?: string;

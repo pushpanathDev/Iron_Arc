@@ -1,5 +1,5 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import { type ComponentProps, useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { AccessibilityInfo, Text, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../../theme/theme";
 import { elevation, motion, radius, size, spacing, touchTarget, typography } from "../../theme/tokens";
 import { PressableScale } from "./PressableScale";
+import type { MaterialIconName } from "./iconName";
 
 export type ToastType = "success" | "error" | "undo" | "info" | "warning";
 
@@ -19,7 +20,7 @@ export interface ToastConfig {
   duration?: number;
   actionLabel?: string;
   onAction?: () => void;
-  icon?: ComponentProps<typeof MaterialIcons>["name"];
+  icon?: MaterialIconName;
 }
 
 interface ToastProps extends ToastConfig {

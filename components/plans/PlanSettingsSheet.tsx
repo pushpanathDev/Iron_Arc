@@ -1,6 +1,6 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { AVOID_OPTIONS, defaultSplitFor, effectiveWeeklyGoal, EQUIPMENT_OPTIONS, EXPERIENCE_OPTIONS, formatDays, SESSION_OPTIONS, SPLIT_LABELS } from "../../data/trainingProfile";
 import type { PlanCriteriaPayload, User } from "../../services/api";
@@ -9,6 +9,7 @@ import { radius, size, spacing, tracking, typography } from "../../theme/tokens"
 import { GOALS } from "../onboarding/OnboardingProfileSetup";
 import { Button } from "../ui/Button";
 import { Sheet } from "../ui/Sheet";
+import type { MaterialIconName } from "../ui/iconName";
 
 type Split = "full_body" | "upper_lower" | "push_pull_legs" | "body_part";
 type Pace = "conservative" | "moderate" | "aggressive";
@@ -63,7 +64,7 @@ export function PlanSettingsSheet({ visible, profile, generating, onClose, onGen
 
   const days = effectiveWeeklyGoal(profile) ?? 4;
   const autoSplit = defaultSplitFor(days);
-  const summary: [ComponentProps<typeof MaterialIcons>["name"], string, string | null][] = [
+  const summary: [MaterialIconName, string, string | null][] = [
     ["track-changes", "Goal", GOALS.find((g) => g.id === profile?.fitnessGoal)?.title ?? null],
     ["calendar-today", "Training days", profile?.trainingDays?.length ? formatDays(profile.trainingDays) : null],
     ["timer", "Session", labelOf(SESSION_OPTIONS, profile?.sessionMinutes)],

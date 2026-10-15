@@ -1,6 +1,6 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo, useState, type ComponentProps } from "react";
+import { useMemo, useState } from "react";
 import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { ActivityChart } from "../../components/analytics/ActivityChart";
 import { BestLiftsCard } from "../../components/analytics/BestLiftsCard";
@@ -25,6 +25,7 @@ import { exerciseIndexFor, prEventsFor } from "../../utils/exerciseHistory";
 import { perfStart } from "../../utils/perf";
 import { toKg, weightLabel, weightStep } from "../../utils/unitConversion";
 import { formatDate, parseLocalDate } from "../../utils/dates";
+import type { MaterialIconName } from "../../components/ui/iconName";
 
 const NO_WORKOUTS: never[] = [];
 
@@ -172,7 +173,7 @@ export default function Analytics() {
 
 // Pieces
 
-const PREVIEWS: { icon: ComponentProps<typeof MaterialIcons>["name"]; title: string; value: string; body: string }[] = [
+const PREVIEWS: { icon: MaterialIconName; title: string; value: string; body: string }[] = [
   { icon: "bar-chart", title: "Volume & load", value: "--", body: "Total weight lifted each week, across all exercises" },
   { icon: "pie-chart-outline", title: "Muscle balance", value: "-- %", body: "How your sets split across chest, back, legs and more" },
   { icon: "workspace-premium", title: "Personal records", value: "Pending", body: "Your heaviest lift for every exercise, new records starred" },

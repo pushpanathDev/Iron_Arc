@@ -1,5 +1,5 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import { type ComponentProps, useEffect } from "react";
+import { useEffect } from "react";
 import { Text, View } from "react-native";
 import Animated, {
   Easing,
@@ -12,6 +12,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { useTheme } from "../../theme/theme";
 import { alpha, motion, radius, size, spacing, typography } from "../../theme/tokens";
+import type { MaterialIconName } from "./iconName";
 
 /** Small dot that gently pulses; static when reduce-motion is on. */
 export function PulsingDot({ color, dotSize = size.statusDot }: { color: string; dotSize?: number }) {
@@ -26,10 +27,9 @@ export function PulsingDot({ color, dotSize = size.statusDot }: { color: string;
   return <Animated.View style={[{ width: dotSize, height: dotSize, borderRadius: radius.full, backgroundColor: color }, style]} />;
 }
 
-type IconName = ComponentProps<typeof MaterialIcons>["name"];
 
 /** Continuously rotating icon (e.g. "sync"); static when reduce-motion is on. */
-export function SpinningIcon({ name = "sync", color, iconSize = size.icon }: { name?: IconName; color: string; iconSize?: number }) {
+export function SpinningIcon({ name = "sync", color, iconSize = size.icon }: { name?: MaterialIconName; color: string; iconSize?: number }) {
   const reduceMotion = useReducedMotion();
   const turn = useSharedValue(0);
   useEffect(() => {

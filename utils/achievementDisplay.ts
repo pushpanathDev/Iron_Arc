@@ -6,16 +6,13 @@
  * categories to icons, colours and labels. It never decides whether a
  * badge is earned.
  */
-import type { MaterialIcons } from "@expo/vector-icons";
-import type { ComponentProps } from "react";
 
 import type { AchievementTier } from "../services/api";
 import type { ColorTokens } from "../theme/tokens";
 import { displayWeight, weightLabel, type WeightUnit } from "./unitConversion";
+import type { MaterialIconName } from "../components/ui/iconName";
 
-export type BadgeIconName = ComponentProps<typeof MaterialIcons>["name"];
-
-const BADGE_ICONS: Record<string, BadgeIconName> = {
+const BADGE_ICONS: Record<string, MaterialIconName> = {
   streak_3: "local-fire-department",
   streak_7: "military-tech",
   streak_14: "whatshot",
@@ -53,7 +50,7 @@ const BADGE_ICONS: Record<string, BadgeIconName> = {
   comeback_kid: "replay",
 };
 
-export function badgeIcon(key: string): BadgeIconName {
+export function badgeIcon(key: string): MaterialIconName {
   return BADGE_ICONS[key] ?? "military-tech";
 }
 
@@ -69,7 +66,7 @@ export const TIER_LABELS: Record<AchievementTier, string> = {
 };
 
 /** Display order and labels for the server's badge categories. */
-export const CATEGORY_ORDER: { key: string; label: string; icon: BadgeIconName }[] = [
+export const CATEGORY_ORDER: { key: string; label: string; icon: MaterialIconName }[] = [
   { key: "consistency", label: "Consistency", icon: "local-fire-department" },
   { key: "workouts", label: "Workouts", icon: "fitness-center" },
   { key: "volume", label: "Volume", icon: "line-weight" },
@@ -83,7 +80,7 @@ export const CATEGORY_ORDER: { key: string; label: string; icon: BadgeIconName }
 export function categoryLabel(key: string): string {
   return CATEGORY_ORDER.find((c) => c.key === key)?.label ?? key;
 }
-export function categoryIcon(key: string): BadgeIconName {
+export function categoryIcon(key: string): MaterialIconName {
   return CATEGORY_ORDER.find((c) => c.key === key)?.icon ?? "military-tech";
 }
 

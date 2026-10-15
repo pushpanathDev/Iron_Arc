@@ -30,6 +30,7 @@ import { exerciseIndexFor, exerciseKey, prExerciseDays } from "../../utils/exerc
 import { createPageLogger } from "../../utils/logger";
 import { perfStart } from "../../utils/perf";
 import { formatDate, parseLocalDate, dayLabel } from "../../utils/dates";
+import type { MaterialIconName } from "../../components/ui/iconName";
 
 const log = createPageLogger("History");
 const NO_WORKOUTS: never[] = [];
@@ -346,7 +347,7 @@ export default function History() {
 
 // Pieces
 
-function EmptyCard({ icon, title, body, action }: { icon: React.ComponentProps<typeof MaterialIcons>["name"]; title: string; body: string; action?: React.ReactNode }) {
+function EmptyCard({ icon, title, body, action }: { icon: MaterialIconName; title: string; body: string; action?: React.ReactNode }) {
   const { colors } = useTheme();
   return (
     <View style={{ alignItems: "center", gap: spacing.md, padding: spacing.xl, borderRadius: radius.xl, backgroundColor: colors.raised }}>

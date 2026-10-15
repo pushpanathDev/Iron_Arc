@@ -25,10 +25,10 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAuth } from "../auth/AuthContext";
-import { EmailConfirmationModal } from "../components/EmailConfirmationModal";
-import { EmailVerificationPrompt } from "../components/EmailVerificationPrompt";
-import { ForgotPasswordModal } from "../components/ForgotPasswordModal";
+import { useAuth } from "../providers/AuthContext";
+import { EmailConfirmationModal } from "../components/auth/EmailConfirmationModal";
+import { EmailVerificationPrompt } from "../components/auth/EmailVerificationPrompt";
+import { ForgotPasswordModal } from "../components/auth/ForgotPasswordModal";
 import {
   Button,
   FadingMessage,
@@ -36,7 +36,7 @@ import {
   PressableScale,
   TextField,
 } from "../components/ui";
-import { auth } from "../firebase/config";
+import { auth } from "../services/firebase";
 import { userApi } from "../services/api";
 import { useTheme } from "../theme/theme";
 import {
@@ -60,11 +60,11 @@ import {
 import {
   getGoogleSignin,
   isGoogleSignInAvailable,
-} from "../utils/googleSignin";
+} from "../services/googleSignin";
 import {
   getResendAvailableAt,
   sendVerificationEmail,
-} from "../utils/verificationService";
+} from "../services/emailVerification";
 
 const APP_LOGO = require("../assets/images/icon.png");
 const PASSWORD_RULES =
@@ -246,7 +246,7 @@ export default function LoginScreen() {
       return; // Don't proceed to account creation yet
     }
 
-    // LOGIN FLOW (non-signup)
+    // Sign in (existing account)
     try {
       setLoading(true);
       setError(null);
@@ -263,7 +263,7 @@ export default function LoginScreen() {
 
         if (!auth.currentUser?.emailVerified) {
           console.warn(
-            "⚠️ User signed in but email not yet verified:",
+            "[Login] signed in but email not verified yet:",
             sanitizedEmail,
           );
           setAwaitingEmailVerification(true, auth.currentUser?.uid);
@@ -283,7 +283,8 @@ export default function LoginScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      console.error("Auth error:", err);
+      // Expected (wrong password, etc.): the form shows a friendly message.
+      if (__DEV__) console.log("[Login] auth failed:", err?.code ?? err);
 
       // Translate Firebase errors to user-friendly messages
       let userMessage = "Authentication failed";
@@ -345,14 +346,9 @@ export default function LoginScreen() {
       // Send verification email
       try {
         await sendVerificationEmail(userCredential.user);
-        console.log("✅ Verification email sent to:", pendingSignupEmail);
 
         // Show verification prompt
         setVerificationUser(userCredential.user);
-        console.log(
-          "🔐 Showing EmailVerificationPrompt for:",
-          pendingSignupEmail,
-        );
         setVerificationOrigin("signup");
         setShowEmailVerification(true);
         setError(null);
@@ -362,9 +358,6 @@ export default function LoginScreen() {
         // Still show verification prompt even if email send fails
         // User can resend from the prompt
         setVerificationUser(userCredential.user);
-        console.log(
-          "🔐 Showing EmailVerificationPrompt (resend will be available)",
-        );
         setVerificationOrigin("signup");
         setShowEmailVerification(true);
         setError("Verification email may not have been sent. Click Resend.");

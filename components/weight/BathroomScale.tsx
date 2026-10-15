@@ -243,5 +243,3 @@ const Tape = memo(function Tape({ spec, max, height }: { spec: TapeSpec; max: nu
     </>
   );
 });
-
-export default BathroomScale;

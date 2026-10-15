@@ -167,5 +167,3 @@ function Row({
     </Pressable>
   );
 }
-
-export default RecordsCard;

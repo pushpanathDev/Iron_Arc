@@ -20,9 +20,9 @@ import {
   SkeletonBlock,
   type ButtonVariant,
 } from "../components/ui";
-import { useConnection, type ServerSimulation } from "../context/ConnectionContext";
-import { ForcedThemeProvider } from "../context/ThemeContext";
-import { useToast } from "../context/ToastContext";
+import { useConnection, type ServerSimulation } from "../providers/ConnectionContext";
+import { ForcedThemeProvider } from "../providers/ThemeContext";
+import { useToast } from "../providers/ToastContext";
 import { useTheme } from "../theme/theme";
 import { semibold, spacing, typography } from "../theme/tokens";
 

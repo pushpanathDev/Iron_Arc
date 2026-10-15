@@ -14,7 +14,6 @@ export function getWeekStart(date: Date): Date {
   return d;
 }
 
-
 /**
  * Formats a date as YYYY-MM-DD
  */
@@ -35,11 +34,12 @@ export function parseLocalDate(dateKey: string): Date {
   return new Date(year, month - 1, day);
 }
 
-
-/**
- * Returns true if weekStart is in the future
- */
-export function isFutureWeek(weekStart: Date): boolean {
-  const todayWeekStart = getWeekStart(new Date());
-  return weekStart > todayWeekStart;
+/** Calendar-safe day arithmetic on YYYY-MM-DD keys (no DST drift). */
+export function addDays(key: string, n: number): string {
+  const d = parseLocalDate(key);
+  d.setDate(d.getDate() + n);
+  return formatDate(d);
 }
+
+/** Weeks run Monday to Sunday everywhere (date pickers count Sunday as 0). */
+export const FIRST_DAY_OF_WEEK = 1;

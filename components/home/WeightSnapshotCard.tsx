@@ -120,5 +120,3 @@ function Sparkline({ entries }: { entries: BodyWeight[] }) {
     </View>
   );
 }
-
-export default WeightSnapshotCard;

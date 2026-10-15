@@ -212,5 +212,3 @@ const RulerRow = memo(function RulerRow({ label, distance }: { label: string; di
     </View>
   );
 });
-
-export default HeightRuler;

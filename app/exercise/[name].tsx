@@ -7,7 +7,7 @@ import { ProgressChart, type ProgressPoint } from "../../components/analytics/Pr
 import { Button } from "../../components/ui/Button";
 import { FilterChip } from "../../components/ui/FilterChip";
 import { Reveal } from "../../components/ui/Reveal";
-import { displayCategory } from "../../hooks/logSession";
+import { displayCategory } from "../../hooks/workoutDraft";
 import { useStartPlanSession } from "../../hooks/useStartPlanSession";
 import { useUnitPreference } from "../../hooks/useUnitPreference";
 import { useAllWorkouts } from "../../hooks/useWorkouts";

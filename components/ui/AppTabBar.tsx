@@ -118,5 +118,3 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
 });
-
-export default AppTabBar;

@@ -1,11 +1,11 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
 import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
-import { useAuth } from "../../auth/AuthContext";
+import { useAuth } from "../../providers/AuthContext";
 import { Avatar } from "../../components/ui/Avatar";
 import { Button } from "../../components/ui/Button";
 import { Reveal } from "../../components/ui/Reveal";
@@ -15,7 +15,7 @@ import { BathroomScale } from "../../components/weight/BathroomScale";
 import { GoalSheet } from "../../components/weight/GoalSheet";
 import { deltaColor, signed } from "../../components/weight/weightChange";
 import { entriesInRange, shortDate as chartShortDate, TREND_RANGES, WeightTrendChart, type TrendRange } from "../../components/weight/WeightTrendChart";
-import { useToast } from "../../context/ToastContext";
+import { useToast } from "../../providers/ToastContext";
 import { ACHIEVEMENTS_KEY, useAchievementUnlockHandler } from "../../hooks/useAchievements";
 import { useProfile } from "../../hooks/useProfile";
 import { useUnitPreference } from "../../hooks/useUnitPreference";
@@ -40,7 +40,7 @@ import {
 } from "../../utils/bodyWeightRules";
 import { createPageLogger } from "../../utils/logger";
 import { weightLabel, type WeightUnit } from "../../utils/unitConversion";
-import { formatDate, getWeekStart, parseLocalDate } from "../../utils/weekUtils";
+import { formatDate, getWeekStart, parseLocalDate, FIRST_DAY_OF_WEEK } from "../../utils/weekUtils";
 
 const log = createPageLogger("BodyWeight");
 
@@ -50,11 +50,6 @@ const HISTORY_PREVIEW = 10;
 const DAY_MS = 86_400_000;
 /** Fallback start for the stepper when there's no entry, no earlier entry and no profile weight. */
 const FALLBACK_KG = 70;
-
-
-/* ==============================
-   WEIGHT SCREEN
-   ============================== */
 
 export default function BodyWeightScreen() {
   const { colors } = useTheme();
@@ -83,6 +78,11 @@ export default function BodyWeightScreen() {
   const todayKey = formatDate(new Date());
   const [selectedDate, setSelectedDate] = useState(() => new Date());
   const [datePickerOpen, setDatePickerOpen] = useState(false);
+  // Stable: the Android dialog reopens (and loses the tapped day) when onChange changes.
+  const onDatePicked = useCallback((event: DateTimePickerEvent, d?: Date) => {
+    setDatePickerOpen(false);
+    if (event.type === "set" && d) setSelectedDate(d);
+  }, []);
   const [range, setRange] = useState<TrendRange>("30D");
   const [goalOpen, setGoalOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -476,20 +476,16 @@ export default function BodyWeightScreen() {
         <DateTimePicker
           value={selectedDate}
           mode="date"
+          firstDayOfWeek={FIRST_DAY_OF_WEEK}
           maximumDate={new Date()}
-          onChange={(_, d) => {
-            setDatePickerOpen(false);
-            if (d) setSelectedDate(d);
-          }}
+          onChange={onDatePicked}
         />
       )}
     </View>
   );
 }
 
-/* ==============================
-   PIECES
-   ============================== */
+// Pieces
 
 function UnitToggle({ unit, onChange }: { unit: WeightUnit; onChange: (u: WeightUnit) => void }) {
   const { colors } = useTheme();
@@ -547,7 +543,6 @@ function changeCaption(first: BodyWeight | null, latest: BodyWeight | null, goal
   if (toward != null) return toward ? "Toward goal" : "Away from goal";
   return `since ${chartShortDate(first.date)}`;
 }
-
 
 function ChangePill({ deltaKg, days, sinceDate, unit, color }: { deltaKg: number; days: number; sinceDate: string; unit: WeightUnit; color: string }) {
   const { colors } = useTheme();
@@ -717,9 +712,7 @@ function WeightSkeleton() {
   );
 }
 
-/* ==============================
-   HELPERS
-   ============================== */
+// Helpers
 
 const asDate = (key: string) => parseLocalDate(key);
 const shortDate = (key: string) => asDate(key).toLocaleDateString(undefined, { day: "numeric", month: "short" });

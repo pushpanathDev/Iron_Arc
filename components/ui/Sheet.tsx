@@ -76,5 +76,3 @@ export function Sheet({ visible, onClose, title, subtitle, children }: SheetProp
     </Modal>
   );
 }
-
-export default Sheet;

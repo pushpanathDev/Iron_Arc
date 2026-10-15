@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, Tabs } from "expo-router";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { OfflineBanner } from "../../components/connection/OfflineBanner";
+import { OfflineBanner } from "../../components/ui/OfflineBanner";
 import { AppTabBar } from "../../components/ui/AppTabBar";
 import { useTheme } from "../../theme/theme";
 import { perfStart } from "../../utils/perf";
@@ -29,7 +29,7 @@ export default function TabLayout() {
         tabBar={(props) => (
           <AppTabBar {...props} onLogPress={() => {
             perfStart("open picker");
-            router.push("/log/pick");
+            router.push("/workout/pick");
           }} />
         )}
         screenOptions={{

@@ -75,5 +75,3 @@ export function ConfirmDialog({ visible, title, message, confirmLabel, onConfirm
     </Modal>
   );
 }
-
-export default ConfirmDialog;

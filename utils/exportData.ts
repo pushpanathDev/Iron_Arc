@@ -1,18 +1,9 @@
-/**
- * Data Export Utility
- * ===================
- * Export workout, weight, and analytics data to CSV or PDF format.
- * Generates clean, readable, structured reports.
- */
+/** Workouts and body weight as CSV files or a PDF report, handed to the share sheet. */
 
 import { File, Paths } from "expo-file-system";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { BodyWeight, Workout, workoutApi, weightApi } from "../services/api";
-
-/* ==============================
-   TYPES
-   ============================== */
 
 export interface ExportStats {
   totalWorkouts: number;
@@ -29,11 +20,7 @@ export interface ExportStats {
   currentWeight: number | null;
 }
 
-export type ExportFormat = "csv" | "pdf";
-
-/* ==============================
-   CSV EXPORT
-   ============================== */
+// CSV export
 
 /**
  * Generate CSV content for workouts
@@ -158,9 +145,7 @@ export async function exportToCSV(
   }
 }
 
-/* ==============================
-   PDF EXPORT
-   ============================== */
+// PDF export
 
 /**
  * Calculate export statistics

@@ -1,17 +1,6 @@
-/**
- * Email Validation & Security Utilities
- *
- * Prevents:
- * 1. Invalid email formats
- * 2. Temporary/disposable email addresses
- * 3. Weak passwords
- * 4. Unverified accounts
- */
+/** Sign-up checks: email format, throwaway email domains and password strength. */
 
-import { User } from "firebase/auth";
-
-// List of common disposable email domain patterns
-// Updated regularly to catch new temp email services
+// Common throwaway email services.
 const DISPOSABLE_EMAIL_DOMAINS = [
   // Temp email services
   "tempmail.com",
@@ -314,16 +303,6 @@ export function validateEmail(email: string): EmailValidationResult {
 }
 
 /**
- * Check if user account is verified
- * @param user - Firebase user object
- * @returns true if email is verified
- */
-export function isEmailVerified(user: User | null): boolean {
-  if (!user) return false;
-  return user.emailVerified;
-}
-
-/**
  * Get human-readable email validation error message
  * @param email - Email that failed validation
  * @returns User-friendly error message
@@ -350,89 +329,6 @@ export function getEmailValidationMessage(email: string): string {
 }
 
 /**
- * Get human-readable password strength message
- * @param password - Password to check
- * @returns User-friendly feedback
- */
-export function getPasswordStrengthMessage(password: string): {
-  message: string;
-  color: "error" | "warning" | "success";
-  score: number;
-} {
-  const result = validatePasswordStrength(password);
-
-  if (result.score === 0) {
-    return {
-      message: "Password is required",
-      color: "error",
-      score: 0,
-    };
-  }
-
-  if (result.score < 25) {
-    return {
-      message: "Very weak password",
-      color: "error",
-      score: result.score,
-    };
-  }
-
-  if (result.score < 50) {
-    return {
-      message: "Weak password - " + (result.errors[0] || "needs improvement"),
-      color: "error",
-      score: result.score,
-    };
-  }
-
-  if (result.score < 75) {
-    return {
-      message: "Good password",
-      color: "warning",
-      score: result.score,
-    };
-  }
-
-  return {
-    message: "Strong password ✓",
-    color: "success",
-    score: result.score,
-  };
-}
-
-/**
- * Create a human-readable summary of password requirements
- * @returns Array of requirements
- */
-export function getPasswordRequirements(): Array<{
-  requirement: string;
-  hint: string;
-}> {
-  return [
-    {
-      requirement: "At least 8 characters",
-      hint: "Make it long to be secure",
-    },
-    {
-      requirement: "One uppercase letter (A-Z)",
-      hint: "Include at least one capital letter",
-    },
-    {
-      requirement: "One lowercase letter (a-z)",
-      hint: "Include at least one small letter",
-    },
-    {
-      requirement: "One number (0-9)",
-      hint: "Include at least one digit",
-    },
-    {
-      requirement: "Optional: Special character (!@#$%^&*)",
-      hint: "Extra security boost",
-    },
-  ];
-}
-
-/**
  * Sanitize email for storage
  * @param email - Raw email input
  * @returns Sanitized email (lowercase, trimmed)
@@ -441,20 +337,3 @@ export function sanitizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-/**
- * Add new disposable email domain to detection list
- * Useful for updating when new temp mail services appear
- */
-export function addDisposableEmailDomain(domain: string): void {
-  const lowerDomain = domain.toLowerCase();
-  if (!DISPOSABLE_EMAIL_DOMAINS.includes(lowerDomain)) {
-    DISPOSABLE_EMAIL_DOMAINS.push(lowerDomain);
-  }
-}
-
-/**
- * Export current disposable domains for debugging
- */
-export function getDisposableDomains(): string[] {
-  return [...DISPOSABLE_EMAIL_DOMAINS];
-}

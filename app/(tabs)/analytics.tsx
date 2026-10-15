@@ -7,13 +7,13 @@ import { BestLiftsCard } from "../../components/analytics/BestLiftsCard";
 import { HeadlineCard } from "../../components/analytics/HeadlineCard";
 import { MuscleBalance } from "../../components/analytics/MuscleBalance";
 import { RecordsCard } from "../../components/analytics/RecordsCard";
-import { useAuth } from "../../auth/AuthContext";
+import { useAuth } from "../../providers/AuthContext";
 import { Avatar } from "../../components/ui/Avatar";
 import { Button } from "../../components/ui/Button";
 import { FilterChip } from "../../components/ui/FilterChip";
 import { Reveal } from "../../components/ui/Reveal";
 import { SkeletonBlock } from "../../components/ui/Skeleton";
-import { effectiveWeeklyGoal } from "../../constants/trainingProfile";
+import { effectiveWeeklyGoal } from "../../data/trainingProfile";
 import { useProfile } from "../../hooks/useProfile";
 import { useUnitPreference } from "../../hooks/useUnitPreference";
 import { useAllWorkouts } from "../../hooks/useWorkouts";
@@ -38,10 +38,6 @@ const PHRASE: Record<AnalyticsPeriod, string> = {
   quarter: "in the last 3 months",
   all: "so far",
 };
-
-/* ==============================
-   ANALYTICS
-   ============================== */
 
 export default function Analytics() {
   const { colors } = useTheme();
@@ -174,9 +170,7 @@ export default function Analytics() {
   );
 }
 
-/* ==============================
-   PIECES
-   ============================== */
+// Pieces
 
 const PREVIEWS: { icon: ComponentProps<typeof MaterialIcons>["name"]; title: string; value: string; body: string }[] = [
   { icon: "bar-chart", title: "Volume & load", value: "--", body: "Total weight lifted each week, across all exercises" },
@@ -207,7 +201,7 @@ function AnalyticsEmpty() {
               icon="barbell-outline"
               onPress={() => {
                 perfStart("open picker");
-                router.push("/log/pick");
+                router.push("/workout/pick");
               }}
               fullWidth
             />

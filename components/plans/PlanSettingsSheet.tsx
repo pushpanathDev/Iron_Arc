@@ -2,11 +2,11 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
-import { AVOID_OPTIONS, defaultSplitFor, effectiveWeeklyGoal, EQUIPMENT_OPTIONS, EXPERIENCE_OPTIONS, formatDays, SESSION_OPTIONS, SPLIT_LABELS } from "../../constants/trainingProfile";
+import { AVOID_OPTIONS, defaultSplitFor, effectiveWeeklyGoal, EQUIPMENT_OPTIONS, EXPERIENCE_OPTIONS, formatDays, SESSION_OPTIONS, SPLIT_LABELS } from "../../data/trainingProfile";
 import type { PlanCriteriaPayload, User } from "../../services/api";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
-import { GOALS } from "../OnboardingProfileSetup";
+import { GOALS } from "../onboarding/OnboardingProfileSetup";
 import { Button } from "../ui/Button";
 import { Sheet } from "../ui/Sheet";
 
@@ -182,5 +182,3 @@ function ChipButton({ label, on, onPress }: { label: string; on: boolean; onPres
     </Pressable>
   );
 }
-
-export default PlanSettingsSheet;

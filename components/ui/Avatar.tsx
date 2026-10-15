@@ -46,5 +46,3 @@ export function Avatar({ photoUri, initials, onPress }: AvatarProps) {
     </PressableScale>
   );
 }
-
-export default Avatar;

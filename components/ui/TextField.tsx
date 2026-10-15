@@ -169,5 +169,3 @@ export function TextField({
     </View>
   );
 }
-
-export default TextField;

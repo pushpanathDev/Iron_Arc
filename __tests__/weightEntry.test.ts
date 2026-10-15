@@ -34,7 +34,7 @@ describe("weight entry hint", () => {
 });
 
 describe("bar + plates", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const { usesPlates, defaultBarWeight, barTotal, platesFor } = require("../utils/weightEntry");
 
   test("only for bars loaded on both ends", () => {

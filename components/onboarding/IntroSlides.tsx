@@ -210,5 +210,3 @@ export function IntroSlides({ onDone }: IntroSlidesProps) {
     </View>
   );
 }
-
-export default IntroSlides;

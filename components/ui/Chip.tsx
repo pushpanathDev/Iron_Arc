@@ -72,5 +72,3 @@ export function Chip({
     </Pressable>
   );
 }
-
-export default Chip;

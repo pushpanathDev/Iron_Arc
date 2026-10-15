@@ -6,8 +6,6 @@ export const workoutKeys = {
   all: ["workouts"] as const,
   /** Full history (all pages): the single source for Home, History, Analytics. */
   list: () => ["workouts", "all"] as const,
-  stats: () => ["workouts", "stats"] as const,
-  page: (params?: Record<string, unknown>) => ["workouts", "page", params ?? {}] as const,
   detail: (id: string) => ["workouts", "detail", id] as const,
 };
 
@@ -18,8 +16,6 @@ export const workoutKeys = {
  * them back.
  */
 const pendingDeletes = new Set<string>();
-/** Dev only: ids confirmed deleted, to check the server never returns them again. */
-const confirmedDeletes = new Set<string>();
 
 export const isPendingDelete = (id: string) => pendingDeletes.has(id);
 
@@ -48,16 +44,6 @@ export function finishWorkoutDelete(queryClient: QueryClient, id: string) {
   queryClient.setQueryData<Workout[]>(workoutKeys.list(), (old) => (old ? old.filter((w) => w.id !== id) : old), { updatedAt });
   queryClient.removeQueries({ queryKey: workoutKeys.detail(id) });
   pendingDeletes.delete(id);
-  if (__DEV__) confirmedDeletes.add(id);
   void queryClient.invalidateQueries({ queryKey: workoutKeys.all });
 }
 
-/** Dev only: log what the list endpoint returned and whether any deleted id came back. */
-export function logWorkoutListResponse(rows: Workout[]) {
-  if (!__DEV__) return;
-  const resurrected = rows.filter((w) => confirmedDeletes.has(w.id)).map((w) => w.id);
-  console.log(
-    `[Workouts] GET /api/workouts (all pages) → ${rows.length} rows; ` +
-      `deleted ids in response: ${resurrected.length ? resurrected.join(", ") : "none"}`,
-  );
-}

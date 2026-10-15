@@ -24,5 +24,3 @@ export function GoogleLogo({ size = sizes.icon }: { size?: number }) {
     </Svg>
   );
 }
-
-export default GoogleLogo;

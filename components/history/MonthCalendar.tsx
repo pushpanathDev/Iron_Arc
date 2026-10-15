@@ -32,14 +32,16 @@ export const MonthCalendar = memo(function MonthCalendar({ month, onPrev, onNext
   const m = month.getMonth();
   const isCurrentMonth = formatDate(new Date(year, m, 1)).slice(0, 7) === todayKey.slice(0, 7);
 
-  const cells = useMemo(() => {
+  const weeks = useMemo(() => {
     const first = new Date(year, m, 1);
     const lead = (first.getDay() + 6) % 7; // Monday-first
     const days = new Date(year, m + 1, 0).getDate();
     const out: ({ key: string; day: number } | null)[] = Array.from({ length: lead }, () => null);
     for (let d = 1; d <= days; d++) out.push({ key: formatDate(new Date(year, m, d)), day: d });
     while (out.length % 7) out.push(null);
-    return out;
+    // One row per week: percentage widths in a wrapping row can round to just over
+    // 100% and push Sunday onto the next line, shifting every date a column.
+    return Array.from({ length: out.length / 7 }, (_, w) => out.slice(w * 7, w * 7 + 7));
   }, [year, m]);
 
   const monthName = month.toLocaleDateString(undefined, { month: "long" });
@@ -67,23 +69,27 @@ export const MonthCalendar = memo(function MonthCalendar({ month, onPrev, onNext
       </View>
 
       {/* Days */}
-      <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-        {cells.map((c, i) =>
-          c ? (
-            <DayCell
-              key={c.key}
-              dateKey={c.key}
-              day={c.day}
-              trained={trainedDays.has(c.key)}
-              today={c.key === todayKey}
-              selected={c.key === selected}
-              future={c.key > todayKey}
-              onSelect={onSelect}
-            />
-          ) : (
-            <View key={`pad${i}`} style={{ width: `${100 / 7}%`, height: CELL }} />
-          ),
-        )}
+      <View>
+        {weeks.map((week, w) => (
+          <View key={w} style={{ flexDirection: "row" }}>
+            {week.map((c, i) =>
+              c ? (
+                <DayCell
+                  key={c.key}
+                  dateKey={c.key}
+                  day={c.day}
+                  trained={trainedDays.has(c.key)}
+                  today={c.key === todayKey}
+                  selected={c.key === selected}
+                  future={c.key > todayKey}
+                  onSelect={onSelect}
+                />
+              ) : (
+                <View key={`pad${i}`} style={{ flex: 1, height: CELL }} />
+              ),
+            )}
+          </View>
+        ))}
       </View>
 
       {footer ? (
@@ -149,7 +155,7 @@ const DayCell = memo(function DayCell({
       accessibilityRole="button"
       accessibilityState={{ selected, disabled: future }}
       accessibilityLabel={`${new Date(`${dateKey}T00:00:00`).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}${trained ? ", trained" : ""}${today ? ", today" : ""}`}
-      style={{ width: `${100 / 7}%`, height: CELL, alignItems: "center", justifyContent: "center" }}
+      style={{ flex: 1, height: CELL, alignItems: "center", justifyContent: "center" }}
     >
       <View
         style={{
@@ -171,5 +177,3 @@ const DayCell = memo(function DayCell({
     </Pressable>
   );
 });
-
-export default MonthCalendar;

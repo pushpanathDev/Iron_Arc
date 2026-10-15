@@ -198,5 +198,3 @@ export function WeightTrendChart({ entries, unit, todayKey, goalKg }: WeightTren
     </View>
   );
 }
-
-export default WeightTrendChart;

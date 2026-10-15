@@ -3,8 +3,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
-import { useAuth } from "../../auth/AuthContext";
-import { ExportSheet } from "../../components/ExportSheet";
+import { useAuth } from "../../providers/AuthContext";
+import { ExportSheet } from "../../components/profile/ExportSheet";
 import { MonthCalendar } from "../../components/history/MonthCalendar";
 import { SessionCard, sessionTitle } from "../../components/history/SessionCard";
 import { Avatar } from "../../components/ui/Avatar";
@@ -13,8 +13,8 @@ import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { FilterChip } from "../../components/ui/FilterChip";
 import { Reveal } from "../../components/ui/Reveal";
 import { SkeletonBlock } from "../../components/ui/Skeleton";
-import { useToast } from "../../context/ToastContext";
-import { displayCategory } from "../../hooks/logSession";
+import { useToast } from "../../providers/ToastContext";
+import { displayCategory } from "../../hooks/workoutDraft";
 import { useAchievementUnlockHandler } from "../../hooks/useAchievements";
 import { useProfile } from "../../hooks/useProfile";
 import { useStartPlanSession } from "../../hooks/useStartPlanSession";
@@ -37,10 +37,6 @@ const NO_WORKOUTS: never[] = [];
 
 const monthKeyOf = (d: Date) => formatDate(new Date(d.getFullYear(), d.getMonth(), 1)).slice(0, 7);
 const sessionKey = (g: SessionGroup) => `${g.date}-${g.list[0].id}`;
-
-/* ==============================
-   HISTORY
-   ============================== */
 
 export default function History() {
   const { colors } = useTheme();
@@ -157,7 +153,7 @@ export default function History() {
 
   const askDelete = useCallback((group: SessionGroup, close: () => void) => setConfirm({ group, close }), []);
 
-  const editWorkout = useCallback((id: string) => router.push({ pathname: "/log/edit", params: { id } }), []);
+  const editWorkout = useCallback((id: string) => router.push({ pathname: "/workout/edit", params: { id } }), []);
   const repeatSession = useCallback(
     (group: SessionGroup) => startSession(group.list.map((w) => ({ name: w.exercise, sets: w.sets.length, category: w.category }))),
     [startSession],
@@ -201,7 +197,7 @@ export default function History() {
                   icon="play"
                   onPress={() => {
                     perfStart("open picker");
-                    router.push("/log/pick");
+                    router.push("/workout/pick");
                   }}
                   fullWidth
                 />
@@ -349,9 +345,7 @@ export default function History() {
   );
 }
 
-/* ==============================
-   PIECES
-   ============================== */
+// Pieces
 
 function EmptyCard({ icon, title, body, action }: { icon: React.ComponentProps<typeof MaterialIcons>["name"]; title: string; body: string; action?: React.ReactNode }) {
   const { colors } = useTheme();

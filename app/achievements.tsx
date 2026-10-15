@@ -16,7 +16,7 @@ import { Reveal } from "../components/ui/Reveal";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 import { useAchievements } from "../hooks/useAchievements";
 import { useUnitPreference } from "../hooks/useUnitPreference";
-import { badgeIcon, CATEGORY_ORDER, categoryLabel, progressLabel, TIER_LABELS, tierColor, unlockDate } from "../insights/achievements";
+import { badgeIcon, CATEGORY_ORDER, categoryLabel, progressLabel, TIER_LABELS, tierColor, unlockDate } from "../utils/achievementDisplay";
 import type { Achievement } from "../services/api";
 import { useTheme } from "../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../theme/tokens";

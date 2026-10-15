@@ -126,9 +126,7 @@ export function restLabel(seconds: number | undefined): string | null {
   return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds} s`;
 }
 
-/* =========================================================
-   What changed (coach "Plan updated" card)
-   ========================================================= */
+// What changed (coach "Plan updated" card)
 
 export interface PlanChange {
   /** 0 = Monday … 6 = Sunday */

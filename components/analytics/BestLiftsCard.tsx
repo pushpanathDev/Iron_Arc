@@ -111,5 +111,3 @@ export function BestLiftsCard({ lifts, unit, periodPhrase, onOpenExercise }: Bes
     </View>
   );
 }
-
-export default BestLiftsCard;

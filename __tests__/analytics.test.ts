@@ -132,9 +132,9 @@ describe("bestLifts", () => {
 });
 
 describe("records, reach and headline", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const A = require("../utils/analytics");
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const { prEvents } = require("../utils/exerciseHistory");
   const history = [
     w("1", "2026-09-28", "Bench Press", [[80, 8], [80, 8]]),
@@ -206,7 +206,7 @@ describe("chart buckets", () => {
 });
 
 describe("exercisesByCategory", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const { exercisesByCategory } = require("../utils/analytics");
   test("sets per exercise within the period, busiest first", () => {
     const m = exercisesByCategory(

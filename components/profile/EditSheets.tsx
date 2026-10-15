@@ -6,7 +6,7 @@ import { radius, ruler, size, spacing, typography } from "../../theme/tokens";
 import { HeightRuler, type HeightUnit } from "../onboarding/HeightRuler";
 import { SkeletonBlock } from "../ui/Skeleton";
 import { TrainingDaysPicker } from "../training/TrainingDaysPicker";
-import type { Weekday } from "../../constants/trainingProfile";
+import type { Weekday } from "../../data/trainingProfile";
 import { Button } from "../ui/Button";
 import { Sheet } from "../ui/Sheet";
 import { Stepper } from "../ui/Stepper";

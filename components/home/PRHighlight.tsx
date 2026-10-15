@@ -36,5 +36,3 @@ export function PRHighlight({ prs, unit }: { prs: RecentPR[]; unit: WeightUnit }
     </Card>
   );
 }
-
-export default PRHighlight;

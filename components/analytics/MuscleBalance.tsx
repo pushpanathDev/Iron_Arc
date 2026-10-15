@@ -1,7 +1,7 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { displayCategory } from "../../hooks/logSession";
+import { displayCategory } from "../../hooks/workoutDraft";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, typography } from "../../theme/tokens";
 import { WEEKLY_SETS_RANGE, type MuscleWeek } from "../../utils/analytics";
@@ -150,5 +150,3 @@ function sinceText(days: number | null) {
   if (days === 1) return "Yesterday";
   return `${days} days ago`;
 }
-
-export default MuscleBalance;

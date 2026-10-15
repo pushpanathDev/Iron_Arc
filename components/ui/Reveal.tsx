@@ -47,5 +47,3 @@ export function Reveal({ index = 0, children, style, onLayout }: RevealProps) {
     </Animated.View>
   );
 }
-
-export default Reveal;

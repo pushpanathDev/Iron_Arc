@@ -16,5 +16,3 @@ export function Toggle({ value, onChange, disabled, accessibilityLabel }: { valu
     />
   );
 }
-
-export default Toggle;

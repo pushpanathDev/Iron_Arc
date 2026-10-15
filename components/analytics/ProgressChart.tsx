@@ -101,5 +101,3 @@ export function ProgressChart({ points, unitLabel }: { points: ProgressPoint[]; 
     </View>
   );
 }
-
-export default ProgressChart;

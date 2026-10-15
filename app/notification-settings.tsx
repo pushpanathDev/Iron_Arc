@@ -11,8 +11,8 @@ import { Sheet } from "../components/ui/Sheet";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 import { RepeatButton } from "../components/ui/Stepper";
 import { Toggle } from "../components/ui/Toggle";
-import { effectiveWeeklyGoal, WEEKDAYS } from "../constants/trainingProfile";
-import { useToast } from "../context/ToastContext";
+import { effectiveWeeklyGoal, WEEKDAYS } from "../data/trainingProfile";
+import { useToast } from "../providers/ToastContext";
 import { useProfile } from "../hooks/useProfile";
 import { COPY, REST_MAX_SECONDS, REST_MIN_SECONDS, type NotificationType, type PlannedNotification } from "../notifications/notificationPlanner";
 import {
@@ -59,10 +59,6 @@ const toKey = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.
 const whenLabel = (d: Date) => `${d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} · ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 const sameDays = (a: number[], b: number[]) => a.length === b.length && a.every((d) => b.includes(d));
-
-/* ==============================
-   NOTIFICATIONS
-   ============================== */
 
 export default function NotificationSettingsScreen() {
   const { colors } = useTheme();
@@ -377,9 +373,7 @@ export default function NotificationSettingsScreen() {
   );
 }
 
-/* ==============================
-   PIECES
-   ============================== */
+// Pieces
 
 /** Header (back, title, "Saved" badge) around the content. */
 function Screen({ insets, saved, children }: { insets: { top: number }; saved: boolean; children: ReactNode }) {

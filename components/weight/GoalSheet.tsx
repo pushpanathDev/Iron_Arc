@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Text, View } from "react-native";
-import { useToast } from "../../context/ToastContext";
+import { useToast } from "../../providers/ToastContext";
 import { useUpdateProfile } from "../../hooks/useProfile";
 import { useTheme } from "../../theme/theme";
 import { spacing, typography } from "../../theme/tokens";
@@ -87,5 +87,3 @@ export function GoalSheet({ visible, onClose, unit, goalKg, latestKg }: GoalShee
     </Sheet>
   );
 }
-
-export default GoalSheet;

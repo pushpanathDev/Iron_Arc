@@ -14,8 +14,8 @@ import { PlanSettingsSheet } from "../components/plans/PlanSettingsSheet";
 import { Button } from "../components/ui/Button";
 import { Reveal } from "../components/ui/Reveal";
 import { SkeletonBlock } from "../components/ui/Skeleton";
-import { EQUIPMENT_OPTIONS, EXPERIENCE_OPTIONS, effectiveWeeklyGoal, formatDays } from "../constants/trainingProfile";
-import { useToast } from "../context/ToastContext";
+import { EQUIPMENT_OPTIONS, EXPERIENCE_OPTIONS, effectiveWeeklyGoal, formatDays } from "../data/trainingProfile";
+import { useToast } from "../providers/ToastContext";
 import { useActivatePlan, useGeneratePlan, usePlans } from "../hooks/usePlan";
 import { useProfile } from "../hooks/useProfile";
 import { useAllWorkouts } from "../hooks/useWorkouts";
@@ -42,7 +42,7 @@ const firstSentences = (text: string) => (text.match(/[^.!?]+[.!?]+/g)?.slice(0,
 export default function AIPlanScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { showToast } = useToast();
+  const { showToast, clearErrors } = useToast();
   const { data: profile } = useProfile();
   const { data: workouts } = useAllWorkouts();
   const { data, isLoading, isError, refetch } = usePlans();
@@ -71,6 +71,8 @@ export default function AIPlanScreen() {
   const onGenerate = (criteria: PlanCriteriaPayload) => {
     setSettingsOpen(false);
     setWaiting(true);
+    // A retry makes the last "Couldn't create the plan" out of date.
+    clearErrors();
     generate.mutate(criteria, {
       onSuccess: ({ data: plan }) => {
         showToast({ type: "success", message: "Your new plan is ready", subtitle: plan.name });
@@ -174,9 +176,7 @@ export default function AIPlanScreen() {
   );
 }
 
-/* ==============================
-   PIECES
-   ============================== */
+// Pieces
 
 function SectionLabel({ left, right }: { left: string; right?: string }) {
   const { colors } = useTheme();

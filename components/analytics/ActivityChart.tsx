@@ -223,5 +223,3 @@ function CompareLine({ pct, against }: { pct: number; against: string }) {
     </View>
   );
 }
-
-export default ActivityChart;

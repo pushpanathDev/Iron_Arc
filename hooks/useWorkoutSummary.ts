@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { ExerciseCategory } from "../data/exercises";
 import type { Workout } from "../services/api";
-import { formatDate, getWeekStart, parseLocalDate } from "../utils/weekUtils";
+import { addDays, formatDate, getWeekStart, parseLocalDate } from "../utils/weekUtils";
 import { useAllWorkouts } from "./useWorkouts";
 
 /*
@@ -64,13 +64,6 @@ export const SUGGEST_GROUPS: { label: string; category: ExerciseCategory }[] = [
 ];
 
 const MAX_RECENT = 3;
-
-/** Calendar-safe day arithmetic on YYYY-MM-DD keys (no DST drift). */
-export function addDays(key: string, n: number) {
-  const d = parseLocalDate(key);
-  d.setDate(d.getDate() + n);
-  return formatDate(d);
-}
 
 const weekKeyOf = (dateKey: string) => formatDate(getWeekStart(parseLocalDate(dateKey)));
 const dayKey = (w: Workout) => w.date.split("T")[0];

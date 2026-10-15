@@ -128,5 +128,3 @@ function Slot({ phase, text, style }: { phase: SharedValue<number>; text: string
     </Animated.View>
   );
 }
-
-export default CyclingHeadline;

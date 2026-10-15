@@ -39,5 +39,3 @@ export function OfflineState({ mode, onRetry, retrying, style }: OfflineStatePro
     />
   );
 }
-
-export default OfflineState;

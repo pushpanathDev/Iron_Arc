@@ -1,6 +1,6 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { Pressable, Share, Text, View } from "react-native";
-import { badgeIcon, categoryIcon, categoryLabel, progressLabel, TIER_LABELS, tierColor, unlockDate } from "../../insights/achievements";
+import { badgeIcon, categoryIcon, categoryLabel, progressLabel, TIER_LABELS, tierColor, unlockDate } from "../../utils/achievementDisplay";
 import type { Achievement } from "../../services/api";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, typography } from "../../theme/tokens";
@@ -118,5 +118,3 @@ export function BadgeSheet({ badge, unit, primaryLabel = "Nice", onClose }: Badg
     </Sheet>
   );
 }
-
-export default BadgeSheet;

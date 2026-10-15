@@ -2,7 +2,7 @@ import { groupSessions } from "../hooks/useWorkoutSummary";
 import type { Workout } from "../services/api";
 import { checkPR, estimate1RM, heaviestSet, prGain, type ExerciseHistory, type LoggedSet, type PREvent } from "./exerciseHistory";
 import type { WeightUnit } from "./unitConversion";
-import { formatDate, getWeekStart, parseLocalDate } from "./weekUtils";
+import { addDays, formatDate, getWeekStart, parseLocalDate } from "./weekUtils";
 
 /*
  * Everything the Analytics tab shows, derived from the shared workouts list
@@ -85,11 +85,6 @@ const MAX_LABELLED_BARS = 7;
 const dayKey = (w: Workout) => w.date.split("T")[0];
 const volumeOf = (w: Workout) => w.sets.reduce((v, s) => v + s.reps * s.weight, 0);
 
-function addDays(key: string, n: number) {
-  const d = parseLocalDate(key);
-  d.setDate(d.getDate() + n);
-  return formatDate(d);
-}
 function addMonths(key: string, n: number) {
   const d = parseLocalDate(key);
   return formatDate(new Date(d.getFullYear(), d.getMonth() + n, 1));
@@ -252,9 +247,7 @@ export function analyzePeriod(workouts: Workout[], period: AnalyticsPeriod, toda
   return { start, end, sessions, sets, volumeKg, trainingDays, buckets, bucketUnit: unit, chartTruncated: truncated, compare, balance, leastTrained };
 }
 
-/* =========================================================
-   Best lifts (Personal records card)
-   ========================================================= */
+// Best lifts (Personal records card)
 
 export interface BestLift {
   exercise: string;
@@ -297,9 +290,7 @@ export function bestLifts(index: Map<string, ExerciseHistory>, start: string, en
   return out.sort((a, b) => b.date.localeCompare(a.date) || b.set.weight - a.set.weight);
 }
 
-/* =========================================================
-   Weekly sets per muscle group
-   ========================================================= */
+// Weekly sets per muscle group
 
 /** A commonly used guide: about 10–20 hard sets per muscle group a week. */
 export const WEEKLY_SETS_RANGE = { low: 10, high: 20 } as const;
@@ -338,9 +329,7 @@ export function muscleWeeks(workouts: Workout[], stats: PeriodStats, todayKey: s
   }).sort((a, b) => b.perWeek - a.perWeek || MAIN_GROUPS.indexOf(a.category as never) - MAIN_GROUPS.indexOf(b.category as never));
 }
 
-/* =========================================================
-   Records in a period, and records within reach
-   ========================================================= */
+// Records in a period, and records within reach
 
 /** PR events inside [start, end], newest first. */
 export function prsInRange(events: PREvent[], start: string, end: string): PREvent[] {
@@ -391,9 +380,7 @@ export function withinReach(index: Map<string, ExerciseHistory>, todayKey: strin
     .slice(0, REACH_LIMIT);
 }
 
-/* =========================================================
-   Headline (one sentence that changes with the data)
-   ========================================================= */
+// Headline (one sentence that changes with the data)
 
 export interface Headline {
   icon: "star" | "trending-up" | "emoji-events" | "warning-amber" | "insights";

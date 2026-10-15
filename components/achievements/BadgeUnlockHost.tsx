@@ -8,5 +8,3 @@ export function BadgeUnlockHost() {
   const { unit } = useUnitPreference();
   return <BadgeSheet badge={current} unit={unit} primaryLabel={waiting > 0 ? `Next · ${waiting} more` : "Nice"} onClose={dismiss} />;
 }
-
-export default BadgeUnlockHost;

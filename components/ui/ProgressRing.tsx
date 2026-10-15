@@ -58,5 +58,3 @@ export function ProgressRing({
     </View>
   );
 }
-
-export default ProgressRing;

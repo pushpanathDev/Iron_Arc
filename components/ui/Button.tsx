@@ -150,5 +150,3 @@ export function Button({
     </PressableScale>
   );
 }
-
-export default Button;

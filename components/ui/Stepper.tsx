@@ -162,5 +162,3 @@ export function RepeatButton({ icon, onStep, label, filled }: { icon: "add" | "r
     </Pressable>
   );
 }
-
-export default Stepper;

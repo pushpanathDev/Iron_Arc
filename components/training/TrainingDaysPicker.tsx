@@ -1,7 +1,7 @@
 import * as Haptics from "expo-haptics";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { defaultSplitFor, MAX_TRAINING_DAYS, SPLIT_LABELS, WEEKDAYS, type Weekday } from "../../constants/trainingProfile";
+import { defaultSplitFor, MAX_TRAINING_DAYS, SPLIT_LABELS, WEEKDAYS, type Weekday } from "../../data/trainingProfile";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, typography } from "../../theme/tokens";
 import { FadingMessage } from "../ui/FadingMessage";
@@ -75,5 +75,3 @@ export function TrainingDaysPicker({ value, onChange }: TrainingDaysPickerProps)
     </View>
   );
 }
-
-export default TrainingDaysPicker;

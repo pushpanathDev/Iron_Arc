@@ -3,14 +3,14 @@ import * as Haptics from "expo-haptics";
 import { memo, useRef } from "react";
 import { Pressable, Text, View } from "react-native";
 import ReanimatedSwipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
-import { displayCategory } from "../../hooks/logSession";
+import { displayCategory } from "../../hooks/workoutDraft";
 import type { SessionGroup } from "../../hooks/useWorkoutSummary";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import { displayWeightRounded, formatWeightValue } from "../../utils/exerciseHistory";
 import { displayWeight, weightLabel, type WeightUnit } from "../../utils/unitConversion";
 import { Button } from "../ui/Button";
-import { PRBadge } from "../log/ExerciseRow";
+import { PRBadge } from "../workout/ExerciseRow";
 
 export type SessionCardProps = {
   group: SessionGroup;
@@ -44,7 +44,6 @@ export function topSet(group: SessionGroup): { exercise: string; weight: number;
       if (set.weight > 0 && (!best || set.weight > best.weight || (set.weight === best.weight && set.reps > best.reps))) best = { exercise: w.exercise, weight: set.weight, reps: set.reps };
   return best;
 }
-
 
 /**
  * One logged session. Tap to expand its exercises and sets (each editable),
@@ -167,5 +166,3 @@ export const SessionCard = memo(function SessionCard({ group, sessionKey, unit, 
     </ReanimatedSwipeable>
   );
 });
-
-export default SessionCard;

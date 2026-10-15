@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { AppState } from "react-native";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../providers/AuthContext";
 import { useProfile } from "./useProfile";
 import { useAllWeights } from "./useWeights";
 import { useAllWorkouts } from "./useWorkouts";

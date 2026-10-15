@@ -7,14 +7,14 @@ import * as SecureStore from "expo-secure-store";
 import { EmailAuthProvider, GoogleAuthProvider, reauthenticateWithCredential } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
-import { useAuth } from "../../auth/AuthContext";
-import { EmailVerificationPrompt } from "../../components/EmailVerificationPrompt";
-import { ExportSheet } from "../../components/ExportSheet";
-import { GOALS, type FitnessGoal } from "../../components/OnboardingProfileSetup";
+import { useAuth } from "../../providers/AuthContext";
+import { EmailVerificationPrompt } from "../../components/auth/EmailVerificationPrompt";
+import { ExportSheet } from "../../components/profile/ExportSheet";
+import { GOALS, type FitnessGoal } from "../../components/onboarding/OnboardingProfileSetup";
 import { DaysSheet, HeightSheet, NumberSheet, OptionsSheet } from "../../components/profile/EditSheets";
 import { ProfileHeader } from "../../components/profile/ProfileHeader";
 import { SettingsGroup, SettingsRow } from "../../components/profile/Settings";
-import { ProfileStatus } from "../../components/ProfileStatus";
+import { ProfileStatus } from "../../components/profile/ProfileStatus";
 import { OfflineState } from "../../components/ui";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
@@ -22,7 +22,7 @@ import { Reveal } from "../../components/ui/Reveal";
 import { Sheet } from "../../components/ui/Sheet";
 import { SkeletonBlock } from "../../components/ui/Skeleton";
 import { TextField } from "../../components/ui/TextField";
-import { verificationMessages } from "../../constants/verificationMessages";
+import { verificationMessages } from "../../data/verificationMessages";
 import {
   AVOID_OPTIONS,
   effectiveWeeklyGoal,
@@ -35,11 +35,11 @@ import {
   type ExperienceLevel,
   type SessionMinutes,
   type Weekday,
-} from "../../constants/trainingProfile";
-import { useConnection } from "../../context/ConnectionContext";
-import { useToast } from "../../context/ToastContext";
-import { clearEmailVerificationStart, getEmailVerificationStart, setEmailVerificationStart } from "../../db/syncMeta";
-import { auth } from "../../firebase/config";
+} from "../../data/trainingProfile";
+import { useConnection } from "../../providers/ConnectionContext";
+import { useToast } from "../../providers/ToastContext";
+import { clearEmailVerificationStart, getEmailVerificationStart, setEmailVerificationStart } from "../../services/verificationStore";
+import { auth } from "../../services/firebase";
 import { useAchievements } from "../../hooks/useAchievements";
 import { usePlans } from "../../hooks/usePlan";
 import { useProfile, useUpdateProfile } from "../../hooks/useProfile";
@@ -52,10 +52,10 @@ import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import { getVersionLabel } from "../../utils/appVersion";
 import { getInitials } from "../../utils/avatar";
-import { getGoogleSignin } from "../../utils/googleSignin";
+import { getGoogleSignin } from "../../services/googleSignin";
 import { createPageLogger } from "../../utils/logger";
 import { displayWeight, weightLabel } from "../../utils/unitConversion";
-import { clearVerificationSent } from "../../utils/verificationService";
+import { clearVerificationSent } from "../../services/emailVerification";
 
 const log = createPageLogger("Profile");
 const NO_WORKOUTS: never[] = [];
@@ -77,10 +77,6 @@ function keptAll(updates: ProfileUpdate, saved: User | undefined) {
 }
 
 const labelOf = <T,>(options: { value: T; label: string }[], v: T | null | undefined) => options.find((o) => o.value === v)?.label ?? null;
-
-/* ==============================
-   PROFILE & SETTINGS
-   ============================== */
 
 export default function ProfileScreen() {
   const { colors } = useTheme();
@@ -482,7 +478,6 @@ export default function ProfileScreen() {
         <Reveal index={5} style={{ gap: spacing.md }}>
           <SettingsGroup title="Account">
             <SettingsRow icon="ios-share" label="Export your data" detail="Workouts and body weight as CSV or PDF" kind="action" onPress={() => setExportOpen(true)} />
-            {profile.isAdmin ? <SettingsRow icon="admin-panel-settings" label="Admin: exercise catalog" detail="Manage remote additions and removals" onPress={() => router.push("/admin-catalog")} /> : null}
             <SettingsRow icon="logout" label="Log out" value={profile.displayName || undefined} kind="action" onPress={() => setConfirm("logout")} />
           </SettingsGroup>
           <SettingsGroup>
@@ -633,9 +628,7 @@ export default function ProfileScreen() {
   );
 }
 
-/* ==============================
-   PIECES
-   ============================== */
+// Pieces
 
 /** kg / lb segmented switch; each half takes the tap across its box. */
 function UnitSwitch({ unit, onChange }: { unit: "kg" | "lbs"; onChange: (u: "kg" | "lbs") => void }) {

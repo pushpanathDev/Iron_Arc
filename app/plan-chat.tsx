@@ -1,6 +1,8 @@
 /**
  * Plan coach (AI_Plan Coach Chat mockup): talk to the AI about the plan;
- * when it changes the plan, a card says so and links back to the day view.
+ * when it changes the plan, a card says what changed and links back to the
+ * day view. The server keeps the log, including swaps and "Start next week",
+ * so every change to the plan can be found here later.
  * Navigate here with /plan-chat?id=<planId>.
  */
 import { MaterialIcons } from "@expo/vector-icons";
@@ -11,7 +13,7 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { aiErrorMessage } from "../components/plans/PlanActions";
-import { useToast } from "../context/ToastContext";
+import { useToast } from "../providers/ToastContext";
 import { requestPlanDay } from "../hooks/planDayRequest";
 import { usePlan, usePlanChat } from "../hooks/usePlan";
 import type { ChatMessage } from "../services/api";
@@ -19,7 +21,14 @@ import { diffPlanWeek, type PlanChange } from "../utils/planData";
 import { useTheme } from "../theme/theme";
 import { radius, size, spacing, typography } from "../theme/tokens";
 
-type Message = ChatMessage & { planUpdated?: boolean; changes?: PlanChange[]; failed?: boolean; local?: boolean };
+type Message = ChatMessage & { changes?: PlanChange[]; failed?: boolean; local?: boolean };
+
+/** Card title for each kind of plan change. */
+const CHANGE_TITLE: Record<NonNullable<ChatMessage["kind"]> | "chat", string> = {
+  chat: "Plan updated",
+  swap: "Exercise swapped",
+  nextWeek: "Next week ready",
+};
 
 /** Lines shown on the "Plan updated" card before "+ N more". */
 const MAX_CHANGE_LINES = 4;
@@ -43,10 +52,10 @@ export default function PlanChatScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const loaded = useRef(false);
 
-  // Saved history (top-level field, or inside planData on older plans), once.
+  // Saved log (kept inside planData by the server), once.
   useEffect(() => {
     if (!plan || loaded.current) return;
-    const history = (plan.chatHistory ?? (plan.planData as { _chatHistory?: ChatMessage[] } | null)?._chatHistory ?? []) as ChatMessage[];
+    const history = ((plan.planData as { _chatHistory?: ChatMessage[] } | null)?._chatHistory ?? plan.chatHistory ?? []) as ChatMessage[];
     setMessages(history);
     loaded.current = true;
   }, [plan]);
@@ -66,6 +75,13 @@ export default function PlanChatScreen() {
     const week = plan?.weekNumber;
     chat.mutate(message, {
       onSuccess: (r) => {
+        const saved = Array.isArray(r.chatHistory) ? r.chatHistory : null;
+        const last = saved?.[saved.length - 1];
+        if (saved && last?.role === "assistant" && (!r.planUpdated || last.changes)) {
+          // Keep any unsent messages under the saved log so they can still be retried.
+          setMessages((m) => [...saved, ...m.filter((x) => x.failed && x.content !== message)]);
+          return;
+        }
         const changes = r.planUpdated ? diffPlanWeek(before, r.planData, week) : undefined;
         setMessages((m) => [
           ...m.map((x) => (x === mine || (x.local && x.content === message && x.role === "user") ? { ...x, failed: false } : x)),
@@ -80,7 +96,8 @@ export default function PlanChatScreen() {
     });
   };
 
-  const shown = useMemo<Message[]>(() => (messages.length ? messages : [{ role: "assistant", content: GREETING, timestamp: new Date().toISOString(), local: true }]), [messages]);
+  const greeting = useMemo<Message>(() => ({ role: "assistant", content: GREETING, timestamp: messages[0]?.timestamp ?? new Date().toISOString(), local: true }), [messages]);
+  const shown = useMemo<Message[]>(() => [greeting, ...messages], [greeting, messages]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
@@ -120,7 +137,7 @@ export default function PlanChatScreen() {
             <Bubble
               key={`${m.timestamp}-${i}`}
               message={m}
-              onRetry={m.failed ? () => send(m.content, i) : undefined}
+              onRetry={m.failed ? () => send(m.content, i - 1) : undefined}
               onViewPlan={() => {
                 if (id && m.changes?.length) requestPlanDay(id, m.changes[0].dayIndex);
                 router.back();
@@ -230,7 +247,7 @@ function Bubble({ message, onRetry, onViewPlan }: { message: Message; onRetry?: 
         <Pressable
           onPress={onViewPlan}
           accessibilityRole="button"
-          accessibilityLabel={`Plan updated. ${(message.changes ?? []).map((c) => c.text).join(". ")}. View the plan`}
+          accessibilityLabel={`${CHANGE_TITLE[message.kind ?? "chat"]}. ${(message.changes ?? []).map((c) => c.text).join(". ")}. View the plan`}
           style={({ pressed }) => ({
             alignSelf: "stretch",
             gap: spacing.sm,
@@ -244,7 +261,7 @@ function Bubble({ message, onRetry, onViewPlan }: { message: Message; onRetry?: 
         >
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <MaterialIcons name="check-circle" size={size.iconLg} color={colors.accent} />
-            <Text style={[typography.bodyMdMedium, { flex: 1, color: colors.text }]}>Plan updated</Text>
+            <Text style={[typography.bodyMdMedium, { flex: 1, color: colors.text }]}>{CHANGE_TITLE[message.kind ?? "chat"]}</Text>
             <Text style={[typography.labelLg, { color: colors.accent }]}>View plan</Text>
             <MaterialIcons name="chevron-right" size={size.iconSm} color={colors.accent} />
           </View>

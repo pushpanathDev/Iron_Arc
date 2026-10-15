@@ -2,11 +2,14 @@
   "expo": {
     "name": "Iron Arc",
     "slug": "GymTracker",
+    "platforms": ["android"],
     "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "ironarc",
     "userInterfaceStyle": "dark",
+    "backgroundColor": "#111417",
+    "primaryColor": "#5CDDA6",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
@@ -17,15 +20,15 @@
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/android-icon-foreground.png"
       },
-      "permissions": ["POST_NOTIFICATIONS", "VIBRATE"],
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
+      ],
+      "allowBackup": false,
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.pushpanath_mr.GymTracker",
       "googleServicesFile": "./google-services.json"
-    },
-    "web": {
-      "output": "static",
-      "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
       "expo-router",
@@ -38,7 +41,26 @@
           "backgroundColor": "#0B1220"
         }
       ],
-      "@react-native-community/datetimepicker",
+      [
+        "@react-native-community/datetimepicker",
+        {
+          "android": {
+            "datePicker": {
+              "colorAccent": { "light": "#5CDDA6", "dark": "#5CDDA6" },
+              "windowBackground": { "light": "#191C1F", "dark": "#191C1F" },
+              "textColorPrimary": { "light": "#E1E2E7", "dark": "#E1E2E7" },
+              "textColorSecondary": { "light": "#BCCAC0", "dark": "#BCCAC0" }
+            },
+            "timePicker": {
+              "background": { "light": "#191C1F", "dark": "#191C1F" },
+              "headerBackground": { "light": "#5CDDA6", "dark": "#5CDDA6" },
+              "numbersBackgroundColor": { "light": "#272A2E", "dark": "#272A2E" },
+              "numbersSelectorColor": { "light": "#5CDDA6", "dark": "#5CDDA6" },
+              "numbersTextColor": { "light": "#E1E2E7", "dark": "#E1E2E7" }
+            }
+          }
+        }
+      ],
       "expo-font",
       "expo-web-browser",
       [
@@ -49,7 +71,17 @@
         }
       ],
       "expo-secure-store",
-      "@react-native-google-signin/google-signin"
+      "@react-native-google-signin/google-signin",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "buildArchs": ["arm64-v8a", "armeabi-v7a"],
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

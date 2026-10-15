@@ -24,7 +24,7 @@ import { getInitials } from "../../utils/avatar";
 import { exerciseIndexFor, prEventsFor } from "../../utils/exerciseHistory";
 import { perfStart } from "../../utils/perf";
 import { toKg, weightLabel, weightStep } from "../../utils/unitConversion";
-import { formatDate, parseLocalDate } from "../../utils/weekUtils";
+import { formatDate, parseLocalDate } from "../../utils/dates";
 
 const NO_WORKOUTS: never[] = [];
 

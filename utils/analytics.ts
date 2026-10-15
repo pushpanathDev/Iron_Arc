@@ -2,7 +2,7 @@ import { groupSessions } from "../hooks/useWorkoutSummary";
 import type { Workout } from "../services/api";
 import { checkPR, estimate1RM, heaviestSet, prGain, type ExerciseHistory, type LoggedSet, type PREvent } from "./exerciseHistory";
 import type { WeightUnit } from "./unitConversion";
-import { addDays, formatDate, getWeekStart, parseLocalDate } from "./weekUtils";
+import { addDays, formatDate, getWeekStart, parseLocalDate, daysBetween } from "./dates";
 
 /*
  * Everything the Analytics tab shows, derived from the shared workouts list
@@ -305,7 +305,6 @@ export interface MuscleWeek {
   daysSince: number | null;
 }
 
-const daysBetween = (a: string, b: string) => Math.round((parseLocalDate(b).getTime() - parseLocalDate(a).getTime()) / 86_400_000);
 
 /** The six main groups, busiest first; per-week averages use the weeks elapsed so far (at least one). */
 export function muscleWeeks(workouts: Workout[], stats: PeriodStats, todayKey: string): MuscleWeek[] {

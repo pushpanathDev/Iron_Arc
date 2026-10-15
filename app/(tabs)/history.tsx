@@ -29,10 +29,9 @@ import { getInitials } from "../../utils/avatar";
 import { exerciseIndexFor, exerciseKey, prExerciseDays } from "../../utils/exerciseHistory";
 import { createPageLogger } from "../../utils/logger";
 import { perfStart } from "../../utils/perf";
-import { formatDate, parseLocalDate } from "../../utils/weekUtils";
+import { formatDate, parseLocalDate, dayLabel } from "../../utils/dates";
 
 const log = createPageLogger("History");
-const DAY_MS = 86_400_000;
 const NO_WORKOUTS: never[] = [];
 
 const monthKeyOf = (d: Date) => formatDate(new Date(d.getFullYear(), d.getMonth(), 1)).slice(0, 7);
@@ -383,10 +382,3 @@ function deleteMessage(group: SessionGroup) {
   return `This removes ${exercises} ${exercises === 1 ? "exercise" : "exercises"} and ${sets} logged ${sets === 1 ? "set" : "sets"} (${sessionTitle(group)}) from your training history. You'll have a few seconds to undo.`;
 }
 
-/** "Today", "Yesterday", "Mon 5 Oct". */
-function dayLabel(key: string, todayKey: string) {
-  const diff = Math.round((parseLocalDate(todayKey).getTime() - parseLocalDate(key).getTime()) / DAY_MS);
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Yesterday";
-  return parseLocalDate(key).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-}

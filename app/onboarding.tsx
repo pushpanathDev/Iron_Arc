@@ -14,7 +14,7 @@ import { OnboardingProfileSetup, type ProfileSetupResult } from "../components/o
 import { useToast } from "../providers/ToastContext";
 import { userApi, weightApi } from "../services/api";
 import { useTheme } from "../theme/theme";
-import { formatDate, getWeekStart } from "../utils/weekUtils";
+import { formatDate, getWeekStart } from "../utils/dates";
 
 type Step = "loading" | "intro" | "profile";
 

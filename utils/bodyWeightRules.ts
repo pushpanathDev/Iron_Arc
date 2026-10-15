@@ -1,5 +1,6 @@
 import type { BodyWeight } from "../services/api";
 import { kgToLbs, lbsToKg, type WeightUnit } from "./unitConversion";
+import { DAY_MS } from "./dates";
 
 /*
  * Body-weight entry rules and the analog dial's scale, as pure functions.
@@ -13,7 +14,6 @@ export const MIN_KG = 20;
 export const MAX_KG = 500;
 /** Stepper increment in either unit. */
 export const WEIGHT_STEP = 0.1;
-const DAY_MS = 86_400_000;
 const TREND_DAYS = 30;
 
 const round1 = (n: number) => Math.round(n * 10) / 10;

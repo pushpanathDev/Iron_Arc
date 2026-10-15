@@ -1,5 +1,6 @@
 import type { Workout } from "../services/api";
 import { displayWeight, weightLabel, type WeightUnit } from "./unitConversion";
+import { DAY_MS } from "./dates";
 
 /*
  * Per-exercise history derived from the cached workout list. The backend
@@ -29,7 +30,6 @@ export interface ExerciseHistory {
 /** Weights closer than this are treated as equal (lbs ↔ kg rounding). */
 const EPSILON_KG = 0.05;
 const PR_WINDOW_DAYS = 30;
-const DAY_MS = 86_400_000;
 
 export const exerciseKey = (name: string) => name.trim().toLowerCase();
 const dayKey = (w: Workout) => w.date.split("T")[0];

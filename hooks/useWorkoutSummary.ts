@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { ExerciseCategory } from "../data/exercises";
 import type { Workout } from "../services/api";
-import { addDays, formatDate, getWeekStart, parseLocalDate } from "../utils/weekUtils";
+import { addDays, formatDate, getWeekStart, parseLocalDate, daysBetween } from "../utils/dates";
 import { useAllWorkouts } from "./useWorkouts";
 
 /*
@@ -183,7 +183,7 @@ export function summarizeWorkouts(workouts: Workout[], weeklyGoal: number | null
     for (const g of SUGGEST_GROUPS) {
       const d = last[g.category];
       if (d === todayKey) continue;
-      const daysAgo = d ? Math.round((parseLocalDate(todayKey).getTime() - parseLocalDate(d).getTime()) / 86_400_000) : null;
+      const daysAgo = d ? daysBetween(d, todayKey) : null;
       const score = daysAgo ?? Number.POSITIVE_INFINITY;
       if (score > bestScore) {
         bestScore = score;
@@ -193,7 +193,7 @@ export function summarizeWorkouts(workouts: Workout[], weeklyGoal: number | null
   }
 
   // Volume: compare the same span of days, so a Monday never looks like a 90% drop.
-  const span = Math.round((parseLocalDate(todayKey).getTime() - parseLocalDate(weekStart).getTime()) / 86_400_000);
+  const span = daysBetween(weekStart, todayKey);
   const lastWeekStart = addDays(weekStart, -7);
   const lastWeekEnd = addDays(lastWeekStart, span);
   const volumeOf = (w: Workout) => w.sets.reduce((sum, set) => sum + set.reps * set.weight, 0);

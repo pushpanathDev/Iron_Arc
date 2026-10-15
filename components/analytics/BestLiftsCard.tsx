@@ -6,7 +6,7 @@ import { radius, size, spacing, typography } from "../../theme/tokens";
 import type { BestLift } from "../../utils/analytics";
 import { displayWeightRounded } from "../../utils/exerciseHistory";
 import { weightLabel, type WeightUnit } from "../../utils/unitConversion";
-import { parseLocalDate } from "../../utils/weekUtils";
+import { parseLocalDate } from "../../utils/dates";
 
 const COLLAPSED = 4;
 

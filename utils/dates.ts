@@ -43,3 +43,22 @@ export function addDays(key: string, n: number): string {
 
 /** Weeks run Monday to Sunday everywhere (date pickers count Sunday as 0). */
 export const FIRST_DAY_OF_WEEK = 1;
+
+export const DAY_MS = 86_400_000;
+
+/** Whole calendar days from one YYYY-MM-DD key to another (positive when `to` is later). */
+export const daysBetween = (from: string, to: string) => Math.round((parseLocalDate(to).getTime() - parseLocalDate(from).getTime()) / DAY_MS);
+
+/** "12 Oct" */
+export const shortDate = (key: string) => parseLocalDate(key).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+
+/** "Today", "Yesterday", else "Mon, 12 Oct". */
+export function dayLabel(key: string, todayKey: string) {
+  const diff = daysBetween(key, todayKey);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return parseLocalDate(key).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+}
+
+/** "08:15 AM" in local time, for a saved timestamp. */
+export const timeOf = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });

@@ -10,7 +10,7 @@ import { useTheme } from "../../theme/theme";
 import { alpha, radius, size, spacing, tracking, typography, withAlpha } from "../../theme/tokens";
 import { perfStart } from "../../utils/perf";
 import { displayWeight, weightLabel } from "../../utils/unitConversion";
-import { formatDate } from "../../utils/weekUtils";
+import { formatDate } from "../../utils/dates";
 import { useCountUp, sessionName } from "./homeShared";
 
 const MAX_CHIPS = 6;

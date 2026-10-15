@@ -35,7 +35,7 @@ import { size, spacing, tracking, typography } from "../../theme/tokens";
 import { allSets, checkPR, indexAsOf, prDetail, exerciseKey, formatSet, type LoggedSet } from "../../utils/exerciseHistory";
 import { perfEndAfterFrame, perfStart } from "../../utils/perf";
 import { toKg } from "../../utils/unitConversion";
-import { formatDate, parseLocalDate, FIRST_DAY_OF_WEEK } from "../../utils/weekUtils";
+import { formatDate, parseLocalDate, FIRST_DAY_OF_WEEK } from "../../utils/dates";
 
 /** Horizontal swipe on the exercise view: start tracking / switch exercise. */
 const SWIPE_ACTIVATE = 24;

@@ -22,13 +22,12 @@ import { scheduleWorkoutDelete, UNDO_WINDOW_MS, undoWorkoutDelete } from "../../
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import { displayWeight, toKg, weightLabel, weightStep } from "../../utils/unitConversion";
-import { formatDate, parseLocalDate, FIRST_DAY_OF_WEEK } from "../../utils/weekUtils";
+import { formatDate, parseLocalDate, FIRST_DAY_OF_WEEK, dayLabel } from "../../utils/dates";
 
 const MAX_WEIGHT = 9999;
 const MAX_REPS = 999;
 const MAX_SETS = 50;
 const NOTES_MAX = 500;
-const DAY_MS = 86_400_000;
 
 type EditSet = { key: string; weight: number | null; reps: number | null };
 let seq = 0;
@@ -316,10 +315,3 @@ export default function EditWorkout() {
   );
 }
 
-/** "Today", "Yesterday", "Mon 5 Oct". */
-function dayLabel(key: string, todayKey: string) {
-  const diff = Math.round((parseLocalDate(todayKey).getTime() - parseLocalDate(key).getTime()) / DAY_MS);
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Yesterday";
-  return parseLocalDate(key).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-}

@@ -27,12 +27,13 @@ import { useTheme } from "../../theme/theme";
 import { radius, semibold, size, spacing, touchTarget, tracking, typography } from "../../theme/tokens";
 import { getInitials } from "../../utils/avatar";
 import { perfStart } from "../../utils/perf";
-import { WEEKDAYS, DAY_MS } from "../../components/home/homeShared";
+import { WEEKDAYS } from "../../components/home/homeShared";
 import { TodayCard } from "../../components/home/TodayCard";
 import { WeekCard, StreakCard } from "../../components/home/WeekCards";
 import { YourPlanCard, AIPlanCard } from "../../components/home/PlanCards";
 import { RecentCard } from "../../components/home/RecentCard";
 import { HomeSkeleton } from "../../components/home/HomeSkeleton";
+import { DAY_MS } from "../../utils/dates";
 
 const VERIFICATION_GRACE_DAYS = 7;
 

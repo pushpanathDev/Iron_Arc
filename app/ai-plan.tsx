@@ -23,10 +23,10 @@ import type { Plan, PlanCriteriaPayload } from "../services/api";
 import { useTheme } from "../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../theme/tokens";
 import { planSummary } from "../utils/planData";
+import { DAY_MS } from "../utils/dates";
 
 type IconName = ComponentProps<typeof MaterialIcons>["name"];
 
-const DAY_MS = 86_400_000;
 /** "today", "yesterday", "3 days ago", "12 Sep". */
 function ago(iso: string) {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / DAY_MS);

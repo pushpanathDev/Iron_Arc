@@ -1,7 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { workoutApi, type Workout } from "../services/api";
 import { toKg } from "../utils/unitConversion";
-import { formatDate } from "../utils/weekUtils";
+import { formatDate } from "../utils/dates";
 import { doneSets, getDraft, updateDraft, writeNow, type WorkoutDraft } from "./workoutDraft";
 import { workoutKeys } from "./workoutCache";
 

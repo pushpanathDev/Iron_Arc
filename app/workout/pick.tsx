@@ -26,7 +26,7 @@ import { useTheme } from "../../theme/theme";
 import { size, spacing, typography } from "../../theme/tokens";
 import { exerciseKey, formatSet, indexAsOf, prWithin } from "../../utils/exerciseHistory";
 import { perfEndAfterFrame, perfMark, perfStart } from "../../utils/perf";
-import { formatDate } from "../../utils/weekUtils";
+import { formatDate } from "../../utils/dates";
 
 const GRID_COLUMNS = 3;
 const SKELETON_ROWS = 5;

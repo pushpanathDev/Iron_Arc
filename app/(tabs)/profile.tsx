@@ -56,6 +56,7 @@ import { getGoogleSignin } from "../../services/googleSignin";
 import { createPageLogger } from "../../utils/logger";
 import { displayWeight, weightLabel } from "../../utils/unitConversion";
 import { clearVerificationSent } from "../../services/emailVerification";
+import { DAY_MS } from "../../utils/dates";
 
 const log = createPageLogger("Profile");
 const NO_WORKOUTS: never[] = [];
@@ -138,7 +139,7 @@ export default function ProfileScreen() {
       start = Date.now();
       await setEmailVerificationStart(user.uid, start);
     }
-    const elapsedDays = Math.floor((Date.now() - start) / 86_400_000);
+    const elapsedDays = Math.floor((Date.now() - start) / DAY_MS);
     setVerificationDaysLeft(Math.max(0, VERIFICATION_GRACE_DAYS - elapsedDays));
   }, [user]);
 

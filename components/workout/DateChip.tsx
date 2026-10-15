@@ -2,7 +2,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { Pressable, Text } from "react-native";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, typography } from "../../theme/tokens";
-import { formatDate, parseLocalDate } from "../../utils/weekUtils";
+import { formatDate, parseLocalDate } from "../../utils/dates";
 
 const MINUTE_MS = 60_000;
 

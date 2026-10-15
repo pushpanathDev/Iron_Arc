@@ -4,7 +4,7 @@ import { memo, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
-import { formatDate } from "../../utils/weekUtils";
+import { formatDate } from "../../utils/dates";
 
 const WEEK_LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
 const CELL = size.control - spacing.sm;

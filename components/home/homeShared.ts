@@ -3,14 +3,12 @@ import { useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "react-native-reanimated";
 import type { Session } from "../../hooks/useWorkoutSummary";
 import { motion } from "../../theme/tokens";
-import { parseLocalDate } from "../../utils/weekUtils";
+import { parseLocalDate, daysBetween } from "../../utils/dates";
 
 export const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
 /** Dates within this many days show a weekday name instead of "12 Sep". */
 const WEEKDAY_WINDOW = 6;
-
-export const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Counts up from 0 once, on first load; later changes jump straight to the value. */
 export function useCountUp(target: number, ready: boolean) {
@@ -48,7 +46,7 @@ export function sessionName(s: Session) {
 }
 
 export function relativeDay(date: string, todayKey: string) {
-  const diff = Math.round((parseLocalDate(todayKey).getTime() - parseLocalDate(date).getTime()) / DAY_MS);
+  const diff = daysBetween(date, todayKey);
   if (diff === 0) return "Today";
   if (diff === 1) return "Yesterday";
   if (diff <= WEEKDAY_WINDOW) return parseLocalDate(date).toLocaleDateString(undefined, { weekday: "long" });

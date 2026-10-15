@@ -45,7 +45,7 @@ export function stepWeight(value: number | null, direction: 1 | -1, unit: Weight
   return Math.min(maxFor(unit), Math.max(minFor(unit), round1(base + direction * WEIGHT_STEP)));
 }
 
-/* ---------- analog dial scale ---------- */
+// Analog dial scale
 
 export interface DialScale {
   /** Highest value on the dial, in the display unit. */
@@ -87,7 +87,7 @@ export function dialFraction(value: number | null, scale: DialScale): { fraction
   return { fraction: Math.min(1, value / scale.capacity), overCapacity: value > scale.capacity };
 }
 
-/* ---------- trend ---------- */
+// Trend
 
 export interface WeightChange {
   /** Latest minus the comparison entry, in kg. */
@@ -127,7 +127,7 @@ export const fromDisplay = (value: number, unit: WeightUnit) => round1(unit === 
 /** 77.4, 80 (no trailing ".0"). */
 export const formatValue = (n: number) => String(round1(n));
 
-/* ---------- target weight (optional, set by the user) ---------- */
+// Target weight (optional, set by the user)
 
 /** Within this many kg counts as at the goal. */
 const GOAL_TOLERANCE_KG = 0.1;

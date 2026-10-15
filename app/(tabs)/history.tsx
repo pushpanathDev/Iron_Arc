@@ -62,7 +62,7 @@ export default function History() {
   // Swiped session awaiting confirmation (and how to snap its card back).
   const [confirm, setConfirm] = useState<{ group: SessionGroup; close: () => void } | null>(null);
 
-  /* ---------- data ---------- */
+  // Data
   const groups = useMemo(() => groupSessions(workouts), [workouts]);
   const trainedDays = useMemo(() => new Set(workouts.map((w) => w.date.slice(0, 10))), [workouts]);
   const prWorkoutIds = useMemo(() => {
@@ -96,7 +96,7 @@ export default function History() {
   const isCurrentMonth = monthKey === todayKey.slice(0, 7);
   const monthName = month.toLocaleDateString(undefined, { month: "long" });
 
-  /* ---------- opened for a day (Home's "View workout") ---------- */
+  // Opened for a day (Home's "View workout")
   useEffect(() => {
     const d = params.date;
     if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
@@ -109,7 +109,7 @@ export default function History() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.date]);
 
-  /* ---------- month / filters ---------- */
+  // Month / filters
   const changeMonth = useCallback((delta: number) => {
     setMonth((m) => new Date(m.getFullYear(), m.getMonth() + delta, 1));
     setSelectedDay(null);
@@ -127,7 +127,7 @@ export default function History() {
     }
   };
 
-  /* ---------- delete a whole session (through the delete queue) ---------- */
+  // Delete a whole session (through the delete queue)
   const deleteSession = useCallback(
     async (group: SessionGroup) => {
       if (!user) return;

@@ -1,17 +1,19 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { Text, View } from "react-native";
+import { useRestRemaining } from "../../hooks/useRestTimer";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import { Button } from "../ui/Button";
 
-export const formatClock = (seconds: number) => {
+const formatClock = (seconds: number) => {
   const s = Math.max(0, seconds);
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 };
 
 /** Sticky "RESTING 00:38 · +15s · Skip" bar while the rest timer runs. */
-export function RestBar({ remaining, onExtend, onSkip }: { remaining: number; onExtend: () => void; onSkip: () => void }) {
+export function RestBar({ endsAt, onExtend, onSkip }: { endsAt: number; onExtend: () => void; onSkip: () => void }) {
   const { colors } = useTheme();
+  const remaining = useRestRemaining(endsAt);
   return (
     <View
       accessibilityRole="timer"
@@ -35,6 +37,21 @@ export function RestBar({ remaining, onExtend, onSkip }: { remaining: number; on
       </View>
       <Button title="+15s" variant="tonal" onPress={onExtend} accessibilityLabel="Add 15 seconds" />
       <Button title="Skip" variant="tonal" onPress={onSkip} accessibilityLabel="Skip rest" />
+    </View>
+  );
+}
+
+/** Compact "Rest 00:38" pill for the session header. */
+export function RestPill({ endsAt }: { endsAt: number }) {
+  const { colors } = useTheme();
+  const remaining = useRestRemaining(endsAt);
+  return (
+    <View
+      style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: radius.md, borderWidth: size.divider, borderColor: colors.warning }}
+      accessibilityLabel={`Rest ${formatClock(remaining)}`}
+    >
+      <MaterialIcons name="timer" size={size.iconXs} color={colors.warning} />
+      <Text style={[typography.labelLg, { color: colors.warning, fontVariant: ["tabular-nums"] }]}>Rest {formatClock(remaining)}</Text>
     </View>
   );
 }

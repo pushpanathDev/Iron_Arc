@@ -29,7 +29,7 @@ const both = (poly: Poly): Poly[] => [poly, mirror(poly)];
 /** Polygon → SVG path data. */
 export const toPath = (poly: Poly) => `M${poly.map(([x, y]) => `${x} ${y}`).join("L")}Z`;
 
-/* ---------- silhouette ---------- */
+// Silhouette
 export const HEAD = { cx: 24, cy: 5, r: 4.2 };
 const TORSO: Poly = [
   [19.6, 9.6], [28.4, 9.6], [34, 12], [33.6, 18], [31.4, 23.5], [31.8, 27],
@@ -42,7 +42,7 @@ const LEG: Poly = [[16.2, 27], [23.4, 27], [23.1, 36], [22.6, 46.5], [18.2, 46.5
 
 export const SILHOUETTE: Poly[] = [TORSO, ...both(ARM), ...both(LEG)];
 
-/* ---------- muscles ---------- */
+// Muscles
 const PEC: Poly = [[23.2, 11.8], [18, 11.6], [15.4, 13.4], [16, 17.6], [19.8, 18.8], [23.2, 17.8]];
 const DELT: Poly = [[16.4, 10], [10.4, 11.9], [8.7, 18.8], [13.9, 17.2], [16.4, 13.8]];
 const BICEP: Poly = [[10.6, 16.2], [9.1, 23.4], [13.5, 23.6], [14.5, 17.2]];

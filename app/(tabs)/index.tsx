@@ -84,7 +84,7 @@ export default function Home() {
     return planWeekDays.find((d) => d.day?.toLowerCase() === todayName) ?? null;
   }, [planWeekDays]);
 
-  /* ---------- email verification ---------- */
+  // Email verification
   const loadVerificationStatus = useCallback(async () => {
     if (!user) return;
     try {
@@ -120,7 +120,7 @@ export default function Home() {
     }
   }, [user, verificationDaysLeft, showVerificationPrompt]);
 
-  /* ---------- refresh ---------- */
+  // Refresh
   const refetchAll = useCallback(async () => {
     await Promise.all([
       workoutsQuery.refetch(),
@@ -141,7 +141,7 @@ export default function Home() {
     }
   };
 
-  /* ---------- screen state ---------- */
+  // Screen state
   const planLoading = plansQuery.isLoading || (!!activePlanMeta && activePlanQuery.isLoading);
   // Skeleton until EVERYTHING Home shows has loaded (workouts, profile, weights,
   // plan), so the screen appears complete in one go instead of filling in card

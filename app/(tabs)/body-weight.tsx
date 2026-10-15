@@ -63,7 +63,7 @@ export default function BodyWeightScreen() {
   const { unit, setUnit } = useUnitPreference();
   const scrollRef = useRef<ScrollView>(null);
 
-  /* ---------- deferred delete with undo ---------- */
+  // Deferred delete with undo
   // Hidden from the list (not removed from the cache) during the undo window,
   // so a refetch can't bring them back. Sent when the window closes, or at once
   // if the app goes to the background.
@@ -94,7 +94,7 @@ export default function BodyWeightScreen() {
   const earlier = history.find((w) => w.date.slice(0, 10) < logDate);
   const prefillKg = existing?.weight ?? earlier?.weight ?? profile?.weight ?? null;
 
-  /* ---------- the value being entered (display unit) ---------- */
+  // The value being entered (display unit)
   const [value, setValue] = useState<number | null>(null);
   const [text, setText] = useState("");
   const [typing, setTyping] = useState(false);
@@ -135,7 +135,7 @@ export default function BodyWeightScreen() {
   // While typing, "7" on the way to "75" isn't an error yet; over the maximum is.
   const showError = !!error && value != null && (!typing || value > maxFor(unit));
 
-  /* ---------- save ---------- */
+  // Save
   const save = async () => {
     if (error || value == null || logWeight.isPending) return;
     try {
@@ -153,7 +153,7 @@ export default function BodyWeightScreen() {
     }
   };
 
-  /* ---------- delete ---------- */
+  // Delete
   const setPending = (id: string, pending: boolean) =>
     setPendingDeleteIds((prev) => {
       const next = new Set(prev);
@@ -246,7 +246,7 @@ export default function BodyWeightScreen() {
     }
   };
 
-  /* ---------- derived ---------- */
+  // Derived
   const latest = history[0] ?? null;
   const first = history[history.length - 1] ?? null;
   const goalKg = profile?.targetWeight ?? null;

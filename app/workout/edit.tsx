@@ -87,7 +87,7 @@ export default function EditWorkout() {
   const dirty = loaded && current !== original;
   const valid = sets.length > 0 && sets.every((s) => s.weight != null && s.reps != null && s.reps >= 1);
 
-  /* ---------- leaving with unsaved changes ---------- */
+  // Leaving with unsaved changes
   useEffect(
     () =>
       navigation.addListener("beforeRemove", (e) => {
@@ -105,7 +105,7 @@ export default function EditWorkout() {
     else router.replace("/(tabs)/history");
   };
 
-  /* ---------- sets ---------- */
+  // Sets
   const updateSet = (key: string, patch: Partial<EditSet>) => setSets((list) => list.map((s) => (s.key === key ? { ...s, ...patch } : s)));
   const removeSet = (key: string) => setSets((list) => list.filter((s) => s.key !== key));
   const addSet = () =>
@@ -115,7 +115,7 @@ export default function EditWorkout() {
       return [...list, { key: newKey(), weight: last?.weight ?? null, reps: last?.reps ?? null }];
     });
 
-  /* ---------- save / delete ---------- */
+  // Save / delete
   const save = async () => {
     if (!workout || !date || !valid || update.isPending) return;
     try {

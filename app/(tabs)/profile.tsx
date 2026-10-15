@@ -103,13 +103,13 @@ export default function ProfileScreen() {
   const [confirm, setConfirm] = useState<"logout" | "delete" | null>(null);
   const [notifStatus, setNotifStatus] = useState<string | null>(null);
 
-  /* ---------- numbers ---------- */
+  // Numbers
   const workouts = workoutsQuery.data ?? NO_WORKOUTS;
   const sessions = useMemo(() => groupSessions(workouts).length, [workouts]);
   const unlocked = achievements ? achievements.filter((a) => a.unlockedAt).length : null;
   const activePlan = plans?.find((p) => p.isActive) ?? null;
 
-  /* ---------- notifications: the real state (setting + system permission) ---------- */
+  // Notifications: the real state (setting + system permission)
   const loadNotifStatus = useCallback(async () => {
     try {
       const [prefs, perm] = await Promise.all([getNotificationPreferences(), Notifications.getPermissionsAsync()]);
@@ -120,7 +120,7 @@ export default function ProfileScreen() {
     }
   }, []);
 
-  /* ---------- email verification (grace period) ---------- */
+  // Email verification (grace period)
   const [verificationDaysLeft, setVerificationDaysLeft] = useState<number | null>(null);
   const [showVerificationPrompt, setShowVerificationPrompt] = useState(false);
   const loadVerificationStatus = useCallback(async () => {
@@ -162,7 +162,7 @@ export default function ProfileScreen() {
     }
   };
 
-  /* ---------- save one field (instant save, small toast) ---------- */
+  // Save one field (instant save, small toast)
   const save = async (key: EditKey | "name", updates: ProfileUpdate, label: string) => {
     setSaving(key);
     try {
@@ -185,7 +185,7 @@ export default function ProfileScreen() {
     }
   };
 
-  /* ---------- logout ---------- */
+  // Logout
   const doLogout = async () => {
     try {
       // No stale data or background refetches after sign-out.
@@ -199,7 +199,7 @@ export default function ProfileScreen() {
     }
   };
 
-  /* ---------- delete account (with sign-in again when Firebase asks) ---------- */
+  // Delete account (with sign-in again when Firebase asks)
   const [deleting, setDeleting] = useState(false);
   const [reauthOpen, setReauthOpen] = useState(false);
   const [password, setPassword] = useState("");
@@ -278,7 +278,7 @@ export default function ProfileScreen() {
     }
   };
 
-  /* ---------- states before the profile is available ---------- */
+  // States before the profile is available
   if (!profile && connection.state !== "online") {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: "center", padding: spacing.screen }}>
@@ -306,7 +306,7 @@ export default function ProfileScreen() {
     );
   }
 
-  /* ---------- values ---------- */
+  // Values
   const days = (profile.trainingDays ?? []) as Weekday[];
   const avoid = (profile.avoidAreas ?? []) as AvoidArea[];
   const goalTitle = GOALS.find((g) => g.id === profile.fitnessGoal)?.title ?? null;
@@ -488,7 +488,7 @@ export default function ProfileScreen() {
         <Text style={[typography.labelSm, { color: colors.textMuted, textAlign: "center" }]}>Iron Arc {getVersionLabel()}</Text>
       </ScrollView>
 
-      {/* ---------- edit sheets (each saves on its own) ---------- */}
+      {/* Edit sheets (each saves on its own) */}
       <DaysSheet
         visible={editing === "days"}
         value={days}

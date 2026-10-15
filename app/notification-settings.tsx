@@ -149,7 +149,7 @@ export default function NotificationSettingsScreen() {
     if (e.type === "set" && d && key) void save({ [key]: toKey(d) } as Partial<NotificationPreferences>);
   };
 
-  /* ---------- derived ---------- */
+  // Derived
   const granted = permission?.status === "granted";
   const blocked = !supported || !granted;
   const goal = effectiveWeeklyGoal(profile);

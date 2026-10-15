@@ -90,7 +90,7 @@ const STEP2_FIELDS: Field[] = ["goal", "experience", "days", "equipment", "targe
 /** Target weight is offered only where it means something. */
 const TARGET_GOALS: FitnessGoal[] = ["weight-loss", "muscle"];
 
-/* ---------- small building blocks ---------- */
+// Small building blocks
 
 function SectionCard({
   title,
@@ -205,7 +205,7 @@ function StepDots({ step }: { step: 1 | 2 }) {
   );
 }
 
-/* ---------- screen ---------- */
+// Screen
 
 export function OnboardingProfileSetup({ initialName = "", onComplete, onBack }: Props) {
   const { colors } = useTheme();

@@ -67,7 +67,7 @@ export function BathroomScale({ value, unit }: BathroomScaleProps) {
     lastValue.current = value;
   }, [value]);
 
-  /* ---------- animation ---------- */
+  // Animation
   const reading = on && value != null ? Math.min(Math.max(value, 0), tapeMax) : 0;
   const pos = useSharedValue(0); // units under the pointer
   const press = useSharedValue(0); // 0 = empty platform, 1 = someone on it

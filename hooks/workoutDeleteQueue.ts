@@ -29,7 +29,7 @@ const log = (msg: string) => {
   if (__DEV__) console.log(`[WorkoutDelete] ${new Date().toISOString()} ${msg}`);
 };
 
-/* ---- persisted pending ids (serialised writes so they never clobber each other) ---- */
+// Persisted pending ids (serialised writes so they never clobber each other)
 let storageChain: Promise<unknown> = Promise.resolve();
 function updateStored(fn: (ids: string[]) => string[]) {
   storageChain = storageChain

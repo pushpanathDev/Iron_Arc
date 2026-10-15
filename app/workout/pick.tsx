@@ -61,7 +61,7 @@ export default function LogPicker() {
   const [ready, setReady] = useState(false);
   const [headerHeight, setHeaderHeight] = useState(0);
 
-  /* ---------- rows on the first frame after mount ---------- */
+  // Rows on the first frame after mount
   // The open transition is native (UI thread), so rendering the first rows
   // during it can't make it stutter; waiting for it only delayed the list.
   // One frame first so the screen itself (search, tiles) paints immediately.
@@ -74,7 +74,7 @@ export default function LogPicker() {
     if (ready) perfEndAfterFrame("open picker");
   }, [ready]);
 
-  /* ---------- data: everything precomputed once, rows read in O(1) ---------- */
+  // Data: everything precomputed once, rows read in O(1)
   const { byTile, all } = useExerciseCatalog();
   // Adding to a backdated session: rows and prefill reflect history up to that date.
   const full = useExerciseIndex();
@@ -188,7 +188,7 @@ export default function LogPicker() {
     [headerHeight, offsets, items],
   );
 
-  /* ---------- selection ---------- */
+  // Selection
   const inSession = useMemo(() => new Set(addMode ? (draft?.exercises ?? []).map((e) => e.name.toLowerCase()) : []), [addMode, draft]);
   const pickedKeys = useMemo(() => new Set(picked.map((p) => p.name.toLowerCase())), [picked]);
 

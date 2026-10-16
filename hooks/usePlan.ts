@@ -149,11 +149,8 @@ export function usePlanChat(planId: string | undefined) {
       try {
         queryClient.setQueryData(["plans", planId], (old: any) => {
           if (!old) return old;
-          return {
-            ...old,
-            planData: response.planData ?? old.planData,
-            chatHistory: response.chatHistory ?? old.chatHistory,
-          };
+          // The new planData carries the updated chat too (_chatHistory).
+          return { ...old, planData: response.planData ?? old.planData };
         });
         if (response.planUpdated) {
           queryClient.invalidateQueries({ queryKey: PLANS_KEY });

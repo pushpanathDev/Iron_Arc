@@ -293,7 +293,8 @@ export const userApi = {
 
   getProfile: () => request<User>("/api/user/profile"),
 
-  updateProfile: (data: Partial<Pick<User, "displayName" | "avatarUrl" | "authProvider" | "height" | "weight" | "age" | "fitnessGoal" | "weeklyGoal" | "targetWeight" | "experienceLevel" | "equipment" | "sessionMinutes" | "trainingDays" | "avoidAreas">>) =>
+  // Body weight isn't here: it follows the weight log (weightApi.log).
+  updateProfile: (data: Partial<Pick<User, "displayName" | "avatarUrl" | "authProvider" | "height" | "age" | "fitnessGoal" | "weeklyGoal" | "targetWeight" | "experienceLevel" | "equipment" | "sessionMinutes" | "trainingDays" | "avoidAreas">>) =>
     request<User>("/api/user/profile", {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -442,11 +443,10 @@ export interface Plan {
   userId: string;
   name: string;
   criteria: PlanCriteriaPayload | null;
+  /** The plan itself; the coach chat is inside it, as _chatHistory. */
   planData: unknown;
-  chatHistory: ChatMessage[] | null;
   isActive: boolean;
   weekNumber: number;
-  generatedAt: string;
   createdAt: string;
   updatedAt: string;
 }

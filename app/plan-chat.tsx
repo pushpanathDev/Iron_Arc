@@ -55,7 +55,7 @@ export default function PlanChatScreen() {
   // Saved log (kept inside planData by the server), once.
   useEffect(() => {
     if (!plan || loaded.current) return;
-    const history = ((plan.planData as { _chatHistory?: ChatMessage[] } | null)?._chatHistory ?? plan.chatHistory ?? []) as ChatMessage[];
+    const history = ((plan.planData as { _chatHistory?: ChatMessage[] } | null)?._chatHistory ?? []) as ChatMessage[];
     setMessages(history);
     loaded.current = true;
   }, [plan]);

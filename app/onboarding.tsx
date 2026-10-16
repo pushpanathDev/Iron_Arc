@@ -84,12 +84,12 @@ export default function OnboardingScreen() {
           avoidAreas,
         };
         if (targetWeightKg !== null) profileData.targetWeight = targetWeightKg;
-        if (weightKg !== null) profileData.weight = weightKg;
 
         const updatedProfile = await userApi.updateProfile(profileData);
         queryClient.setQueryData(["profile"], updatedProfile);
 
-        // The onboarding weight becomes the first entry in the weight log.
+        // The onboarding weight becomes the first entry in the weight log
+        // (the profile's weight always follows the log; the server sets it).
         if (weightKg !== null) {
           const today = new Date();
           try {

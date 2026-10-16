@@ -182,7 +182,8 @@ export function IntroSlides({ onDone }: IntroSlidesProps) {
         renderItem={({ item }) => (
           <ScrollView
             style={{ width }}
-            contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: spacing.xl, gap: spacing.form }}
+            // Centred in the space between the tabs and the button; still scrolls on short screens.
+            contentContainerStyle={{ flexGrow: 1, justifyContent: "center", paddingHorizontal: spacing.screen, paddingBottom: spacing.xl, gap: spacing.form }}
             showsVerticalScrollIndicator={false}
             nestedScrollEnabled
           >
@@ -210,5 +211,3 @@ export function IntroSlides({ onDone }: IntroSlidesProps) {
     </View>
   );
 }
-
-export default IntroSlides;

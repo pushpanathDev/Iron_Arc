@@ -1,9 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 
-import { useAuth } from "../auth/AuthContext";
-import { useToast } from "../context/ToastContext";
-import { TIER_LABELS } from "../insights/achievements";
+import { useAuth } from "../providers/AuthContext";
+import { useToast } from "../providers/ToastContext";
+import { TIER_LABELS } from "../utils/achievementDisplay";
 import { Achievement, achievementApi } from "../services/api";
 import { enqueueUnlocks } from "./badgeUnlocks";
 

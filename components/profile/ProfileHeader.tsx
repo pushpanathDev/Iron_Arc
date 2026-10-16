@@ -1,11 +1,12 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useState, type ComponentProps } from "react";
+import { useEffect, useState } from "react";
 import { Image, Pressable, Text, View } from "react-native";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import { Button } from "../ui/Button";
 import { TextField } from "../ui/TextField";
+import type { MaterialIconName } from "../ui/iconName";
 
 const NAME_MAX = 40;
 /** Gap between the photo and its accent ring. */
@@ -143,7 +144,7 @@ export function ProfileHeader(p: ProfileHeaderProps) {
   );
 }
 
-function Badge({ icon, label, color }: { icon: ComponentProps<typeof MaterialIcons>["name"]; label: string; color: string }) {
+function Badge({ icon, label, color }: { icon: MaterialIconName; label: string; color: string }) {
   const { colors } = useTheme();
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xxs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: radius.full, backgroundColor: colors.surfaceContainerHigh }}>

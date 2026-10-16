@@ -10,9 +10,9 @@ import { changeOver, formatValue, goalProgress, toDisplay } from "../../utils/bo
 import { weightLabel, type WeightUnit } from "../../utils/unitConversion";
 import { Card } from "../ui/Card";
 import { deltaColor, signed } from "../weight/weightChange";
+import { DAY_MS } from "../../utils/dates";
 
 const SPARK_DAYS = 30;
-const DAY_MS = 86_400_000;
 const DOT = 3;
 
 export type WeightSnapshotCardProps = {
@@ -120,5 +120,3 @@ function Sparkline({ entries }: { entries: BodyWeight[] }) {
     </View>
   );
 }
-
-export default WeightSnapshotCard;

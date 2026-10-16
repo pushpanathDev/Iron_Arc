@@ -47,5 +47,3 @@ export function ErrorState({
     </View>
   );
 }
-
-export default ErrorState;

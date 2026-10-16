@@ -87,7 +87,8 @@ export function TextField({
           {
             minHeight: size.control,
             borderRadius: radius.lg,
-            justifyContent: "center",
+            flexDirection: "row",
+            alignItems: "center",
             borderWidth: hasError ? size.divider : 0,
             borderColor: colors.danger,
           },
@@ -121,28 +122,22 @@ export function TextField({
           style={[
             typography.bodyMd,
             {
+              flex: 1,
               minHeight: size.control,
               color: editable ? colors.text : colors.textMuted,
               paddingLeft: spacing.lg,
-              paddingRight: isPassword ? size.control : spacing.lg,
+              paddingRight: isPassword ? 0 : spacing.lg,
               paddingVertical: 0,
             },
           ]}
         />
+        {/* Beside the input rather than over it, so a tap on the eye can't go to the input instead. */}
         {isPassword && (
           <PressableScale
             onPress={toggleVisibility}
             accessibilityRole="button"
             accessibilityLabel={hidden ? "Show password" : "Hide password"}
-            style={{
-              position: "absolute",
-              top: 0,
-              right: 0,
-              width: size.control,
-              height: size.control,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
+            style={{ width: size.control, height: size.control, alignItems: "center", justifyContent: "center" }}
           >
             {({ pressed }) => (
               <MaterialIcons
@@ -169,5 +164,3 @@ export function TextField({
     </View>
   );
 }
-
-export default TextField;

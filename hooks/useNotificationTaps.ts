@@ -1,14 +1,14 @@
 import * as Notifications from "expo-notifications";
 import { router, type Href } from "expo-router";
 import { useEffect, useRef } from "react";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../providers/AuthContext";
 import { notificationsSupported } from "../notifications/notificationService";
 
 /** Where each reminder leads when tapped. The rest timer and the test have no type: the app just opens. */
 const ROUTES: Record<string, Href> = {
-  daily_reminder: "/log/pick",
-  goal_at_risk: "/log/pick",
-  inactivity: "/log/pick",
+  daily_reminder: "/workout/pick",
+  goal_at_risk: "/workout/pick",
+  inactivity: "/workout/pick",
   weekly_summary: "/(tabs)/analytics",
   weigh_in: "/(tabs)/body-weight",
 };

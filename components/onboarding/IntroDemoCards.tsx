@@ -59,7 +59,7 @@ function Chip({ children }: { children: ReactNode }) {
   );
 }
 
-/* ---------- Slide 1: logging ---------- */
+// Slide 1: logging
 
 function useCountdown(start: number) {
   const [left, setLeft] = useState(start);
@@ -166,7 +166,7 @@ export function LogDemoCard() {
   );
 }
 
-/* ---------- Slide 2: progress ---------- */
+// Slide 2: progress
 
 function Tile({ label, value }: { label: string; value: string }) {
   const { colors } = useTheme();
@@ -218,7 +218,7 @@ export function TrackDemoCard() {
   );
 }
 
-/* ---------- Slide 3: plans ---------- */
+// Slide 3: plans
 
 const ROUTINE = [
   { name: "Standing Overhead Press", detail: "4 sets · 4–6 reps · 180s rest" },

@@ -43,5 +43,3 @@ export function SectionHeader({ title, actionLabel, onAction, actionAccessibilit
     </View>
   );
 }
-
-export default SectionHeader;

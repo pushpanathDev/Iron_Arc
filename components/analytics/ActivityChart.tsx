@@ -5,7 +5,7 @@ import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, w
 import { useTheme } from "../../theme/theme";
 import { motion, radius, size, spacing, typography } from "../../theme/tokens";
 import type { ActivityBucket, PeriodComparison, PeriodStats } from "../../utils/analytics";
-import { parseLocalDate } from "../../utils/weekUtils";
+import { parseLocalDate } from "../../utils/dates";
 import { Button } from "../ui/Button";
 
 /** Space above the tallest bar for its value label. */
@@ -223,5 +223,3 @@ function CompareLine({ pct, against }: { pct: number; against: string }) {
     </View>
   );
 }
-
-export default ActivityChart;

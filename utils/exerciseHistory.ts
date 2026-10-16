@@ -1,5 +1,6 @@
 import type { Workout } from "../services/api";
 import { displayWeight, weightLabel, type WeightUnit } from "./unitConversion";
+import { DAY_MS } from "./dates";
 
 /*
  * Per-exercise history derived from the cached workout list. The backend
@@ -29,7 +30,6 @@ export interface ExerciseHistory {
 /** Weights closer than this are treated as equal (lbs ↔ kg rounding). */
 const EPSILON_KG = 0.05;
 const PR_WINDOW_DAYS = 30;
-const DAY_MS = 86_400_000;
 
 export const exerciseKey = (name: string) => name.trim().toLowerCase();
 const dayKey = (w: Workout) => w.date.split("T")[0];
@@ -177,9 +177,7 @@ export const formatWeightValue = (value: number) => trim(value);
 /** kg → the display unit, to one decimal. */
 export const displayWeightRounded = (kg: number, unit: WeightUnit) => Math.round(displayWeight(kg, unit) * 10) / 10;
 
-/* =========================================================
-   Precomputed per-exercise summaries (one pass per workouts change)
-   ========================================================= */
+// Precomputed per-exercise summaries (one pass per workouts change)
 
 export interface ExerciseSummary {
   /** Most recent session's date, set count and heaviest set. */
@@ -292,9 +290,7 @@ export function prEventsFor(workouts: Workout[]): PREvent[] {
   return hit.events;
 }
 
-/* =========================================================
-   PR events (one per exercise per session that set a PR)
-   ========================================================= */
+// PR events (one per exercise per session that set a PR)
 
 export interface PREvent {
   exercise: string;
@@ -328,9 +324,7 @@ export function prEvents(index: Map<string, ExerciseHistory>): PREvent[] {
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 
-/* =========================================================
-   Recent personal records (Home highlight)
-   ========================================================= */
+// Recent personal records (Home highlight)
 
 export interface RecentPR {
   exercise: string;

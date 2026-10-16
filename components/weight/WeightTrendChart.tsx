@@ -6,12 +6,12 @@ import { useTheme } from "../../theme/theme";
 import { alpha, fontFamily, radius, size, spacing, typography } from "../../theme/tokens";
 import { formatValue, toDisplay } from "../../utils/bodyWeightRules";
 import { weightLabel, type WeightUnit } from "../../utils/unitConversion";
+import { shortDate, DAY_MS } from "../../utils/dates";
 
 export type TrendRange = "7D" | "30D" | "90D" | "1Y";
 export const TREND_RANGES: TrendRange[] = ["7D", "30D", "90D", "1Y"];
 const RANGE_DAYS: Record<TrendRange, number> = { "7D": 7, "30D": 30, "90D": 90, "1Y": 365 };
 
-const DAY_MS = 86_400_000;
 const AXIS_W = 36;
 const PAD_TOP = 12;
 const PAD_RIGHT = 6;
@@ -23,8 +23,6 @@ const GOAL_REACH = 1.5;
 const MIN_SPAN = 1;
 
 const dayMs = (date: string) => Date.parse(`${date.slice(0, 10)}T00:00:00`);
-export const shortDate = (date: string) => new Date(`${date.slice(0, 10)}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" });
-
 /** Entries in the chosen range, oldest first. */
 export function entriesInRange(entries: BodyWeight[], range: TrendRange, todayKey: string) {
   const from = dayMs(todayKey) - RANGE_DAYS[range] * DAY_MS;
@@ -198,5 +196,3 @@ export function WeightTrendChart({ entries, unit, todayKey, goalKg }: WeightTren
     </View>
   );
 }
-
-export default WeightTrendChart;

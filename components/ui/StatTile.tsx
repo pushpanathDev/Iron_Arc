@@ -53,5 +53,3 @@ export function StatTile({ value, label, unit, icon, tone = "default", style }: 
     </View>
   );
 }
-
-export default StatTile;

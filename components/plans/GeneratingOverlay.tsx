@@ -1,7 +1,7 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
-import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
+import Animated, { cancelAnimation, Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
@@ -10,6 +10,8 @@ const PULSE_MS = 1100;
 const SWEEP_MS = 1400;
 /** Each input gets its tick this long after the previous one. */
 const TICK_MS = 700;
+/** The moving highlight's share of the track. */
+const BAR_SHARE = 0.35;
 
 export type GeneratingOverlayProps = {
   visible: boolean;
@@ -33,8 +35,15 @@ export function GeneratingOverlay({ visible, title, inputs, onStopWaiting }: Gen
 
   useEffect(() => {
     if (!visible || reduceMotion) return;
+    // Start from the beginning each time (a second run from where the last one stopped didn't move).
+    pulse.value = 1;
+    sweep.value = 0;
     pulse.value = withRepeat(withTiming(0.55, { duration: PULSE_MS, easing: Easing.inOut(Easing.quad) }), -1, true);
     sweep.value = withRepeat(withTiming(1, { duration: SWEEP_MS, easing: Easing.inOut(Easing.cubic) }), -1, false);
+    return () => {
+      cancelAnimation(pulse);
+      cancelAnimation(sweep);
+    };
   }, [visible, reduceMotion, pulse, sweep]);
 
   // Tick the inputs off one by one (presentation only: no claim about server progress).
@@ -53,7 +62,11 @@ export function GeneratingOverlay({ visible, title, inputs, onStopWaiting }: Gen
   }, [visible, reduceMotion, inputs.length]);
 
   const emblem = useAnimatedStyle(() => ({ opacity: pulse.value }));
-  const bar = useAnimatedStyle(() => ({ left: `${-35 + sweep.value * 135}%` }));
+  // The highlight slides across the track in pixels (animating a "left: x%" string didn't move on Android).
+  const trackWidth = useSharedValue(0);
+  const bar = useAnimatedStyle(() => ({
+    transform: [{ translateX: (sweep.value * (1 + BAR_SHARE) - BAR_SHARE) * trackWidth.value }],
+  }));
 
   return (
     <Modal visible={visible} animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={onStopWaiting}>
@@ -82,8 +95,17 @@ export function GeneratingOverlay({ visible, title, inputs, onStopWaiting }: Gen
           </View>
 
           <View style={{ gap: spacing.md, padding: spacing.lg, borderRadius: radius.xl, backgroundColor: colors.raised }}>
-            <View style={{ height: size.progressBar, borderRadius: radius.full, backgroundColor: colors.surfaceContainerHigh, overflow: "hidden" }} accessibilityLabel="Working">
-              <Animated.View style={[{ position: "absolute", top: 0, bottom: 0, width: "35%", borderRadius: radius.full, backgroundColor: colors.accent }, reduceMotion ? { left: "0%", width: "100%", opacity: 0.4 } : bar]} />
+            <View
+              onLayout={(e) => (trackWidth.value = e.nativeEvent.layout.width)}
+              style={{ height: size.progressBar, borderRadius: radius.full, backgroundColor: colors.surfaceContainerHigh, overflow: "hidden" }}
+              accessibilityLabel="Working"
+            >
+              <Animated.View
+                style={[
+                  { position: "absolute", top: 0, bottom: 0, left: 0, width: `${BAR_SHARE * 100}%`, borderRadius: radius.full, backgroundColor: colors.accent },
+                  reduceMotion ? { width: "100%", opacity: 0.4 } : bar,
+                ]}
+              />
             </View>
             <Text style={[typography.labelMd, { color: colors.textSecondary, textTransform: "uppercase", letterSpacing: tracking.overline }]}>What I&apos;m using</Text>
             {inputs.map((line, i) => (
@@ -118,5 +140,3 @@ function InputRow({ text, done }: { text: string; done: boolean }) {
     </View>
   );
 }
-
-export default GeneratingOverlay;

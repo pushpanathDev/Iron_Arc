@@ -60,5 +60,3 @@ export function Card({
     </PressableScale>
   );
 }
-
-export default Card;

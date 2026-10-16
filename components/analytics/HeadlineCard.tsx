@@ -95,5 +95,3 @@ function Divider() {
   const { colors } = useTheme();
   return <View style={{ width: size.divider, marginVertical: spacing.md, backgroundColor: colors.border }} />;
 }
-
-export default HeadlineCard;

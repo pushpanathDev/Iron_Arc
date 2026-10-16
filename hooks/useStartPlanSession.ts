@@ -1,10 +1,10 @@
 import { router } from "expo-router";
 import { useCallback } from "react";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../providers/AuthContext";
 import { armSubgroupOf } from "../data/armSubgroups";
 import { EXERCISES, type ExerciseCategory } from "../data/exercises";
-import { addExercises, beginDraft, createDraft, getDraft, updateDraft, type NewExercise } from "./logSession";
-import { historyPrefill, useExerciseIndex } from "./useLogData";
+import { addExercises, beginDraft, createDraft, getDraft, updateDraft, type NewExercise } from "./workoutDraft";
+import { historyPrefill, useExerciseIndex } from "./useWorkoutData";
 import { useUnitPreference } from "./useUnitPreference";
 
 export interface PlanSessionExercise {
@@ -72,7 +72,7 @@ export function useStartPlanSession() {
         beginDraft(createDraft(user.uid, unit));
         updateDraft((d) => addExercises(d, items, historyPrefill(index, unit)));
       }
-      router.push("/log/session");
+      router.push("/workout/session");
     },
     [user, unit, index],
   );

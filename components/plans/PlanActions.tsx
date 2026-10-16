@@ -1,10 +1,10 @@
 import { router } from "expo-router";
 import { useState } from "react";
 import { View } from "react-native";
-import { useToast } from "../../context/ToastContext";
+import { useToast } from "../../providers/ToastContext";
 import { useActivatePlan, useDeletePlan, useRecalibratePlan, useRenamePlan } from "../../hooks/usePlan";
 import { ApiError, type Plan } from "../../services/api";
-import { spacing } from "../../theme/tokens";
+import { motion, spacing } from "../../theme/tokens";
 import { SettingsGroup, SettingsRow } from "../profile/Settings";
 import { Button } from "../ui/Button";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
@@ -13,7 +13,6 @@ import { TextField } from "../ui/TextField";
 import { GeneratingOverlay } from "./GeneratingOverlay";
 
 const NAME_MAX = 60;
-const MODAL_SWAP_MS = 350;
 
 /** Plain words for AI request failures (the server rate-limits generate, recalibrate, swap and chat). */
 export function aiErrorMessage(e: unknown): string {
@@ -39,7 +38,7 @@ export type PlanActionsProps = {
   leaveOnDelete?: boolean;
 };
 
-/** ⋮ / ⚙ menu for a plan: rename, recalibrate, make active, delete. */
+/** ⋮ / ⚙ menu for a plan: rename, start next week, make active, delete. */
 export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) {
   const { showToast } = useToast();
   const rename = useRenamePlan();
@@ -58,7 +57,7 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
     setName(plan.name);
     onClose();
     // Let the menu sheet finish closing first: a modal opened while another closes can be dropped.
-    setTimeout(() => setMode(m), MODAL_SWAP_MS);
+    setTimeout(() => setMode(m), motion.modalSwapMs);
   };
   const done = () => {
     setMode(null);
@@ -70,7 +69,13 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
       <Sheet visible={!!plan} onClose={onClose} title={plan?.name ?? ""}>
         <SettingsGroup>
           <SettingsRow icon="edit" label="Rename" kind="action" onPress={() => choose("rename")} />
-          <SettingsRow icon="update" label="Recalibrate" detail="Adjust sets and weights from your recent workouts" kind="action" onPress={() => choose("recalibrate")} />
+          <SettingsRow
+            icon="update"
+            label="Start next week"
+            detail={`Move to week ${(plan?.weekNumber || 1) + 1}, tuned to what you logged this week`}
+            kind="action"
+            onPress={() => choose("recalibrate")}
+          />
           {plan && !plan.isActive ? (
             <SettingsRow
               icon="check-circle"
@@ -126,17 +131,17 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
       <ConfirmDialog
         visible={mode === "recalibrate"}
         icon="update"
-        title="Recalibrate this plan?"
-        message="The AI adjusts sets, reps and weights from your recent workouts. Your schedule stays the same."
-        confirmLabel="Recalibrate"
+        title={`Start week ${(target?.weekNumber || 1) + 1}?`}
+        message="The coach looks at what you logged in the last 7 days and tunes next week's sets and reps. Your training days stay the same, and the change is noted in the coach chat."
+        confirmLabel="Start next week"
         onCancel={done}
         onConfirm={() => {
           if (!target) return;
           setMode(null);
           setRecalibrating(true);
           recalibrate.mutate(target.id, {
-            onSuccess: () => showToast({ type: "success", message: "Plan recalibrated", subtitle: "Sets and weights now follow your recent workouts." }),
-            onError: (e) => showToast({ type: "error", message: "Couldn't recalibrate", subtitle: aiErrorMessage(e) }),
+            onSuccess: (p) => showToast({ type: "success", message: `Week ${p.weekNumber} is ready`, subtitle: "See what changed in the coach chat." }),
+            onError: (e) => showToast({ type: "error", message: "Couldn't start next week", subtitle: aiErrorMessage(e) }),
             onSettled: () => {
               setRecalibrating(false);
               setTarget(null);
@@ -146,8 +151,8 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
       />
       <GeneratingOverlay
         visible={recalibrating}
-        title="Recalibrating…"
-        inputs={["Your recent workouts", `The current plan: ${target?.name ?? ""}`]}
+        title="Preparing next week…"
+        inputs={["What you logged in the last 7 days", `This week of ${target?.name ?? ""}`]}
         onStopWaiting={() => setRecalibrating(false)}
       />
 
@@ -175,5 +180,3 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
     </>
   );
 }
-
-export default PlanActions;

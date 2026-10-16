@@ -1,4 +1,4 @@
-import { auth } from "../firebase/config";
+import { auth } from "./firebase";
 
 const DEFAULT_BASE_URL = __DEV__
   ? "http://10.0.2.2:3000"
@@ -6,8 +6,7 @@ const DEFAULT_BASE_URL = __DEV__
 
 const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL || DEFAULT_BASE_URL;
 
-// ─── Types ─────────────────────────────────────────────────────────────
-
+// Types
 export interface User {
   id: string;
   firebaseUid: string;
@@ -91,30 +90,6 @@ export interface CustomExercise {
   createdAt: string;
 }
 
-/** GET /api/workouts/stats — server aggregates over the full history. */
-export interface WorkoutStats {
-  /** Distinct calendar dates with at least one workout. */
-  totalWorkouts: number;
-  currentStreak: number;
-  longestStreak: number;
-  /** Total reps × weight, in kg. */
-  totalVolume: number;
-  personalRecords: { exerciseName: string; maxWeight: number; date: string }[];
-  distinctExercises: number;
-  /** Canonical groups trained: Chest, Back, Shoulders, Arms, Legs, Core. */
-  muscleGroupsCovered: string[];
-}
-
-/** GET /api/weights/stats — weights in kg, dates as YYYY-MM-DD. */
-export interface WeightStats {
-  latestWeight: number | null;
-  latestDate: string | null;
-  firstWeight: number | null;
-  firstDate: string | null;
-  totalEntries: number;
-  distinctDays: number;
-}
-
 export interface PaginatedResponse<T> {
   success: boolean;
   total: number;
@@ -125,8 +100,7 @@ export interface PaginatedResponse<T> {
   weights?: T[];
 }
 
-// ─── Date Helpers ──────────────────────────────────────────────────────
-
+// Date Helpers
 function toDateStr(value: string): string {
   return value.split("T")[0];
 }
@@ -143,8 +117,7 @@ function normalizeWeight(w: BodyWeight): BodyWeight {
   };
 }
 
-// ─── Core HTTP Client ──────────────────────────────────────────────────
-
+// Core HTTP Client
 async function getIdToken(): Promise<string> {
   const user = auth.currentUser;
   if (!user) throw new Error("Not authenticated");
@@ -288,8 +261,7 @@ async function requestWithUnlocks<T>(
   };
 }
 
-// ─── Pagination ────────────────────────────────────────────────────────
-
+// Pagination
 const LIST_ALL_PAGE_SIZE = 500;
 
 /**
@@ -315,14 +287,14 @@ async function fetchAllPages<T>(
   return [first, ...rest].flatMap((page) => page[field] ?? []);
 }
 
-// ─── User / Profile ────────────────────────────────────────────────────
-
+// User / Profile
 export const userApi = {
   sync: () => request<User>("/api/user/sync", { method: "POST" }),
 
   getProfile: () => request<User>("/api/user/profile"),
 
-  updateProfile: (data: Partial<Pick<User, "displayName" | "avatarUrl" | "authProvider" | "height" | "weight" | "age" | "fitnessGoal" | "weeklyGoal" | "targetWeight" | "experienceLevel" | "equipment" | "sessionMinutes" | "trainingDays" | "avoidAreas">>) =>
+  // Body weight isn't here: it follows the weight log (weightApi.log).
+  updateProfile: (data: Partial<Pick<User, "displayName" | "avatarUrl" | "authProvider" | "height" | "age" | "fitnessGoal" | "weeklyGoal" | "targetWeight" | "experienceLevel" | "equipment" | "sessionMinutes" | "trainingDays" | "avoidAreas">>) =>
     request<User>("/api/user/profile", {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -332,8 +304,7 @@ export const userApi = {
     request<{ message: string }>("/api/user/account", { method: "DELETE" }),
 };
 
-// ─── Workouts ──────────────────────────────────────────────────────────
-
+// Workouts
 export const workoutApi = {
   create: async (data: {
     date: string;
@@ -362,29 +333,6 @@ export const workoutApi = {
       body: JSON.stringify(data),
     });
     return { ...res, data: res.data.map(normalizeWorkout) };
-  },
-
-  list: async (params?: {
-    page?: number;
-    limit?: number;
-    category?: string;
-    startDate?: string;
-    endDate?: string;
-  }): Promise<PaginatedResponse<Workout>> => {
-    const query = new URLSearchParams();
-    if (params?.page) query.set("page", String(params.page));
-    if (params?.limit) query.set("limit", String(params.limit));
-    if (params?.category) query.set("category", params.category);
-    if (params?.startDate) query.set("startDate", params.startDate);
-    if (params?.endDate) query.set("endDate", params.endDate);
-    const qs = query.toString();
-    const result = await request<PaginatedResponse<Workout>>(
-      `/api/workouts${qs ? `?${qs}` : ""}`
-    );
-    return {
-      ...result,
-      workouts: result.workouts?.map(normalizeWorkout),
-    };
   },
 
   getById: async (id: string): Promise<Workout> => {
@@ -416,12 +364,9 @@ export const workoutApi = {
     const rows = await fetchAllPages<Workout>("/api/workouts", "workouts");
     return rows.map(normalizeWorkout);
   },
-
-  stats: () => request<WorkoutStats>("/api/workouts/stats"),
 };
 
-// ─── Body Weights ──────────────────────────────────────────────────────
-
+// Body Weights
 export const weightApi = {
   log: async (data: { date: string; weight: number; weekStart?: string }): Promise<WithUnlocks<BodyWeight>> => {
     const res = await requestWithUnlocks<BodyWeight>("/api/weights", {
@@ -429,22 +374,6 @@ export const weightApi = {
       body: JSON.stringify(data),
     });
     return { ...res, data: normalizeWeight(res.data) };
-  },
-
-  list: async (params?: { page?: number; limit?: number; startDate?: string; endDate?: string }): Promise<PaginatedResponse<BodyWeight>> => {
-    const query = new URLSearchParams();
-    if (params?.page) query.set("page", String(params.page));
-    if (params?.limit) query.set("limit", String(params.limit));
-    if (params?.startDate) query.set("startDate", params.startDate);
-    if (params?.endDate) query.set("endDate", params.endDate);
-    const qs = query.toString();
-    const result = await request<PaginatedResponse<BodyWeight>>(
-      `/api/weights${qs ? `?${qs}` : ""}`
-    );
-    return {
-      ...result,
-      weights: result.weights?.map(normalizeWeight),
-    };
   },
 
   getLatest: async (): Promise<BodyWeight> => {
@@ -459,12 +388,9 @@ export const weightApi = {
     const rows = await fetchAllPages<BodyWeight>("/api/weights", "weights");
     return rows.map(normalizeWeight);
   },
-
-  stats: () => request<WeightStats>("/api/weights/stats"),
 };
 
-// ─── Custom Exercises ──────────────────────────────────────────────────
-
+// Custom Exercises
 export const exerciseApi = {
   create: (data: { category: string; name: string }) =>
     request<CustomExercise>("/api/exercises", {
@@ -481,8 +407,7 @@ export const exerciseApi = {
     request<{ message: string }>(`/api/exercises/${id}`, { method: "DELETE" }),
 };
 
-// ─── AI Plans ──────────────────────────────────────────────────────────
-
+// AI Plans
 export interface PlanCriteriaPayload {
   sessionDuration?: number;
   equipment?: string;
@@ -498,6 +423,12 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: string;
+  /** Set on the coach's entries that changed the plan (chat replies, swaps, next week). */
+  planUpdated?: boolean;
+  /** What changed, in plain words; dayIndex 0 = Monday. */
+  changes?: { dayIndex: number; text: string }[];
+  /** "swap" or "nextWeek" for changes made outside the chat. */
+  kind?: "swap" | "nextWeek";
 }
 
 export interface PlanChatResponse {
@@ -512,32 +443,13 @@ export interface Plan {
   userId: string;
   name: string;
   criteria: PlanCriteriaPayload | null;
+  /** The plan itself; the coach chat is inside it, as _chatHistory. */
   planData: unknown;
-  chatHistory: ChatMessage[] | null;
   isActive: boolean;
   weekNumber: number;
-  generatedAt: string;
   createdAt: string;
   updatedAt: string;
 }
-
-// Legacy single-plan API (kept for backwards compat with older hooks)
-export const planApi = {
-  generate: (criteria?: PlanCriteriaPayload) =>
-    request<Plan>("/api/plans/generate", {
-      method: "POST",
-      body: criteria ? JSON.stringify({ criteria }) : undefined,
-    }),
-
-  recalibrate: () =>
-    request<Plan>("/api/plans/recalibrate", { method: "POST" }),
-
-  substitute: (exerciseId: string, reason?: string) =>
-    request<unknown>("/api/plans/substitute", {
-      method: "POST",
-      body: JSON.stringify({ exerciseId, reason: reason || "user_request" }),
-    }),
-};
 
 // AI-backed endpoints: the server calls Groq with up to 3 attempts × 30 s,
 // so the default 12 s client timeout aborts requests the server completes.
@@ -597,15 +509,13 @@ export const plansApi = {
     ),
 };
 
-// ─── Achievements ──────────────────────────────────────────────────────
-
+// Achievements
 export const achievementApi = {
   // Read-only: the client never submits badge keys; the server decides.
   list: () => request<Achievement[]>("/api/achievements"),
 };
 
-// ─── Health Check ──────────────────────────────────────────────────────
-
+// Health Check
 export async function checkHealth() {
   const res = await fetch(`${BASE_URL}/api/health`);
   return res.json();

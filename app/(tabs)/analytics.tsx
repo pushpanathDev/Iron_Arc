@@ -1,19 +1,19 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo, useState, type ComponentProps } from "react";
+import { useMemo, useState } from "react";
 import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { ActivityChart } from "../../components/analytics/ActivityChart";
 import { BestLiftsCard } from "../../components/analytics/BestLiftsCard";
 import { HeadlineCard } from "../../components/analytics/HeadlineCard";
 import { MuscleBalance } from "../../components/analytics/MuscleBalance";
 import { RecordsCard } from "../../components/analytics/RecordsCard";
-import { useAuth } from "../../auth/AuthContext";
+import { useAuth } from "../../providers/AuthContext";
 import { Avatar } from "../../components/ui/Avatar";
 import { Button } from "../../components/ui/Button";
 import { FilterChip } from "../../components/ui/FilterChip";
 import { Reveal } from "../../components/ui/Reveal";
 import { SkeletonBlock } from "../../components/ui/Skeleton";
-import { effectiveWeeklyGoal } from "../../constants/trainingProfile";
+import { effectiveWeeklyGoal } from "../../data/trainingProfile";
 import { useProfile } from "../../hooks/useProfile";
 import { useUnitPreference } from "../../hooks/useUnitPreference";
 import { useAllWorkouts } from "../../hooks/useWorkouts";
@@ -24,7 +24,8 @@ import { getInitials } from "../../utils/avatar";
 import { exerciseIndexFor, prEventsFor } from "../../utils/exerciseHistory";
 import { perfStart } from "../../utils/perf";
 import { toKg, weightLabel, weightStep } from "../../utils/unitConversion";
-import { formatDate, parseLocalDate } from "../../utils/weekUtils";
+import { formatDate, parseLocalDate } from "../../utils/dates";
+import type { MaterialIconName } from "../../components/ui/iconName";
 
 const NO_WORKOUTS: never[] = [];
 
@@ -38,10 +39,6 @@ const PHRASE: Record<AnalyticsPeriod, string> = {
   quarter: "in the last 3 months",
   all: "so far",
 };
-
-/* ==============================
-   ANALYTICS
-   ============================== */
 
 export default function Analytics() {
   const { colors } = useTheme();
@@ -174,11 +171,9 @@ export default function Analytics() {
   );
 }
 
-/* ==============================
-   PIECES
-   ============================== */
+// Pieces
 
-const PREVIEWS: { icon: ComponentProps<typeof MaterialIcons>["name"]; title: string; value: string; body: string }[] = [
+const PREVIEWS: { icon: MaterialIconName; title: string; value: string; body: string }[] = [
   { icon: "bar-chart", title: "Volume & load", value: "--", body: "Total weight lifted each week, across all exercises" },
   { icon: "pie-chart-outline", title: "Muscle balance", value: "-- %", body: "How your sets split across chest, back, legs and more" },
   { icon: "workspace-premium", title: "Personal records", value: "Pending", body: "Your heaviest lift for every exercise, new records starred" },
@@ -207,7 +202,7 @@ function AnalyticsEmpty() {
               icon="barbell-outline"
               onPress={() => {
                 perfStart("open picker");
-                router.push("/log/pick");
+                router.push("/workout/pick");
               }}
               fullWidth
             />

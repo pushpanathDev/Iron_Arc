@@ -4,7 +4,7 @@
  */
 import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo, useState, type ComponentProps } from "react";
+import { useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -14,8 +14,8 @@ import { PlanSettingsSheet } from "../components/plans/PlanSettingsSheet";
 import { Button } from "../components/ui/Button";
 import { Reveal } from "../components/ui/Reveal";
 import { SkeletonBlock } from "../components/ui/Skeleton";
-import { EQUIPMENT_OPTIONS, EXPERIENCE_OPTIONS, effectiveWeeklyGoal, formatDays } from "../constants/trainingProfile";
-import { useToast } from "../context/ToastContext";
+import { EQUIPMENT_OPTIONS, EXPERIENCE_OPTIONS, effectiveWeeklyGoal, formatDays } from "../data/trainingProfile";
+import { useToast } from "../providers/ToastContext";
 import { useActivatePlan, useGeneratePlan, usePlans } from "../hooks/usePlan";
 import { useProfile } from "../hooks/useProfile";
 import { useAllWorkouts } from "../hooks/useWorkouts";
@@ -23,10 +23,10 @@ import type { Plan, PlanCriteriaPayload } from "../services/api";
 import { useTheme } from "../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../theme/tokens";
 import { planSummary } from "../utils/planData";
+import { DAY_MS } from "../utils/dates";
+import type { MaterialIconName } from "../components/ui/iconName";
 
-type IconName = ComponentProps<typeof MaterialIcons>["name"];
 
-const DAY_MS = 86_400_000;
 /** "today", "yesterday", "3 days ago", "12 Sep". */
 function ago(iso: string) {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / DAY_MS);
@@ -42,7 +42,7 @@ const firstSentences = (text: string) => (text.match(/[^.!?]+[.!?]+/g)?.slice(0,
 export default function AIPlanScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { showToast } = useToast();
+  const { showToast, clearErrors } = useToast();
   const { data: profile } = useProfile();
   const { data: workouts } = useAllWorkouts();
   const { data, isLoading, isError, refetch } = usePlans();
@@ -71,6 +71,8 @@ export default function AIPlanScreen() {
   const onGenerate = (criteria: PlanCriteriaPayload) => {
     setSettingsOpen(false);
     setWaiting(true);
+    // A retry makes the last "Couldn't create the plan" out of date.
+    clearErrors();
     generate.mutate(criteria, {
       onSuccess: ({ data: plan }) => {
         showToast({ type: "success", message: "Your new plan is ready", subtitle: plan.name });
@@ -174,9 +176,7 @@ export default function AIPlanScreen() {
   );
 }
 
-/* ==============================
-   PIECES
-   ============================== */
+// Pieces
 
 function SectionLabel({ left, right }: { left: string; right?: string }) {
   const { colors } = useTheme();
@@ -211,7 +211,7 @@ function MenuButton({ onPress, label }: { onPress: () => void; label: string }) 
   );
 }
 
-function Stat({ icon, label, value }: { icon: IconName; label: string; value: string }) {
+function Stat({ icon, label, value }: { icon: MaterialIconName; label: string; value: string }) {
   const { colors } = useTheme();
   return (
     <View style={{ flex: 1, flexDirection: "row", gap: spacing.sm, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.surfaceContainerHigh }}>
@@ -283,7 +283,7 @@ function OtherCard({ plan, onMenu, onActivate, activating }: { plan: Plan; onMen
 /** Before the first plan: what you get, and the one button. */
 function IntroCard({ onGenerate, busy }: { onGenerate: () => void; busy: boolean }) {
   const { colors } = useTheme();
-  const points: [IconName, string, string][] = [
+  const points: [MaterialIconName, string, string][] = [
     ["event", "A week built around you", "Your training days, session length, equipment and experience"],
     ["swap-horiz", "Swap anything", "Don't like an exercise? The AI picks one for the same muscles"],
     ["forum", "Ask the coach", "\"Make it 3 days\" or \"shorter sessions\" and the plan changes"],
@@ -316,7 +316,7 @@ function IntroCard({ onGenerate, busy }: { onGenerate: () => void; busy: boolean
   );
 }
 
-function EmptyCard({ icon, title, body }: { icon: IconName; title: string; body: string }) {
+function EmptyCard({ icon, title, body }: { icon: MaterialIconName; title: string; body: string }) {
   const { colors } = useTheme();
   return (
     <View style={{ alignItems: "center", gap: spacing.md, padding: spacing.xl, borderRadius: radius.xl, backgroundColor: colors.raised }}>

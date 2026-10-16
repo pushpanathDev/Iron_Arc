@@ -324,10 +324,3 @@ export async function cancelRestEndNotification(): Promise<void> {
   }
 }
 
-export async function getScheduledNotifications(): Promise<Notifications.NotificationRequest[]> {
-  return Notifications.getAllScheduledNotificationsAsync();
-}
-
-export async function setBadgeCount(count: number): Promise<void> {
-  await Notifications.setBadgeCountAsync(count);
-}

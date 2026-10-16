@@ -6,7 +6,7 @@ import { radius, size, spacing, tracking, typography } from "../../theme/tokens"
 import type { ReachTarget } from "../../utils/analytics";
 import { formatSet, prGain, type PREvent } from "../../utils/exerciseHistory";
 import type { WeightUnit } from "../../utils/unitConversion";
-import { parseLocalDate } from "../../utils/weekUtils";
+import { shortDate } from "../../utils/dates";
 
 const MAX_ROWS = 5;
 
@@ -20,7 +20,6 @@ export type RecordsCardProps = {
 };
 
 const KIND_LABEL: Record<PREvent["kind"], string> = { weight: "Heavier", reps: "More reps", strength: "Stronger set" };
-const shortDate = (key: string) => parseLocalDate(key).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 
 /**
  * New records in the period (amber, with what each one gained), then
@@ -167,5 +166,3 @@ function Row({
     </Pressable>
   );
 }
-
-export default RecordsCard;

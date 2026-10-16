@@ -185,18 +185,21 @@ npx expo start         # start Metro for an installed development build
 ## Project structure
 
 ```
-app/                 Screens (Expo Router)
+app/                 Screens; each file is a route (Expo Router)
   (tabs)/            Home, Weight, Analytics, History, Profile
-  log/               Exercise picker, logging session, edit workout
-  exercise/          Per-exercise progress
-  ai-plan, plan-detail, plan-chat, achievements, notification-settings, ...
-components/          UI by feature (log, history, analytics, plans, profile, ...)
-  ui/                Shared building blocks (Button, Sheet, Stepper, ConfirmDialog, ...)
-hooks/               Data hooks (TanStack Query), logging draft and delete queue
-utils/               Pure training logic: records, analytics, plan parsing, weight entry
-notifications/       Reminder planner (pure) and scheduling service
-services/api.ts      Typed API client
-theme/               Design tokens and theme
+  workout/           Exercise picker, active session, edit a logged workout
+  exercise/          One exercise's progress
+  ai-plan, plan-detail, plan-chat, achievements, notification-settings, login, onboarding
+components/          Pieces of screens, one folder per screen or feature
+  ui/                Shared building blocks (Button, Sheet, Stepper, Toast, ...)
+  startup/           Splash, startup and "can't reach the server" screens
+hooks/               Data hooks (TanStack Query), workout draft, delete queue
+providers/           App-wide state: auth, connection, theme, toasts
+services/            The outside world: API client, Firebase, Google sign-in
+notifications/       Reminder planner (pure) and scheduling
+data/                Static data: exercise catalogue, training options
+utils/               Pure logic: records, analytics, plans, weights, dates, export
+theme/               Design tokens, fonts and the theme hook
 __tests__/           Unit tests for the logic above
 ```
 

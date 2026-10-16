@@ -85,5 +85,3 @@ export function ChoiceChips<T extends string | number>(props: ChoiceChipsProps<T
     </View>
   );
 }
-
-export default ChoiceChips;

@@ -15,9 +15,9 @@ import { Button } from "../components/ui/Button";
 import { Sheet } from "../components/ui/Sheet";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 import { TextField } from "../components/ui/TextField";
-import { useToast } from "../context/ToastContext";
+import { useToast } from "../providers/ToastContext";
 import { takePlanDayRequest } from "../hooks/planDayRequest";
-import { useExerciseIndex } from "../hooks/useLogData";
+import { useExerciseIndex } from "../hooks/useWorkoutData";
 import { usePlan, useSubstituteExercise } from "../hooks/usePlan";
 import { useStartPlanSession } from "../hooks/useStartPlanSession";
 import { useUnitPreference } from "../hooks/useUnitPreference";
@@ -107,6 +107,9 @@ function DayView({ plan }: { plan: Plan }) {
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [swapTarget, setSwapTarget] = useState<PlanExercise | null>(null);
+  // Shown inside the sheet: a toast would be hidden behind it.
+  const [swapError, setSwapError] = useState<string | null>(null);
+  useEffect(() => setSwapError(null), [swapTarget]);
   const [reason, setReason] = useState("");
 
   const day = days[selected];
@@ -127,7 +130,7 @@ function DayView({ plan }: { plan: Plan }) {
           setSwapTarget(null);
           setReason("");
         },
-        onError: (e) => showToast({ type: "error", message: "Couldn't swap", subtitle: aiErrorMessage(e) }),
+        onError: (e) => setSwapError(aiErrorMessage(e)),
       },
     );
   };
@@ -229,7 +232,23 @@ function DayView({ plan }: { plan: Plan }) {
         subtitle="The AI picks a replacement that trains the same muscles with your equipment."
       >
         <TextField label="Why swap? (optional)" placeholder="e.g. hurts my shoulder, no rack free" value={reason} onChangeText={setReason} maxLength={REASON_MAX} />
-        <Button title={substitute.isPending ? "Finding a replacement…" : "Swap with AI"} icon="swap-horizontal" onPress={swap} loading={substitute.isPending} disabled={substitute.isPending} fullWidth />
+        {swapError ? (
+          <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ flexDirection: "row", gap: spacing.sm, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.dangerSubtle }}>
+            <MaterialIcons name="error-outline" size={size.iconSm} color={colors.danger} />
+            <Text style={[typography.labelMd, { flex: 1, color: colors.text }]}>Couldn&apos;t swap. {swapError}</Text>
+          </View>
+        ) : null}
+        <Button
+          title={substitute.isPending ? "Finding a replacement with AI…" : swapError ? "Try again" : "Swap with AI"}
+          icon="swap-horizontal"
+          onPress={() => {
+            setSwapError(null);
+            swap();
+          }}
+          loading={substitute.isPending}
+          disabled={substitute.isPending}
+          fullWidth
+        />
       </Sheet>
 
       <PlanActions plan={menuOpen ? plan : null} onClose={() => setMenuOpen(false)} leaveOnDelete />
@@ -237,9 +256,7 @@ function DayView({ plan }: { plan: Plan }) {
   );
 }
 
-/* ==============================
-   PIECES
-   ============================== */
+// Pieces
 
 function IconButton({ icon, label, onPress }: { icon: "arrow-back" | "forum" | "settings"; label: string; onPress: () => void }) {
   const { colors } = useTheme();

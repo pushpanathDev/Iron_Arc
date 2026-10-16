@@ -6,6 +6,7 @@ import { ActivityIndicator, Text, View, type StyleProp, type ViewStyle } from "r
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import type { IconName } from "./iconName";
+import { GlossFill } from "./GlossFill";
 import { PressableScale } from "./PressableScale";
 
 /** `tonal`: filled with surfaceContainerHigh, no border (e.g. "Continue with Google"). */
@@ -52,7 +53,7 @@ export function Button({
   style,
   testID,
 }: ButtonProps) {
-  const { colors } = useTheme();
+  const { colors, gloss } = useTheme();
   const inactive = disabled || loading;
 
   const palette = {
@@ -78,6 +79,7 @@ export function Button({
         ? ([colors.dangerGradientTop, colors.dangerGradientBottom] as const)
         : null;
 
+  const glossy = !!gloss && variant === "primary" && !disabled;
   const showDisabledLook = disabled && !loading;
   const fg = showDisabledLook ? colors.textMuted : palette.fg;
 
@@ -110,11 +112,12 @@ export function Button({
               ? palette.pressed
               : palette.bg,
           borderColor: showDisabledLook && variant !== "ghost" && variant !== "ghostDanger" ? colors.border : pressed && variant === "dangerTonal" ? colors.danger : palette.border,
-          overflow: gradient ? "hidden" : undefined,
+          overflow: gradient || glossy ? "hidden" : undefined,
         },
         style,
       ]}
     >
+      {glossy && <GlossFill gloss={gloss} accent={colors.accent} />}
       {gradient && (
         <LinearGradient
           pointerEvents="none"
@@ -150,5 +153,3 @@ export function Button({
     </PressableScale>
   );
 }
-
-export default Button;

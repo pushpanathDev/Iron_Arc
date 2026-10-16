@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { weightApi, BodyWeight } from "../services/api";
-import { useToast } from "../context/ToastContext";
-import { useAuth } from "../auth/AuthContext";
+import { useToast } from "../providers/ToastContext";
+import { useAuth } from "../providers/AuthContext";
 import { ACHIEVEMENTS_KEY, useAchievementUnlockHandler } from "./useAchievements";
 
 export function useAllWeights() {
@@ -10,35 +10,6 @@ export function useAllWeights() {
   return useQuery({
     queryKey: ["weights", "all"],
     queryFn: () => weightApi.listAll(),
-    enabled: !!user,
-  });
-}
-
-/**
- * Server-side body-weight aggregates. Keyed under ["weights"], so every
- * weight mutation's invalidation refreshes it.
- */
-export function useWeightStats() {
-  const { user } = useAuth();
-
-  return useQuery({
-    queryKey: ["weights", "stats"],
-    queryFn: () => weightApi.stats(),
-    enabled: !!user,
-  });
-}
-
-export function useWeights(params?: {
-  page?: number;
-  limit?: number;
-  startDate?: string;
-  endDate?: string;
-}) {
-  const { user } = useAuth();
-
-  return useQuery({
-    queryKey: ["weights", params],
-    queryFn: () => weightApi.list(params),
     enabled: !!user,
   });
 }
@@ -117,39 +88,3 @@ export function useLogWeight() {
   });
 }
 
-export function useDeleteWeight() {
-  const queryClient = useQueryClient();
-  const { showToast } = useToast();
-  const handleUnlocks = useAchievementUnlockHandler();
-
-  return useMutation({
-    mutationFn: weightApi.delete,
-    onMutate: async (deletedId) => {
-      await queryClient.cancelQueries({ queryKey: ["weights"] });
-
-      const previousAll = queryClient.getQueryData<BodyWeight[]>(["weights", "all"]);
-
-      if (previousAll) {
-        queryClient.setQueryData<BodyWeight[]>(
-          ["weights", "all"],
-          previousAll.filter((w) => w.id !== deletedId),
-        );
-      }
-
-      return { previousAll };
-    },
-    onError: (_err, _deletedId, context) => {
-      if (context?.previousAll) {
-        queryClient.setQueryData(["weights", "all"], context.previousAll);
-      }
-      showToast({ message: "Failed to delete weight entry. Please try again.", type: "error" });
-      queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY });
-    },
-    onSuccess: (result) => {
-      void handleUnlocks(result.newlyUnlocked);
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["weights"] });
-    },
-  });
-}

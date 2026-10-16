@@ -2,11 +2,11 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTheme } from "../../theme/theme";
-import { radius, ruler, size, spacing, typography } from "../../theme/tokens";
-import { HeightRuler, type HeightUnit } from "../onboarding/HeightRuler";
-import { SkeletonBlock } from "../ui/Skeleton";
+import { radius, size, spacing, typography } from "../../theme/tokens";
+import type { HeightUnit } from "../../utils/height";
+import { HeightRuler } from "../onboarding/HeightRuler";
 import { TrainingDaysPicker } from "../training/TrainingDaysPicker";
-import type { Weekday } from "../../constants/trainingProfile";
+import type { Weekday } from "../../data/trainingProfile";
 import { Button } from "../ui/Button";
 import { Sheet } from "../ui/Sheet";
 import { Stepper } from "../ui/Stepper";
@@ -119,7 +119,7 @@ export function DaysSheet({
   );
 }
 
-/** A whole number with − / + (height in cm, age). Clear removes it. */
+/** A whole number with − / + (age). Required, so there's no Remove. */
 export function NumberSheet({
   visible,
   title,
@@ -143,7 +143,7 @@ export function NumberSheet({
   min: number;
   max: number;
   saving: boolean;
-  onSave: (value: number | null) => void;
+  onSave: (value: number) => void;
   onClose: () => void;
 }) {
   const [n, setN] = useState<number | null>(value ?? fallback);
@@ -159,12 +159,11 @@ export function NumberSheet({
         <Stepper label={label} value={n} onChange={setN} step={1} min={min} max={max} />
       </View>
       <Button title="Save" icon="checkmark" onPress={() => valid && onSave(Math.round(n!))} loading={saving} disabled={saving || !valid} fullWidth />
-      {value != null && <Button title="Remove" variant="ghostDanger" onPress={() => onSave(null)} disabled={saving} fullWidth />}
     </Sheet>
   );
 }
 
-/** Height on the same ruler as onboarding (cm or ft-in); saved in cm. */
+/** Height on the same ruler as onboarding (cm or ft-in); saved in cm. Required, so there's no Remove. */
 export function HeightSheet({
   visible,
   value,
@@ -177,34 +176,20 @@ export function HeightSheet({
   value: number | null;
   fallback: number;
   saving: boolean;
-  onSave: (cm: number | null) => void;
+  onSave: (cm: number) => void;
   onClose: () => void;
 }) {
   const { colors } = useTheme();
   const [cm, setCm] = useState(value ?? fallback);
   const [unit, setUnit] = useState<HeightUnit>("cm");
-  // The ruler (150 ticks) mounts once the sheet is on screen; a matching placeholder shows until then.
-  const [ready, setReady] = useState(false);
   // Fresh from the saved value each time it opens.
   useEffect(() => {
-    if (!visible) {
-      setReady(false);
-      return;
-    }
-    setCm(value ?? fallback);
-    let second = 0;
-    const first = requestAnimationFrame(() => {
-      second = requestAnimationFrame(() => setReady(true));
-    });
-    return () => {
-      cancelAnimationFrame(first);
-      cancelAnimationFrame(second);
-    };
+    if (visible) setCm(value ?? fallback);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   return (
-    <Sheet visible={visible} onClose={saving ? undefined : onClose} title="Height" subtitle="Scroll the ruler, then save.">
+    <Sheet visible={visible} onClose={saving ? undefined : onClose} title="Height" subtitle="Drag the drum, then save.">
       <View style={{ flexDirection: "row", alignSelf: "center", padding: spacing.xxs, borderRadius: radius.lg, backgroundColor: colors.surfaceContainerHigh }} accessibilityRole="radiogroup">
         {(["cm", "ft"] as const).map((u) => (
           <Pressable
@@ -219,18 +204,8 @@ export function HeightSheet({
           </Pressable>
         ))}
       </View>
-      <View style={{ backgroundColor: colors.surfaceContainerLowest, borderRadius: radius.lg, padding: spacing.md }}>
-        {ready ? (
-          <HeightRuler cm={cm} unit={unit} onChangeCm={setCm} />
-        ) : (
-          <View style={{ alignItems: "center", gap: spacing.md }} accessibilityLabel="Loading height ruler">
-            <SkeletonBlock width={size.goalCard} height={typography.displayMd.lineHeight + spacing.sm * 2} radius="md" />
-            <SkeletonBlock height={ruler.height} radius="md" />
-          </View>
-        )}
-      </View>
-      <Button title="Save" icon="checkmark" onPress={() => onSave(Math.round(cm))} loading={saving} disabled={saving || !ready} fullWidth />
-      {value != null && <Button title="Remove" variant="ghostDanger" onPress={() => onSave(null)} disabled={saving} fullWidth />}
+      <HeightRuler cm={cm} unit={unit} onChangeCm={setCm} />
+      <Button title="Save" icon="checkmark" onPress={() => onSave(Math.round(cm))} loading={saving} disabled={saving} fullWidth />
     </Sheet>
   );
 }

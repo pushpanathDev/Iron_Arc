@@ -1,10 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { plansApi, PlanCriteriaPayload, ChatMessage } from "../services/api";
+import { plansApi, type PlanCriteriaPayload } from "../services/api";
 import { ACHIEVEMENTS_KEY, useAchievementUnlockHandler } from "./useAchievements";
 
 const PLANS_KEY = ["plans"] as const;
 
-/* ── List all plans ──────────────────────────────────────────────────── */
 export function usePlans() {
   return useQuery({
     queryKey: PLANS_KEY,
@@ -16,7 +15,6 @@ export function usePlans() {
   });
 }
 
-/* ── Get one plan ────────────────────────────────────────────────────── */
 export function usePlan(planId: string | undefined) {
   return useQuery({
     queryKey: ["plans", planId],
@@ -25,7 +23,6 @@ export function usePlan(planId: string | undefined) {
   });
 }
 
-/* ── Generate new plan ───────────────────────────────────────────────── */
 export function useGeneratePlan() {
   const queryClient = useQueryClient();
   const handleUnlocks = useAchievementUnlockHandler();
@@ -45,7 +42,6 @@ export function useGeneratePlan() {
   });
 }
 
-/* ── Recalibrate a specific plan ─────────────────────────────────────── */
 export function useRecalibratePlan() {
   const queryClient = useQueryClient();
 
@@ -53,14 +49,14 @@ export function useRecalibratePlan() {
     mutationFn: (planId: string) => plansApi.recalibrate(planId),
     retry: 0, // AI call — never repeat automatically
     onSettled: () => queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY }),
-    onSuccess: () => {
+    onSuccess: (updatedPlan, planId) => {
+      queryClient.setQueryData(["plans", planId], updatedPlan);
       queryClient.invalidateQueries({ queryKey: PLANS_KEY });
       queryClient.invalidateQueries({ queryKey: ["profile"] });
     },
   });
 }
 
-/* ── Substitute an exercise in a specific plan ───────────────────────── */
 export function useSubstituteExercise() {
   const queryClient = useQueryClient();
 
@@ -84,7 +80,6 @@ export function useSubstituteExercise() {
   });
 }
 
-/* ── Rename a plan ───────────────────────────────────────────────────── */
 export function useRenamePlan() {
   const queryClient = useQueryClient();
 
@@ -98,7 +93,6 @@ export function useRenamePlan() {
   });
 }
 
-/* ── Set a plan as active ────────────────────────────────────────────── */
 export function useActivatePlan() {
   const queryClient = useQueryClient();
 
@@ -112,7 +106,6 @@ export function useActivatePlan() {
   });
 }
 
-/* ── Delete a plan ───────────────────────────────────────────────────── */
 export function useDeletePlan() {
   const queryClient = useQueryClient();
 
@@ -126,7 +119,6 @@ export function useDeletePlan() {
   });
 }
 
-/* ── Chat with a plan ────────────────────────────────────────────────── */
 export function usePlanChat(planId: string | undefined) {
   const queryClient = useQueryClient();
 
@@ -157,11 +149,8 @@ export function usePlanChat(planId: string | undefined) {
       try {
         queryClient.setQueryData(["plans", planId], (old: any) => {
           if (!old) return old;
-          return {
-            ...old,
-            planData: response.planData ?? old.planData,
-            chatHistory: response.chatHistory ?? old.chatHistory,
-          };
+          // The new planData carries the updated chat too (_chatHistory).
+          return { ...old, planData: response.planData ?? old.planData };
         });
         if (response.planUpdated) {
           queryClient.invalidateQueries({ queryKey: PLANS_KEY });
@@ -175,10 +164,3 @@ export function usePlanChat(planId: string | undefined) {
   return mutation;
 }
 
-/* ── Get chat history for a plan (from cached plan data) ─────────────── */
-export function usePlanChatHistory(planId: string | undefined): ChatMessage[] {
-  const queryClient = useQueryClient();
-  const cached = queryClient.getQueryData<any>(["plans", planId]);
-  // chatHistory can come from a top-level field (future schema) or _chatHistory inside planData
-  return cached?.chatHistory ?? (cached?.planData as any)?._chatHistory ?? [];
-}

@@ -48,5 +48,3 @@ export function FadingMessage({ message, color, reserveLines = 1, live = false, 
     </Animated.Text>
   );
 }
-
-export default FadingMessage;

@@ -4,13 +4,11 @@
   "version": "1.2.0",
   "scripts": {
     "start": "expo start",
-    "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
-    "ios": "expo run:ios",
-    "web": "expo start --web",
-    "lint": "expo lint",
+    "lint": "eslint .",
     "test": "jest --passWithNoTests",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "ios": "expo run:ios"
   },
   "jest": {
     "preset": "jest-expo",
@@ -22,8 +20,10 @@
       "**/__tests__/**/*.test.tsx"
     ],
     "moduleNameMapper": {
-      "^../services/api$": "<rootDir>/__tests__/__mocks__/api.ts",
-      "^../firebase/config$": "<rootDir>/__tests__/__mocks__/firebase.ts"
+      "^\\.\\./services/api$": "<rootDir>/__tests__/__mocks__/api.ts",
+      "^\\./api$": "<rootDir>/__tests__/__mocks__/api.ts",
+      "^\\.\\./services/firebase$": "<rootDir>/__tests__/__mocks__/firebase.ts",
+      "^\\./firebase$": "<rootDir>/__tests__/__mocks__/firebase.ts"
     }
   },
   "dependencies": {
@@ -43,13 +43,12 @@
     "@tanstack/react-query-persist-client": "^5.101.2",
     "expo": "~54.0.35",
     "expo-application": "~7.0.8",
+    "expo-build-properties": "~1.0.10",
     "expo-constants": "~18.0.12",
-    "expo-crypto": "~15.0.9",
     "expo-device": "~8.0.10",
     "expo-file-system": "~19.0.23",
     "expo-font": "~14.0.12",
     "expo-haptics": "~15.0.8",
-    "expo-image": "~3.0.11",
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.12",
     "expo-notifications": "~0.32.17",
@@ -59,14 +58,10 @@
     "expo-sharing": "^14.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
-    "expo-symbols": "~1.0.8",
     "expo-system-ui": "~6.0.9",
     "expo-web-browser": "~15.0.11",
     "firebase": "^12.7.0",
-    "jest-expo": "~54.0.17",
-    "lottie-react-native": "~7.3.1",
     "react": "19.1.0",
-    "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-keyboard-controller": "1.18.5",
@@ -74,9 +69,7 @@
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
     "react-native-svg": "15.12.1",
-    "react-native-web": "~0.21.0",
-    "react-native-worklets": "0.5.1",
-    "zod": "^4.4.3"
+    "react-native-worklets": "0.5.1"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
@@ -84,6 +77,7 @@
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
     "jest": "^29.7.0",
+    "jest-expo": "~54.0.17",
     "typescript": "~5.9.2"
   },
   "private": true

@@ -24,5 +24,3 @@ export function FilterChip({ label, active, onPress }: { label: string; active: 
     </Pressable>
   );
 }
-
-export default FilterChip;

@@ -16,23 +16,22 @@ import { SplashScreen, Stack, useRouter, useSegments } from "expo-router";
 import { useFonts } from "expo-font";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AppState, Platform, View } from "react-native";
+import { AppState, View } from "react-native";
 import type { AppStateStatus } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
-import "react-native-reanimated";
+import Animated, { FadeOut } from "react-native-reanimated";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { AuthProvider, useAuth } from "../auth/AuthContext";
-import { AnimatedSplashScreen } from "../components/AnimatedSplashScreen";
+import { AuthProvider, useAuth } from "../providers/AuthContext";
+import { AnimatedSplashScreen } from "../components/startup/AnimatedSplashScreen";
 import { BadgeUnlockHost } from "../components/achievements/BadgeUnlockHost";
-import { BatteryOptimizationPrompt } from "../components/BatteryOptimizationPrompt";
-import { CantReachScreen } from "../components/connection/CantReachScreen";
-import { StartupScreen } from "../components/connection/StartupScreen";
-import { ConnectionProvider, useConnection } from "../context/ConnectionContext";
-import { ThemeProvider as AppThemeProvider } from "../context/ThemeContext";
-import { ToastProvider, useToast } from "../context/ToastContext";
-import { useAppReady } from "../hooks/useAppReady";
+import { BatteryOptimizationPrompt } from "../components/startup/BatteryOptimizationPrompt";
+import { CantReachScreen } from "../components/startup/CantReachScreen";
+import { StartupScreen } from "../components/startup/StartupScreen";
+import { ConnectionProvider, useConnection } from "../providers/ConnectionContext";
+import { ThemeProvider as AppThemeProvider } from "../providers/ThemeContext";
+import { ToastProvider, useToast } from "../providers/ToastContext";
 import { useProfile } from "../hooks/useProfile";
 import { configureWorkoutDeleteQueue, recoverWorkoutDeletes } from "../hooks/workoutDeleteQueue";
 import { useNotificationScheduling } from "../hooks/useNotificationScheduling";
@@ -41,17 +40,17 @@ import { initNotifications } from "../notifications/notificationService";
 import { isNetworkApiError } from "../services/api";
 import { fontAssets } from "../theme/fonts";
 import { useTheme } from "../theme/theme";
-import { configureGoogle } from "../utils/googleSignin";
+import { darkColors, motion } from "../theme/tokens";
+import { configureGoogle } from "../services/googleSignin";
 
 configureGoogle();
 
-// Ensures Expo Router always starts at (tabs) even after dev reload state restore
+// Always start at the tabs, even when a dev reload restores another route.
 export const unstable_settings = {
   initialRouteName: "(tabs)",
 };
 
-// --- Online / Focus managers (run once at module level) ---
-
+// Queries pause offline and refetch when the app comes back to the foreground.
 onlineManager.setEventListener((setOnline) => {
   return NetInfo.addEventListener((state) => {
     setOnline(!!state.isConnected);
@@ -59,9 +58,7 @@ onlineManager.setEventListener((setOnline) => {
 });
 
 function onAppStateChange(status: AppStateStatus) {
-  if (Platform.OS !== "web") {
-    focusManager.setFocused(status === "active");
-  }
+  focusManager.setFocused(status === "active");
 }
 
 const queryClient = new QueryClient({
@@ -88,25 +85,24 @@ const asyncStoragePersister = createAsyncStoragePersister({
   throttleTime: 1000,
 });
 
-const SPLASH_TEST_MS = 0; // Set to 4000 in dev to force full splash playback
+// Release builds keep warnings and errors but drop debug logs (some name the account).
+if (!__DEV__) {
+  console.log = () => {};
+  console.info = () => {};
+  console.debug = () => {};
+}
 
-const sleep = (ms: number) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
-
-// Prevent native splash from hiding until we're ready
+// The native splash stays until the fonts load (see RootLayout).
 SplashScreen.preventAutoHideAsync();
 
+/** Screens that need a signed-in user. */
+const PROTECTED_SEGMENTS = new Set(["(tabs)", "workout", "ai-plan", "notification-settings", "plan-detail", "plan-chat", "achievements", "exercise"]);
+
 /**
- * Root Navigator
- * ==============
- * Handles auth-based navigation and coordinates with splash screen.
- *
- * Key behaviors:
- * - Shows animated splash until app is fully ready
- * - Redirects based on auth state after splash completes
- * - Prevents navigation until splash animation finishes
+ * Plays the animated splash, then routes by auth state (login, onboarding or
+ * the app) and covers a first sign-in with the startup screen.
  */
-function RootNavigator({ dbReady }: { dbReady: boolean }) {
+function RootNavigator() {
   const {
     user,
     profile,
@@ -121,7 +117,7 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
   const availableProfile = profile ?? cachedProfile;
   useNotificationScheduling();
   useNotificationTaps();
-  const { isDark } = useTheme();
+  const { colors, isDark } = useTheme();
   const connection = useConnection();
   const { showToast } = useToast();
 
@@ -152,131 +148,33 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
     if (connection.serverReachable && authFailed) void retryBootstrap();
   }, [connection.serverReachable, authFailed, retryBootstrap]);
 
-  // Track splash visibility (starts true, set false after animation completes)
   const [splashVisible, setSplashVisible] = useState(true);
-  const [navigatorMounted, setNavigatorMounted] = useState(false);
-  const [forceSplashHoldUntil, setForceSplashHoldUntil] = useState<
-    number | null
-  >(null);
+  const handleSplashComplete = useCallback(() => setSplashVisible(false), []);
 
-  // Calculate app readiness from multiple conditions
-  const { isReady } = useAppReady({
-    authLoading,
-    dbInitialized: dbReady,
-  });
-  const isReadyForSplash = isReady && forceSplashHoldUntil === null;
+  // Route by auth state once the splash has gone (never away from login while an email is being verified).
+  useEffect(() => {
+    if (splashVisible || authLoading || awaitingEmailVerification) return;
+    if (status === "bootstrapping" || status === "loading") return;
 
-  const runSplashTest = useCallback((ms = 4500) => {
-    const duration = Math.max(0, ms);
-    if (duration === 0) {
-      setForceSplashHoldUntil(null);
-      return;
+    const segment = segments[0] as string;
+    const inApp = PROTECTED_SEGMENTS.has(segment) || (__DEV__ && segment === "dev-components");
+    if (!user) {
+      if (inApp) router.replace("/login");
+    } else if (status === "needsOnboarding") {
+      if (segment !== "onboarding") router.replace("/onboarding");
+    } else if (status === "unverified" && segment === "login") {
+      // Signed in to an unverified account: its prompt is on the login screen.
+      // Firebase reports the sign-in before the "awaiting verification" flag is
+      // saved, and that gap used to send people to Home past onboarding.
+    } else if (!inApp && segment !== "onboarding") {
+      router.replace("/");
     }
-    setForceSplashHoldUntil(Date.now() + duration);
-    setSplashVisible(true);
-    console.log(`[SplashTest] Forcing splash for ${duration}ms`);
-  }, []);
+  }, [user, authLoading, segments, splashVisible, router, awaitingEmailVerification, status]);
 
-  useEffect(() => {
-    if (!__DEV__) return;
-    (globalThis as any).runSplashTest = runSplashTest;
-    console.log(
-      "[SplashTest] Dev helper ready. Run `runSplashTest(5000)` in console.",
-    );
-    return () => {
-      delete (globalThis as any).runSplashTest;
-    };
-  }, [runSplashTest]);
-
-  useEffect(() => {
-    if (forceSplashHoldUntil === null) return;
-    const remaining = Math.max(0, forceSplashHoldUntil - Date.now());
-    const timer = setTimeout(() => {
-      setForceSplashHoldUntil(null);
-    }, remaining);
-    return () => clearTimeout(timer);
-  }, [forceSplashHoldUntil]);
-
-
-  /**
-   * Handle splash animation completion.
-   * Only called when animation fully finishes (opacity → 0).
-   */
-  const handleSplashComplete = useCallback(() => {
-    setSplashVisible(false);
-  }, []);
-
-  useEffect(() => {
-    if (!splashVisible && !authLoading) {
-      setNavigatorMounted(true);
-    }
-  }, [splashVisible, authLoading]);
-
-  /**
-   * Auth-based navigation.
-   * Only runs after splash is dismissed to prevent visual jank.
-   * Includes onboarding check for new users.
-   */
-  useEffect(() => {
-    // Don't navigate while splash is visible or auth is loading
-    if (!navigatorMounted || splashVisible || authLoading) return;
-
-    // Don't navigate away from login if awaiting email verification
-    if (awaitingEmailVerification || status === "bootstrapping" || status === "loading") return;
-
-    const currentSegment = segments[0] as string;
-    const isProtectedRoute =
-      currentSegment === "(tabs)" ||
-      currentSegment === "log" ||
-      currentSegment === "admin-catalog" ||
-      currentSegment === "ai-plan" ||
-      currentSegment === "notification-settings" ||
-      currentSegment === "plan-detail" ||
-      currentSegment === "plan-chat" ||
-      currentSegment === "achievements" ||
-      currentSegment === "exercise" ||
-      (__DEV__ && currentSegment === "dev-components");
-    const isLoginRoute = currentSegment === "login";
-    const isOnboardingRoute = currentSegment === "onboarding";
-
-    const handleNavigation = async () => {
-      if (!user && isProtectedRoute) {
-        router.replace("/login");
-      } else if (user && status === "needsOnboarding" && !isOnboardingRoute) {
-        router.replace("/onboarding");
-      } else if (user && isLoginRoute) {
-        router.replace("/");
-      } else if (
-        user &&
-        !isProtectedRoute &&
-        !isOnboardingRoute &&
-        !isLoginRoute
-      ) {
-        router.replace("/");
-      }
-    };
-
-    handleNavigation();
-  }, [user, authLoading, navigatorMounted, segments, splashVisible, router, awaitingEmailVerification, status]);
-
-  // Render animated splash overlay when visible
-  // The splash handles its own exit animation based on isReady
   const retryStartup = useCallback(() => {
     connection.retry();
     void retryBootstrap();
   }, [connection, retryBootstrap]);
-
-  if (splashVisible) {
-    return (
-      <>
-        <StatusBar style="light" />
-        <AnimatedSplashScreen
-          isAppReady={isReadyForSplash}
-          onAnimationComplete={handleSplashComplete}
-        />
-      </>
-    );
-  }
 
   // Cold start with nothing saved: gate the app behind the startup screens.
   // With a saved profile we skip this and refresh in the background.
@@ -288,13 +186,39 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
   const startFailed =
     connection.state === "offline" || connection.state === "unreachable" || (authFailed && !simulatedOutage);
   const stagesDone = !connection.networkUp ? 0 : connection.serverReachable ? 2 : 1;
+  const showCantReach = coldStart && startFailed && !connection.hasCachedData;
+
+  // Once the startup screen has shown, it stays until its ring reaches 100%
+  // after the account loads; it closes at once on sign-out or "Open saved data".
+  // The profile can land a moment before the status turns "ready", so either counts.
+  const accountLoaded = !!user && (!!availableProfile || status === "ready" || status === "needsOnboarding");
+  const [startupOpen, setStartupOpen] = useState(false);
+  useEffect(() => {
+    if (coldStart && !showCantReach) setStartupOpen(true);
+    else if (!coldStart && !accountLoaded) setStartupOpen(false);
+  }, [coldStart, showCantReach, accountLoaded]);
+
+  if (splashVisible) {
+    return (
+      <>
+        <StatusBar style="light" />
+        <AnimatedSplashScreen
+          isAppReady={!authLoading}
+          onAnimationComplete={handleSplashComplete}
+        />
+      </>
+    );
+  }
 
   return (
-    <View style={{ flex: 1 }}>
+    // Painted behind every screen: during transitions Android would otherwise show its
+    // window, which follows the phone's light/dark setting (white in light mode).
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <StatusBar style={isDark ? "light" : "dark"} />
       <Stack
         screenOptions={{
           headerShown: false,
+          contentStyle: { backgroundColor: colors.bg },
           animation: "slide_from_right",
           animationDuration: 280,
           gestureEnabled: true,
@@ -305,12 +229,11 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
         <Stack.Screen name="(tabs)" options={{ animation: "fade" }} />
         <Stack.Screen name="login" options={{ animation: "fade" }} />
         <Stack.Screen name="onboarding" options={{ animation: "fade" }} />
-        <Stack.Screen name="log/pick" options={{ animation: "slide_from_bottom" }} />
+        <Stack.Screen name="workout/pick" options={{ animation: "slide_from_bottom" }} />
         {/* Back is intercepted to protect completed sets (Leave workout?). */}
-        <Stack.Screen name="log/session" options={{ animation: "slide_from_right", fullScreenGestureEnabled: false }} />
-        <Stack.Screen name="log/edit" options={{ animation: "slide_from_right", fullScreenGestureEnabled: false }} />
+        <Stack.Screen name="workout/session" options={{ animation: "slide_from_right", fullScreenGestureEnabled: false }} />
+        <Stack.Screen name="workout/edit" options={{ animation: "slide_from_right", fullScreenGestureEnabled: false }} />
         <Stack.Screen name="exercise/[name]" options={{ animation: "slide_from_right" }} />
-        <Stack.Screen name="admin-catalog" />
         <Stack.Screen name="ai-plan" />
         <Stack.Screen name="notification-settings" />
         <Stack.Screen name="plan-detail" />
@@ -319,9 +242,9 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
         <Stack.Screen name="dev-components" />
       </Stack>
       <BadgeUnlockHost />
-      {coldStart && (
-        <View style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 10 }}>
-          {startFailed && !connection.hasCachedData ? (
+      {(coldStart || startupOpen) && (
+        <Animated.View exiting={FadeOut.duration(motion.slideMs)} style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 10 }}>
+          {showCantReach ? (
             <CantReachScreen
               offline={connection.state === "offline"}
               retrying={connection.checking}
@@ -330,7 +253,8 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
             />
           ) : (
             <StartupScreen
-              stagesDone={stagesDone}
+              stagesDone={coldStart ? stagesDone : 3}
+              onComplete={() => setStartupOpen(false)}
               showActions={startFailed}
               hasCachedData={connection.hasCachedData}
               retrying={connection.checking}
@@ -338,7 +262,7 @@ function RootNavigator({ dbReady }: { dbReady: boolean }) {
               onOpenSaved={() => setOpenSavedData(true)}
             />
           )}
-        </View>
+        </Animated.View>
       )}
     </View>
   );
@@ -364,111 +288,33 @@ function NavigationThemeBridge({ children }: { children: ReactNode }) {
   return <ThemeProvider value={navTheme}>{children}</ThemeProvider>;
 }
 
-/**
- * Root Layout
- * ===========
- * Entry point for the app. Handles:
- * - Database initialization
- * - Native Expo splash screen coordination
- * - Theme provider setup
- * - Auth provider wrapping
- *
- * Splash Screen Flow:
- * 1. App launches → Native splash visible (preventAutoHideAsync)
- * 2. DB init starts in background
- * 3. DB ready → Hide native splash (hideAsync)
- * 4. Animated splash takes over (visible for minimum 3s)
- * 5. When both conditions met (min time + app ready) → Exit animated splash
- * 6. App interface becomes visible
- */
 export default function RootLayout() {
-  const [dbReady, setDbReady] = useState(false);
-  const [initError, setInitError] = useState<string | null>(null);
-  const [nativeSplashHidden, setNativeSplashHidden] = useState(false);
   const [fontsLoaded, fontError] = useFonts(fontAssets);
   // A font failure falls back to the system font rather than blocking startup.
   const fontsReady = fontsLoaded || !!fontError;
 
-  // Subscribe to AppState changes for focusManager
   useEffect(() => {
     const sub = AppState.addEventListener("change", onAppStateChange);
     return () => sub.remove();
   }, []);
 
-  // Initialize database and manage native splash screen lifecycle
+  // Notification setup took 3.5–7 s on a phone, so it never holds the splash
+  // (reminders are re-planned once data loads anyway).
   useEffect(() => {
-    let mounted = true;
-    let initStartTime = Date.now();
-
-    const initialize = async () => {
-      try {
-        console.log("[RootLayout] Starting app initialization...");
-
-        // Local notifications set up in the background: they took 3.5–7 s on a phone and
-        // must never hold the splash (reminders are re-planned once data loads anyway).
-        console.log("[RootLayout] Initializing notifications (background)...");
-        void initNotifications().then(() => console.log(`[RootLayout] ✓ initNotifications complete (${Date.now() - initStartTime}ms)`));
-
-        // Optional: Add artificial delay in dev for testing splash duration
-        if (SPLASH_TEST_MS > 0 && __DEV__) {
-          console.log(`[RootLayout] TEST MODE: Adding ${SPLASH_TEST_MS}ms delay`);
-          await sleep(SPLASH_TEST_MS);
-        }
-
-        // Mark DB as ready (animated splash minimum timer still running at this point)
-        if (mounted) {
-          setDbReady(true);
-          console.log(`[RootLayout] ✓ DB ready (${Date.now() - initStartTime}ms)`);
-        }
-
-      } catch (error: any) {
-        console.error("[RootLayout] Initialization error:", error?.message || error);
-        setInitError(error?.message || "Unknown error");
-
-        // Still mark as ready to allow recovery UI or fallback
-        if (mounted) {
-          setDbReady(true);
-        }
-      }
-    };
-
-    initialize();
-
-    return () => {
-      mounted = false;
-    };
+    void initNotifications();
   }, []);
 
-  // Hide the native splash only once init has finished and fonts are loaded.
   useEffect(() => {
-    if (!dbReady || !fontsReady) return;
+    if (!fontsReady) return;
     if (fontError) console.warn("[RootLayout] Font loading failed, using system font:", fontError);
-    SplashScreen.hideAsync()
-      .catch((e) => console.warn("[RootLayout] Native splash already hidden or error:", e))
-      .finally(() => setNativeSplashHidden(true));
-  }, [dbReady, fontsReady, fontError]);
+    SplashScreen.hideAsync().catch(() => {});
+  }, [fontsReady, fontError]);
 
   // Keep the native splash up until fonts are ready.
   if (!fontsReady) return null;
 
-  // Show error if initialization failed
-  if (initError) {
-    return (
-      <GestureHandlerRootView
-        style={{
-          flex: 1,
-          justifyContent: "center",
-          alignItems: "center",
-          backgroundColor: "#000",
-        }}
-      >
-        <StatusBar style="light" />
-      </GestureHandlerRootView>
-    );
-  }
-
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: darkColors.bg }}>
       <SafeAreaProvider>
         <KeyboardProvider>
         <PersistQueryClientProvider
@@ -481,7 +327,7 @@ export default function RootLayout() {
               <AuthProvider>
                 <ToastProvider>
                   <BatteryOptimizationPrompt />
-                  <RootNavigator dbReady={dbReady} />
+                  <RootNavigator />
                 </ToastProvider>
               </AuthProvider>
               </ConnectionProvider>

@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from "react";
 import { Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from "react-native-reanimated";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -46,7 +47,8 @@ export function Sheet({ visible, onClose, title, subtitle, children }: SheetProp
 
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose ?? (() => {})}>
-      <View style={{ flex: 1, backgroundColor: colors.scrim }}>
+      {/* A Modal is its own Android window: gestures inside it (the height drum) need their own root. */}
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.scrim }}>
         <KeyboardAvoidingView behavior="padding" style={{ flex: 1, justifyContent: "flex-end" }}>
           <Pressable style={{ flex: 1 }} onPress={onClose} accessibilityLabel="Close" disabled={!onClose} />
           <Animated.View
@@ -72,9 +74,7 @@ export function Sheet({ visible, onClose, title, subtitle, children }: SheetProp
             </ScrollView>
           </Animated.View>
         </KeyboardAvoidingView>
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
-
-export default Sheet;

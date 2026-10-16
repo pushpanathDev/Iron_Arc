@@ -105,10 +105,7 @@ export function weightHintFor(exercise: string): string | null {
   return key ? WEIGHT_HINTS[key] : null;
 }
 
-/* =========================================================
-   Bar + plates helper (barbell-type lifts loaded on both ends)
-   ========================================================= */
-
+// Bar + plates helper (barbell-type lifts loaded on both ends)
 
 /** Plates offered per side, heaviest first. */
 export const PLATES: Record<WeightUnit, number[]> = {

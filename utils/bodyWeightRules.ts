@@ -1,5 +1,6 @@
 import type { BodyWeight } from "../services/api";
 import { kgToLbs, lbsToKg, type WeightUnit } from "./unitConversion";
+import { DAY_MS } from "./dates";
 
 /*
  * Body-weight entry rules and the analog dial's scale, as pure functions.
@@ -13,7 +14,6 @@ export const MIN_KG = 20;
 export const MAX_KG = 500;
 /** Stepper increment in either unit. */
 export const WEIGHT_STEP = 0.1;
-const DAY_MS = 86_400_000;
 const TREND_DAYS = 30;
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -45,7 +45,7 @@ export function stepWeight(value: number | null, direction: 1 | -1, unit: Weight
   return Math.min(maxFor(unit), Math.max(minFor(unit), round1(base + direction * WEIGHT_STEP)));
 }
 
-/* ---------- analog dial scale ---------- */
+// Analog dial scale
 
 export interface DialScale {
   /** Highest value on the dial, in the display unit. */
@@ -87,7 +87,7 @@ export function dialFraction(value: number | null, scale: DialScale): { fraction
   return { fraction: Math.min(1, value / scale.capacity), overCapacity: value > scale.capacity };
 }
 
-/* ---------- trend ---------- */
+// Trend
 
 export interface WeightChange {
   /** Latest minus the comparison entry, in kg. */
@@ -127,7 +127,7 @@ export const fromDisplay = (value: number, unit: WeightUnit) => round1(unit === 
 /** 77.4, 80 (no trailing ".0"). */
 export const formatValue = (n: number) => String(round1(n));
 
-/* ---------- target weight (optional, set by the user) ---------- */
+// Target weight (optional, set by the user)
 
 /** Within this many kg counts as at the goal. */
 const GOAL_TOLERANCE_KG = 0.1;

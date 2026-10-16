@@ -59,9 +59,9 @@ describe("week volume vs the same days last week", () => {
 });
 
 describe("History helpers", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const { groupSessions } = require("../hooks/useWorkoutSummary");
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const { prExerciseDays } = require("../utils/exerciseHistory");
   const at = (id: string, date: string, time: string, exercise: string, sets: [number, number][]) =>
     ({ ...w(id, date, exercise, sets), createdAt: `${date}T${time}:00.000Z` }) as Workout;

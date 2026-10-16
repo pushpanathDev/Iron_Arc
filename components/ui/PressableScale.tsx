@@ -57,5 +57,3 @@ export function PressableScale({
     </AnimatedPressable>
   );
 }
-
-export default PressableScale;

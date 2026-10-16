@@ -1,18 +1,10 @@
-/**
- * Data Export Utility
- * ===================
- * Export workout, weight, and analytics data to CSV or PDF format.
- * Generates clean, readable, structured reports.
- */
+/** Workouts and body weight as CSV files or a PDF report, handed to the share sheet. */
 
 import { File, Paths } from "expo-file-system";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { BodyWeight, Workout, workoutApi, weightApi } from "../services/api";
-
-/* ==============================
-   TYPES
-   ============================== */
+import { DAY_MS } from "./dates";
 
 export interface ExportStats {
   totalWorkouts: number;
@@ -29,11 +21,7 @@ export interface ExportStats {
   currentWeight: number | null;
 }
 
-export type ExportFormat = "csv" | "pdf";
-
-/* ==============================
-   CSV EXPORT
-   ============================== */
+// CSV export
 
 /**
  * Generate CSV content for workouts
@@ -158,9 +146,7 @@ export async function exportToCSV(
   }
 }
 
-/* ==============================
-   PDF EXPORT
-   ============================== */
+// PDF export
 
 /**
  * Calculate export statistics
@@ -191,14 +177,14 @@ export function calculateExportStats(
   let tempStreak = 0;
 
   const today = new Date().toISOString().split("T")[0];
-  const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+  const yesterday = new Date(Date.now() - DAY_MS).toISOString().split("T")[0];
 
   if (sortedDates[0] === today || sortedDates[0] === yesterday) {
     currentStreak = 1;
     for (let i = 1; i < sortedDates.length; i++) {
       const curr = new Date(sortedDates[i - 1]);
       const prev = new Date(sortedDates[i]);
-      const diffDays = (curr.getTime() - prev.getTime()) / 86400000;
+      const diffDays = (curr.getTime() - prev.getTime()) / DAY_MS;
       if (diffDays === 1) {
         currentStreak++;
       } else {
@@ -214,7 +200,7 @@ export function calculateExportStats(
     } else {
       const curr = new Date(sortedDates[i - 1]);
       const prev = new Date(sortedDates[i]);
-      const diffDays = (curr.getTime() - prev.getTime()) / 86400000;
+      const diffDays = (curr.getTime() - prev.getTime()) / DAY_MS;
       if (diffDays === 1) {
         tempStreak++;
       } else {
@@ -230,7 +216,7 @@ export function calculateExportStats(
   const weeks = firstWorkout
     ? Math.max(
         1,
-        (Date.now() - new Date(firstWorkout).getTime()) / (7 * 86400000),
+        (Date.now() - new Date(firstWorkout).getTime()) / (7 * DAY_MS),
       )
     : 1;
   const averageWorkoutsPerWeek = workoutDays / weeks;

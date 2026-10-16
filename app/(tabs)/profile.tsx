@@ -4,8 +4,9 @@ import { useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useAuth } from "../../providers/AuthContext";
 import { EmailVerificationPrompt } from "../../components/auth/EmailVerificationPrompt";
+import { AccentPreviewPicker } from "../../components/profile/AccentPreviewPicker";
 import { ExportSheet } from "../../components/profile/ExportSheet";
-import { GOALS } from "../../components/onboarding/OnboardingProfileSetup";
+import { GOALS } from "../../data/fitnessGoals";
 import { ProfileEditSheets } from "../../components/profile/ProfileEditSheets";
 import { ProfileHeader } from "../../components/profile/ProfileHeader";
 import { ReauthSheet } from "../../components/profile/ReauthSheet";
@@ -29,12 +30,14 @@ import { useLatestWeight } from "../../hooks/useWeights";
 import { groupSessions, useWorkoutSummary } from "../../hooks/useWorkoutSummary";
 import type { User } from "../../services/api";
 import { useTheme } from "../../theme/theme";
-import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
+import { motion, radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import { getVersionLabel } from "../../utils/appVersion";
 import { getInitials } from "../../utils/avatar";
 import { displayWeight, weightLabel } from "../../utils/unitConversion";
 import { UnitSwitch } from "../../components/profile/UnitSwitch";
 import { ProfileSkeleton } from "../../components/profile/ProfileSkeleton";
+import { PERF_OPEN } from "../../components/onboarding/HeightRuler";
+import { perfStart } from "../../utils/perf";
 
 const NO_WORKOUTS: never[] = [];
 
@@ -231,7 +234,17 @@ export default function ProfileScreen() {
         {/* Body */}
         <Reveal index={2}>
           <SettingsGroup title="Body">
-            <SettingsRow icon="height" label="Height" value={profile.height ? `${profile.height} cm` : "Add"} missing={!profile.height} kind="edit" onPress={() => editing.edit("height")} />
+            <SettingsRow
+              icon="height"
+              label="Height"
+              value={profile.height ? `${profile.height} cm` : "Add"}
+              missing={!profile.height}
+              kind="edit"
+              onPress={() => {
+                perfStart(PERF_OPEN);
+                editing.edit("height");
+              }}
+            />
             <SettingsRow icon="cake" label="Age" value={profile.age ? String(profile.age) : "Add"} missing={!profile.age} kind="edit" onPress={() => editing.edit("age")} />
             <SettingsRow
               icon="monitor-weight"
@@ -285,6 +298,9 @@ export default function ProfileScreen() {
           </SettingsGroup>
         </Reveal>
 
+        {/* Development builds only, for trying accent colours. */}
+        {__DEV__ && <AccentPreviewPicker />}
+
         <Text style={[typography.labelSm, { color: colors.textMuted, textAlign: "center" }]}>Iron Arc {getVersionLabel()}</Text>
       </ScrollView>
 
@@ -312,7 +328,8 @@ export default function ProfileScreen() {
         confirmLabel="Delete account"
         onConfirm={() => {
           setConfirm(null);
-          void account.deleteAccount();
+          // After the dialog has closed: the password sheet opened mid-close can be dropped.
+          setTimeout(() => void account.deleteAccount(), motion.modalSwapMs);
         }}
         onCancel={() => setConfirm(null)}
       />

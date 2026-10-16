@@ -1,4 +1,4 @@
-import { GOALS, type FitnessGoal } from "../onboarding/OnboardingProfileSetup";
+import { GOALS, type FitnessGoal } from "../../data/fitnessGoals";
 import { AVOID_OPTIONS, EQUIPMENT_OPTIONS, EXPERIENCE_OPTIONS, SESSION_OPTIONS, type AvoidArea, type Equipment, type ExperienceLevel, type SessionMinutes, type Weekday } from "../../data/trainingProfile";
 import type { ProfileEditing } from "../../hooks/useProfileEditing";
 import type { User } from "../../services/api";

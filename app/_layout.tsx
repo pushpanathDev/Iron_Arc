@@ -162,6 +162,10 @@ function RootNavigator() {
       if (inApp) router.replace("/login");
     } else if (status === "needsOnboarding") {
       if (segment !== "onboarding") router.replace("/onboarding");
+    } else if (status === "unverified" && segment === "login") {
+      // Signed in to an unverified account: its prompt is on the login screen.
+      // Firebase reports the sign-in before the "awaiting verification" flag is
+      // saved, and that gap used to send people to Home past onboarding.
     } else if (!inApp && segment !== "onboarding") {
       router.replace("/");
     }

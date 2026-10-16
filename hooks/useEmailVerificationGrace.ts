@@ -1,6 +1,7 @@
 import { useFocusEffect } from "expo-router";
 import type { User } from "firebase/auth";
 import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "../providers/AuthContext";
 import { clearEmailVerificationStart, getEmailVerificationStart, setEmailVerificationStart } from "../services/verificationStore";
 import { DAY_MS } from "../utils/dates";
 
@@ -14,6 +15,7 @@ const GRACE_DAYS = 7;
 export function useEmailVerificationGrace(user: User | null) {
   const [daysLeft, setDaysLeft] = useState<number | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
+  const { onEmailVerified } = useAuth();
 
   const reload = useCallback(async () => {
     if (!user) return;
@@ -48,6 +50,8 @@ export function useEmailVerificationGrace(user: User | null) {
     setPromptOpen(false);
     if (user) await clearEmailVerificationStart(user.uid);
     await reload();
+    // Loads the account; an unfinished profile goes on to onboarding.
+    await onEmailVerified();
   };
 
   return {

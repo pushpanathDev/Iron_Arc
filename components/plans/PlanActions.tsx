@@ -4,7 +4,7 @@ import { View } from "react-native";
 import { useToast } from "../../providers/ToastContext";
 import { useActivatePlan, useDeletePlan, useRecalibratePlan, useRenamePlan } from "../../hooks/usePlan";
 import { ApiError, type Plan } from "../../services/api";
-import { spacing } from "../../theme/tokens";
+import { motion, spacing } from "../../theme/tokens";
 import { SettingsGroup, SettingsRow } from "../profile/Settings";
 import { Button } from "../ui/Button";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
@@ -13,7 +13,6 @@ import { TextField } from "../ui/TextField";
 import { GeneratingOverlay } from "./GeneratingOverlay";
 
 const NAME_MAX = 60;
-const MODAL_SWAP_MS = 350;
 
 /** Plain words for AI request failures (the server rate-limits generate, recalibrate, swap and chat). */
 export function aiErrorMessage(e: unknown): string {
@@ -58,7 +57,7 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
     setName(plan.name);
     onClose();
     // Let the menu sheet finish closing first: a modal opened while another closes can be dropped.
-    setTimeout(() => setMode(m), MODAL_SWAP_MS);
+    setTimeout(() => setMode(m), motion.modalSwapMs);
   };
   const done = () => {
     setMode(null);

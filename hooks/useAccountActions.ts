@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { EmailAuthProvider, GoogleAuthProvider, reauthenticateWithCredential } from "firebase/auth";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useAuth } from "../providers/AuthContext";
 import { useToast } from "../providers/ToastContext";
 import { userApi } from "../services/api";
@@ -15,9 +15,9 @@ import { createPageLogger } from "../utils/logger";
 const log = createPageLogger("Profile");
 
 /**
- * Log out, and delete the account. Firebase may ask for a recent sign-in
- * before deleting: Google accounts sign in again in place; email accounts
- * confirm their password (`reauth`).
+ * Log out, and delete the account. Deleting always confirms it's really you
+ * first: email accounts enter their password (`reauth`), Google accounts
+ * sign in with Google again.
  */
 export function useAccountActions() {
   const { user, logout } = useAuth();
@@ -57,45 +57,47 @@ export function useAccountActions() {
     }
   };
 
-  const deleteAccount = async () => {
+  /** Sends the delete, once the user has confirmed it's really them. */
+  const deleteNow = async () => {
     setDeleting(true);
-    setReauthError(null);
     try {
       await userApi.deleteAccount();
       await clearLocalAccountData();
       router.replace("/login");
     } catch (e: unknown) {
-      const err = e as { code?: string; message?: string };
-      if (err?.code !== "REAUTHENTICATION_REQUIRED") {
-        log.error(`Account deletion failed: ${e}`);
-        showToast({ type: "error", message: "Couldn't delete account", subtitle: err?.message || "Please try again." });
-        return;
-      }
-      const providerId = user?.providerData[0]?.providerId;
-      const google = getGoogleSignin();
-      if (providerId === "google.com" && !google) {
-        showToast({ type: "error", message: "Sign in again to delete", subtitle: "Google sign-in isn't available in this preview. Use the full app." });
-      } else if (providerId === "google.com" && google) {
-        try {
-          const response = await google.GoogleSignin.signIn();
-          const idToken = google.isSuccessResponse(response) ? response.data.idToken : null;
-          if (idToken && auth.currentUser) {
-            await reauthenticateWithCredential(auth.currentUser, GoogleAuthProvider.credential(idToken));
-            await deleteAccountRef.current();
-            return;
-          }
-        } catch (reAuthErr: unknown) {
-          showToast({ type: "error", message: "Google sign-in failed", subtitle: (reAuthErr as Error)?.message });
-        }
-      } else {
-        setReauthOpen(true);
-      }
+      log.error(`Account deletion failed: ${e}`);
+      showToast({ type: "error", message: "Couldn't delete account", subtitle: (e as Error)?.message || "Please try again." });
     } finally {
       setDeleting(false);
     }
   };
-  const deleteAccountRef = useRef(deleteAccount);
-  deleteAccountRef.current = deleteAccount;
+
+  /**
+   * Deleting always confirms it's really you first: your password for email
+   * accounts, Google sign-in for Google ones.
+   */
+  const deleteAccount = async () => {
+    if (user?.providerData[0]?.providerId !== "google.com") {
+      setPassword("");
+      setReauthError(null);
+      setReauthOpen(true);
+      return;
+    }
+    const google = getGoogleSignin();
+    if (!google) {
+      showToast({ type: "error", message: "Sign in again to delete", subtitle: "Google sign-in isn't available in this preview. Use the full app." });
+      return;
+    }
+    try {
+      const response = await google.GoogleSignin.signIn();
+      const idToken = google.isSuccessResponse(response) ? response.data.idToken : null;
+      if (!idToken || !auth.currentUser) return; // cancelled
+      await reauthenticateWithCredential(auth.currentUser, GoogleAuthProvider.credential(idToken));
+      await deleteNow();
+    } catch (e: unknown) {
+      showToast({ type: "error", message: "Google sign-in failed", subtitle: (e as Error)?.message });
+    }
+  };
 
   const confirmPassword = async () => {
     if (!auth.currentUser?.email || !password) {
@@ -106,13 +108,15 @@ export function useAccountActions() {
     setReauthError(null);
     try {
       await reauthenticateWithCredential(auth.currentUser, EmailAuthProvider.credential(auth.currentUser.email, password));
-      setReauthOpen(false);
-      setPassword("");
-      await deleteAccount();
     } catch (e: unknown) {
-      setReauthError((e as Error)?.message || "That password didn't work.");
+      const code = (e as { code?: string })?.code;
+      setReauthError(code === "auth/wrong-password" || code === "auth/invalid-credential" ? "That password isn't right." : (e as Error)?.message || "That password didn't work.");
       setDeleting(false);
+      return;
     }
+    setReauthOpen(false);
+    setPassword("");
+    await deleteNow();
   };
 
   const cancelReauth = () => {

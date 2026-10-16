@@ -8,7 +8,7 @@ import * as Haptics from "expo-haptics";
 import { StatusBar } from "expo-status-bar";
 import { User, verifyBeforeUpdateEmail } from "firebase/auth";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Modal, Pressable, Text, View } from "react-native";
+import { Alert, AppState, Modal, Pressable, Text, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { verificationMessages } from "../../data/verificationMessages";
@@ -41,6 +41,9 @@ type Notice = { tone: "info" | "success" | "error"; text: string } | null;
 
 const formatWait = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
+/** How often the open prompt checks whether the email has been verified. */
+const VERIFY_POLL_MS = 4000;
+
 export function EmailVerificationPrompt({
   visible,
   user,
@@ -62,8 +65,9 @@ export function EmailVerificationPrompt({
   // Epoch ms when Resend unlocks; derived from storage so it survives remounts and restarts.
   const [resendAvailableAt, setResendAvailableAt] = useState(0);
   const [now, setNow] = useState(() => Date.now());
-  const verificationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const verificationDelayIndexRef = useRef(0);
+  // Latest callback without restarting the check whenever the screen behind re-renders.
+  const onVerifiedRef = useRef(onVerified);
+  onVerifiedRef.current = onVerified;
 
   const email = user?.email ?? "";
 
@@ -88,54 +92,34 @@ export function EmailVerificationPrompt({
     return () => clearInterval(timer);
   }, [remaining]);
 
-  // Auto-check verification status while prompt is visible
+  // While the prompt is open: check every few seconds, and at once when the user comes
+  // back from their email app, then move on by itself as soon as the address is verified.
   useEffect(() => {
-    const delays = [5000, 10000, 20000, 30000];
-
-    if (!visible || !user) {
-      if (verificationTimeoutRef.current) {
-        clearTimeout(verificationTimeoutRef.current);
-        verificationTimeoutRef.current = null;
-      }
-      verificationDelayIndexRef.current = 0;
-      return;
-    }
-
-    verificationDelayIndexRef.current = 0;
-
-    const clearVerificationTimer = () => {
-      if (verificationTimeoutRef.current) {
-        clearTimeout(verificationTimeoutRef.current);
-        verificationTimeoutRef.current = null;
-      }
-    };
-
-    const scheduleNextCheck = () => {
-      clearVerificationTimer();
-
-      verificationTimeoutRef.current = setTimeout(async () => {
-        try {
-          const synced = await syncVerificationStatus(user);
-          if (synced || user.emailVerified) {
-            clearVerificationTimer();
-            onVerified?.();
-            return;
-          }
-        } catch {
-          // Silent - network hiccup or transient auth error
+    if (!visible || !user) return;
+    let done = false;
+    let checking = false;
+    const check = async () => {
+      if (done || checking) return;
+      checking = true;
+      try {
+        if ((await syncVerificationStatus(user)) || user.emailVerified) {
+          done = true;
+          onVerifiedRef.current?.();
         }
-
-        verificationDelayIndexRef.current = Math.min(verificationDelayIndexRef.current + 1, delays.length - 1);
-        scheduleNextCheck();
-      }, delays[verificationDelayIndexRef.current]);
+      } catch {
+        // Network hiccup or transient auth error: the next check retries.
+      } finally {
+        checking = false;
+      }
     };
-
-    scheduleNextCheck();
-
+    const timer = setInterval(() => void check(), VERIFY_POLL_MS);
+    const sub = AppState.addEventListener("change", (state) => state === "active" && void check());
     return () => {
-      clearVerificationTimer();
+      done = true;
+      clearInterval(timer);
+      sub.remove();
     };
-  }, [visible, user, onVerified]);
+  }, [visible, user]);
 
   const handleResendEmail = async () => {
     if (!user || sending || remaining > 0) return;

@@ -1,6 +1,6 @@
 /**
  * Onboarding: intro slides (once per account) then profile setup.
- * Shown while the profile has no name or goal (AuthContext "needsOnboarding").
+ * Shown until the profile has everything in utils/profileComplete (AuthContext "needsOnboarding").
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -10,7 +10,8 @@ import { useCallback, useEffect, useState } from "react";
 import { BackHandler, View } from "react-native";
 import { useAuth } from "../providers/AuthContext";
 import { IntroSlides } from "../components/onboarding/IntroSlides";
-import { OnboardingProfileSetup, type ProfileSetupResult } from "../components/onboarding/OnboardingProfileSetup";
+import { OnboardingProfileSetup } from "../components/onboarding/OnboardingProfileSetup";
+import type { ProfileSetupResult } from "../hooks/useProfileSetupForm";
 import { useToast } from "../providers/ToastContext";
 import { userApi, weightApi } from "../services/api";
 import { useTheme } from "../theme/theme";
@@ -21,7 +22,7 @@ type Step = "loading" | "intro" | "profile";
 const introSeenKey = (uid: string) => `@onboarding_intro_seen_${uid}`;
 
 export default function OnboardingScreen() {
-  const { user, retryBootstrap, setAwaitingEmailVerification } = useAuth();
+  const { user, profile, retryBootstrap, setAwaitingEmailVerification } = useAuth();
   const { colors } = useTheme();
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -125,6 +126,7 @@ export default function OnboardingScreen() {
   return (
     <OnboardingProfileSetup
       initialName={user?.displayName ?? ""}
+      saved={profile}
       onComplete={handleProfileComplete}
       onBack={() => setStep("intro")}
     />

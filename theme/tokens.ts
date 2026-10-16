@@ -306,20 +306,55 @@ export const size = {
 };
 
 /** Vertical height ruler (profile setup). */
+/** Height ruler (onboarding, Profile → Height): a measuring drum in a metal housing (Ruler_Component mockup). */
 export const ruler = {
-  height: 144,
-  item: 30,
-  band: 36,
-  labelWidth: 40,
-  tick: 16,
-  tickMinor: 8,
-  tickActive: 32,
-  tickActiveMinor: 12,
-  stroke: 2,
-  strokeActive: 4,
+  height: 300,
+  padding: 16,
+  /** Share of the inner width taken by the drum; the reading takes the rest. */
+  drumShare: 0.45,
+  bezel: 3,
+  bezelRadius: 14,
+  cavityRadius: 11,
+  /** Drum travel: 12 px per cm, so an inch is 2.54× that, as on a real dual tape. */
+  pxPerCm: 12,
+  /** Ticks: cm (every 10 / 5 / 1) and inches (foot / half foot / inch / quarter). */
+  tickCm: { major: 26, half: 16, minor: 10 },
+  tickIn: { foot: 28, halfFoot: 20, inch: 14, quarter: 8 },
+  numeral: 18,
+  needle: 2,
+  /** Needle arrow tips: length and half-height. */
+  needleTip: 7,
+  needleTipHalf: 4,
+  /** Gap between a mark and its number. */
+  labelGap: 5,
+  leader: 16,
+};
+
+/*
+ * Physical materials for realistic instruments (height drum). Fixed colours,
+ * not theme colours: they describe metal, ivory and ink, so they never change
+ * with the accent.
+ */
+export const materials = {
+  housingTop: "#24292E",
+  housingMid: "#191C20",
+  housingBottom: "#131518",
+  bezelLight: "#9AA3A8",
+  bezelMid: "#6F777C",
+  bezelDark: "#5F676B",
+  cavity: "#0B0D0E",
+  drumIvory: "#ECE8DF",
+  drumSilver: "#8C8A84",
+  drumTungsten: "#14171A",
+  ink: "#121212",
+  needle: "#C1121F",
+  glare: "rgba(255, 255, 255, 0.12)",
+  glareSoft: "rgba(255, 255, 255, 0.03)",
 };
 
 export const motion = {
+  /** Wait for one sheet or dialog to finish closing before opening the next (one opened mid-close can be dropped). */
+  modalSwapMs: 350,
   pressScale: 0.99,
   /** Stronger press for small round buttons (Log) */
   pressScaleStrong: 0.95,
@@ -369,6 +404,8 @@ export const fontFamily = {
 // Weight comes from the font file, so roles set no fontWeight: on Android a
 // fontWeight on a single-weight custom family renders synthetic or regular.
 export const typography = {
+  /** Instrument readings (height drum). */
+  displayXl: { fontFamily: fontFamily.display, fontSize: 56, lineHeight: 58, letterSpacing: -0.56 },
   displayLg: { fontFamily: fontFamily.display, fontSize: 44, lineHeight: 48, letterSpacing: -0.88 },
   displayMd: { fontFamily: fontFamily.display, fontSize: 36, lineHeight: 40, letterSpacing: -0.36 },
   headlineLg: { fontFamily: fontFamily.display, fontSize: 28, lineHeight: 32 },

@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
 import NetInfo from "@react-native-community/netinfo";
 import { AppState } from "react-native";
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   clearEmailVerificationStart,
@@ -10,6 +10,7 @@ import {
   setEmailVerificationStart,
 } from "../services/verificationStore";
 import { syncVerificationStatus } from "../services/emailVerification";
+import { isProfileComplete } from "../utils/profileComplete";
 import { auth } from "../services/firebase";
 import {
   ApiError,
@@ -67,6 +68,8 @@ type AuthContextType = {
   awaitingEmailVerification: boolean;
   /** Called when account is created to mark that verification is pending */
   setAwaitingEmailVerification: (value: boolean, uid?: string) => void;
+  /** Call once the email is verified (from any prompt): loads the account and routes to onboarding or Home. */
+  onEmailVerified: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -81,6 +84,7 @@ const AuthContext = createContext<AuthContextType>({
   syncError: null,
   awaitingEmailVerification: false,
   setAwaitingEmailVerification: async () => {},
+  onEmailVerified: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -127,7 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       queryClient.setQueryData(["profile"], nextProfile);
       setProfile(nextProfile);
       await AsyncStorage.setItem(LAST_UID_KEY, firebaseUser.uid).catch(() => {});
-      setStatus(nextProfile.displayName && nextProfile.fitnessGoal ? "ready" : "needsOnboarding");
+      setStatus(isProfileComplete(nextProfile) ? "ready" : "needsOnboarding");
     } catch (error) {
       if (auth.currentUser?.uid !== firebaseUser.uid) return;
       const message = isNetworkApiError(error)
@@ -207,9 +211,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const cached = queryClient.getQueryData<ApiUser>(["profile"]);
-      const onboardingDone = !!(cached?.displayName && cached?.fitnessGoal);
-
-      if (cached && onboardingDone) {
+      if (cached && isProfileComplete(cached)) {
         // Instant ready: show the app now, sync in the background
         setProfile(cached);
         setStatus("ready");
@@ -233,9 +235,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               queryClient.setQueryData(["profile"], fresh);
               setProfile(fresh);
               await AsyncStorage.setItem(LAST_UID_KEY, firebaseUser.uid).catch(() => {});
-              if (!fresh.displayName || !fresh.fitnessGoal) {
-                setStatus("needsOnboarding");
-              }
+              if (!isProfileComplete(fresh)) setStatus("needsOnboarding");
             }
           } catch (e) {
             console.warn("[Auth] bg getProfile failed:", e);
@@ -273,7 +273,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           AUTH_STEP_TIMEOUT,
           "foreground syncVerification",
         );
-        if (verified && status === "backendUnreachable") {
+        if (verified && (status === "backendUnreachable" || status === "unverified")) {
           await bootstrapUser(currentUser);
         }
       } catch {
@@ -291,6 +291,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     });
   }, [bootstrapUser, status]);
+
+  // Verified inside the app (sign-in prompt, Home or Profile banner): the auth
+  // listener doesn't fire for that, so load the account here. Without this the
+  // user stayed "unverified" and went to Home without onboarding.
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const onEmailVerified = useCallback(async () => {
+    const current = auth.currentUser;
+    if (!current) return;
+    // Refreshes the token too, so the server sees the verified email.
+    if (!(await syncVerificationStatus(current).catch(() => false))) return;
+    // Load first, then release the login screen: the next stop is onboarding or Home, with no flash of Home.
+    if (statusRef.current === "unverified") await retryBootstrap();
+    setAwaitingEmailVerificationState(false);
+    await AsyncStorage.removeItem(VERIFICATION_PENDING_KEY).catch(() => {});
+  }, [retryBootstrap]);
 
   const logout = async () => {
     await cancelAllScheduledNotifications();
@@ -314,6 +330,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         syncError: null,
         awaitingEmailVerification,
         setAwaitingEmailVerification,
+        onEmailVerified,
       }}
     >
       {children}

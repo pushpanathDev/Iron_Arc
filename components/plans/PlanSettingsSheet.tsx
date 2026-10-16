@@ -6,7 +6,7 @@ import { AVOID_OPTIONS, defaultSplitFor, effectiveWeeklyGoal, EQUIPMENT_OPTIONS,
 import type { PlanCriteriaPayload, User } from "../../services/api";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
-import { GOALS } from "../onboarding/OnboardingProfileSetup";
+import { GOALS } from "../../data/fitnessGoals";
 import { Button } from "../ui/Button";
 import { Sheet } from "../ui/Sheet";
 import type { MaterialIconName } from "../ui/iconName";

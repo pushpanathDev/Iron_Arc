@@ -44,7 +44,7 @@ import {
   type PlanExercise,
 } from "../utils/planData";
 import { weightLabel, type WeightUnit } from "../utils/unitConversion";
-import { dateOfWeekday, doneWeekdays, isLighterWeek, planLength, readyForNextWeek, todayWeekday } from "../utils/planCalendar";
+import { dateOfWeekday, doneWeekdays, isLighterWeek, planLength, readyForNextWeek, todayWeekday, weekStartedAt } from "../utils/planCalendar";
 import { shortDate } from "../utils/dates";
 
 const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -98,7 +98,11 @@ function DayView({ plan }: { plan: Plan }) {
   const lighter = isLighterWeek(plan.planData, week);
   // Only the current week sits on this calendar week, so only it shows done days.
   const isCurrentWeek = week === currentWeek;
-  const done = useMemo(() => (isCurrentWeek ? doneWeekdays(days, workouts ?? []) : new Set<number>()), [isCurrentWeek, days, workouts]);
+  const startedAt = weekStartedAt(plan);
+  const done = useMemo(
+    () => (isCurrentWeek ? doneWeekdays(days, workouts ?? [], new Date(), startedAt) : new Set<number>()),
+    [isCurrentWeek, days, workouts, startedAt],
+  );
 
   // Start on today; on a rest day, the next training day.
   const [selected, setSelected] = useState(() => {

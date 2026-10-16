@@ -1,20 +1,28 @@
 /*
  * How a plan meets the calendar. A plan's current week is always shown
  * against this calendar week (Monday to Sunday): its Monday is this Monday, a
- * day counts as done once one of its exercises is logged on that date, and a
- * plan whose current week is older than this calendar week is ready for its
- * next week.
+ * day counts as done once one of its exercises is logged on that date (and
+ * saved after the plan week started), and a plan whose current week is older
+ * than this calendar week is ready for its next week.
  */
 import type { Plan, Workout } from "../services/api";
 import { addDays, formatDate, getWeekStart } from "./dates";
 import { isTrainingDay, type PlanDay } from "./planData";
 
-type PlanJson = { totalWeeks?: number; weeks?: { isDeloadWeek?: boolean }[] } | null | undefined;
+type PlanJson = { totalWeeks?: number; weekStartedAt?: string; weeks?: { isDeloadWeek?: boolean }[] } | null | undefined;
 
 /** How many weeks the plan runs: set when it was made, or every week it holds (older plans). */
 export function planLength(planData: unknown): number {
   const plan = planData as PlanJson;
   return plan?.totalWeeks ?? plan?.weeks?.length ?? 1;
+}
+
+/**
+ * When the plan's current week started: set by the server for each week; for a
+ * plan made before that, week 1 started when the plan was made. Null when unknown.
+ */
+export function weekStartedAt(plan: Pick<Plan, "createdAt" | "weekNumber" | "planData">): string | null {
+  return (plan.planData as PlanJson)?.weekStartedAt ?? ((plan.weekNumber || 1) === 1 ? plan.createdAt : null);
 }
 
 /** Every 4th week of a plan is lighter (about 60% of the usual load). */
@@ -49,11 +57,20 @@ export const exerciseMatchKey = (name: string) => name.toLowerCase().replace(/[^
 
 /**
  * The weekdays (0 = Monday) of this calendar week whose plan session was
- * logged: at least one of its exercises, on that date.
+ * logged: at least one of its exercises, on that date. With `startedAt`, only
+ * workouts saved since then count, so moving on to the next week mid-week
+ * starts with nothing done (a session logged later for an earlier day still counts).
  */
-export function doneWeekdays(days: (PlanDay | null)[], workouts: Pick<Workout, "date" | "exercise">[], today = new Date()): Set<number> {
+export function doneWeekdays(
+  days: (PlanDay | null)[],
+  workouts: (Pick<Workout, "date" | "exercise"> & { createdAt?: string })[],
+  today = new Date(),
+  startedAt: string | null = null,
+): Set<number> {
   const loggedOn = new Map<string, Set<string>>();
   for (const w of workouts) {
+    // ISO times compare correctly as text.
+    if (startedAt && w.createdAt && w.createdAt < startedAt) continue;
     const date = w.date.split("T")[0];
     if (!loggedOn.has(date)) loggedOn.set(date, new Set());
     loggedOn.get(date)!.add(exerciseMatchKey(w.exercise));

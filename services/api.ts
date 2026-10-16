@@ -1,4 +1,5 @@
 import { auth } from "./firebase";
+import { formatDate } from "../utils/dates";
 
 const DEFAULT_BASE_URL = __DEV__
   ? "http://10.0.2.2:3000"
@@ -503,7 +504,8 @@ export const plansApi = {
       `/api/plans/${planId}/chat`,
       {
         method: "POST",
-        body: JSON.stringify({ message }),
+        // Today's date on the phone, so the coach knows where in the week you are.
+        body: JSON.stringify({ message, today: formatDate(new Date()) }),
       },
       AI_REQUEST_TIMEOUT_MS,
     ),

@@ -92,6 +92,7 @@ export const EXERCISES: Record<ExerciseCategory, string[]> = {
   Legs: [
     // Squat Variations
     "Barbell Back Squat",
+    "Bodyweight Squat",
     "Front Squat",
     "Goblet Squat",
     "Hack Squat",

@@ -435,6 +435,8 @@ export interface ChatMessage {
 export interface PlanChatResponse {
   message: string;
   planUpdated: boolean;
+  /** The coach moved the active plan's training days; the profile now has them too. */
+  profileUpdated?: boolean;
   chatHistory: ChatMessage[];
   planData: unknown;
 }

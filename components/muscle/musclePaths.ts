@@ -84,8 +84,8 @@ export const MUSCLE_ICONS: Record<MuscleGroup, IconSpec> = {
 /** Back-view legs: hamstrings + calves. */
 const POSTERIOR_LEGS: Poly[] = [...both(HAMSTRING), ...both(CALF)];
 
-/** The six main groups (stored categories; "Abs" shows as Core). */
-export type BodyMapGroup = "Chest" | "Back" | "Shoulders" | "Arms" | "Legs" | "Abs";
+/** Analytics' muscle groups (utils/analytics MAIN_GROUPS; "Abs" shows as Core). */
+export type BodyMapGroup = "Chest" | "Back" | "Shoulders" | "Biceps" | "Triceps" | "Forearms" | "Legs" | "Abs";
 
 /**
  * Body map (Analytics → Muscle balance): which shapes belong to each group,
@@ -95,14 +95,16 @@ export const BODY_MAP: Record<"front" | "back", { group: BodyMapGroup; shapes: s
   front: [
     { group: "Legs", shapes: [...both(QUAD), ...both(SHIN)].map(toPath) },
     { group: "Abs", shapes: [...ABS, ...both(OBLIQUE)].map(toPath) },
-    { group: "Arms", shapes: [...both(BICEP), ...both(FOREARM)].map(toPath) },
+    { group: "Biceps", shapes: both(BICEP).map(toPath) },
+    { group: "Forearms", shapes: both(FOREARM).map(toPath) },
     { group: "Chest", shapes: both(PEC).map(toPath) },
     { group: "Shoulders", shapes: both(DELT).map(toPath) },
   ],
   back: [
     { group: "Legs", shapes: POSTERIOR_LEGS.map(toPath) },
     { group: "Back", shapes: [TRAPS, ...both(LAT)].map(toPath) },
-    { group: "Arms", shapes: [...both(TRICEP), ...both(FOREARM)].map(toPath) },
+    { group: "Triceps", shapes: both(TRICEP).map(toPath) },
+    { group: "Forearms", shapes: both(FOREARM).map(toPath) },
     { group: "Shoulders", shapes: both(DELT).map(toPath) },
   ],
 };

@@ -1,3 +1,4 @@
+import { armSubgroupOf, isArmSubgroup, type ArmSubgroup } from "../data/armSubgroups";
 import { groupSessions } from "../hooks/useWorkoutSummary";
 import type { Workout } from "../services/api";
 import { checkPR, estimate1RM, heaviestSet, prGain, type ExerciseHistory, type LoggedSet, type PREvent } from "./exerciseHistory";
@@ -73,7 +74,30 @@ export interface PeriodStats {
 }
 
 /** Main groups always listed in Muscle balance (stored names; "Abs" shows as Core). */
-export const MAIN_GROUPS = ["Chest", "Back", "Shoulders", "Arms", "Legs", "Abs"] as const;
+/**
+ * The muscle groups Analytics shows: the workout categories, with Arms split
+ * into the three arm muscles. Workouts are still saved as "Arms"; the split
+ * comes from the exercise (see muscleGroupOf).
+ */
+export const MAIN_GROUPS = ["Chest", "Back", "Shoulders", "Biceps", "Triceps", "Forearms", "Legs", "Abs"] as const;
+
+/** Arm muscles of the user's own exercises, by lower-case name (they're saved under their tile). */
+export type CustomArms = Map<string, ArmSubgroup>;
+
+/**
+ * The muscle group a workout counts for: its category, except arm work, which
+ * counts for biceps, triceps or forearms by exercise (the picker's own split).
+ * An arm exercise neither list knows stays "Arms" and shows as "also logged".
+ */
+export function muscleGroupOf(w: Pick<Workout, "category" | "exercise">, customArms?: CustomArms): string {
+  const category = w.category || "Other";
+  if (isArmSubgroup(category)) return category;
+  if (category !== "Arms") return category;
+  return armSubgroupOf(w.exercise) ?? customArms?.get(w.exercise.trim().toLowerCase()) ?? "Arms";
+}
+
+/** Forearms get most of their work from pulling and gripping, so "nothing for forearms" isn't worth a warning. */
+const WARN_GROUPS = MAIN_GROUPS.filter((g) => g !== "Forearms");
 /** Need this much in the period before calling a group "least trained". */
 const BALANCE_MIN_SESSIONS = 2;
 const BALANCE_MIN_SETS = 10;
@@ -183,7 +207,7 @@ function buildBuckets(period: AnalyticsPeriod, start: string, end: string, today
   return { buckets, find, unit, truncated };
 }
 
-export function analyzePeriod(workouts: Workout[], period: AnalyticsPeriod, todayKey: string): PeriodStats {
+export function analyzePeriod(workouts: Workout[], period: AnalyticsPeriod, todayKey: string, customArms?: CustomArms): PeriodStats {
   const firstKey = workouts.reduce<string | null>((min, w) => (!min || dayKey(w) < min ? dayKey(w) : min), null);
   const { start, end: rangeEnd } = periodRange(period, todayKey, firstKey);
   const end = minKey(rangeEnd, todayKey);
@@ -199,8 +223,8 @@ export function analyzePeriod(workouts: Workout[], period: AnalyticsPeriod, toda
     const v = volumeOf(w);
     sets += w.sets.length;
     volumeKg += v;
-    const cat = w.category || "Other";
-    perCategory.set(cat, (perCategory.get(cat) ?? 0) + w.sets.length);
+    const group = muscleGroupOf(w, customArms);
+    perCategory.set(group, (perCategory.get(group) ?? 0) + w.sets.length);
     const i = find(dayKey(w));
     if (i >= 0) {
       buckets[i].sets += w.sets.length;
@@ -223,7 +247,7 @@ export function analyzePeriod(workouts: Workout[], period: AnalyticsPeriod, toda
     compare = { against: prev.against, volumePct: prevKg > 0 ? Math.round(((volumeKg - prevKg) / prevKg) * 100) : null };
   }
 
-  // Muscle balance: the six main groups always (0% shows a gap), others only when trained.
+  // Muscle balance: the main groups always (0% shows a gap), others only when trained.
   const order = (c: string) => {
     const i = (MAIN_GROUPS as readonly string[]).indexOf(c);
     return i < 0 ? MAIN_GROUPS.length : i;
@@ -239,7 +263,7 @@ export function analyzePeriod(workouts: Workout[], period: AnalyticsPeriod, toda
 
   let leastTrained: PeriodStats["leastTrained"] = null;
   if (sessions >= BALANCE_MIN_SESSIONS && sets >= BALANCE_MIN_SETS) {
-    const main = MAIN_GROUPS.map((c) => ({ c, n: perCategory.get(c) ?? 0 }));
+    const main = WARN_GROUPS.map((c) => ({ c, n: perCategory.get(c) ?? 0 }));
     const min = Math.min(...main.map((m) => m.n));
     leastTrained = { categories: main.filter((m) => m.n === min).map((m) => m.c), untrained: min === 0 };
   }
@@ -306,13 +330,14 @@ export interface MuscleWeek {
 }
 
 
-/** The six main groups, busiest first; per-week averages use the weeks elapsed so far (at least one). */
-export function muscleWeeks(workouts: Workout[], stats: PeriodStats, todayKey: string): MuscleWeek[] {
+/** The main groups, busiest first; per-week averages use the weeks elapsed so far (at least one). */
+export function muscleWeeks(workouts: Workout[], stats: PeriodStats, todayKey: string, customArms?: CustomArms): MuscleWeek[] {
   const weeks = Math.max(1, (daysBetween(stats.start, stats.end) + 1) / 7);
   const last = new Map<string, string>();
   for (const w of workouts) {
     const d = dayKey(w);
-    if (!last.get(w.category) || d > last.get(w.category)!) last.set(w.category, d);
+    const group = muscleGroupOf(w, customArms);
+    if (!last.get(group) || d > last.get(group)!) last.set(group, d);
   }
   return MAIN_GROUPS.map((category) => {
     const sets = stats.balance.find((r) => r.category === category)?.sets ?? 0;
@@ -437,13 +462,13 @@ export function headlineFor(
   };
 }
 
-/** Exercises per category in [start, end] with their set counts, busiest first. */
-export function exercisesByCategory(workouts: Workout[], start: string, end: string): Map<string, { exercise: string; sets: number }[]> {
+/** Exercises per muscle group in [start, end] with their set counts, busiest first. */
+export function exercisesByCategory(workouts: Workout[], start: string, end: string, customArms?: CustomArms): Map<string, { exercise: string; sets: number }[]> {
   const counts = new Map<string, Map<string, number>>();
   for (const w of workouts) {
     const d = dayKey(w);
     if (d < start || d > end) continue;
-    const cat = w.category || "Other";
+    const cat = muscleGroupOf(w, customArms);
     const m = counts.get(cat) ?? new Map<string, number>();
     m.set(w.exercise, (m.get(w.exercise) ?? 0) + w.sets.length);
     counts.set(cat, m);

@@ -25,6 +25,8 @@ import { exerciseIndexFor, prEventsFor } from "../../utils/exerciseHistory";
 import { perfStart } from "../../utils/perf";
 import { toKg, weightLabel, weightStep } from "../../utils/unitConversion";
 import { formatDate, parseLocalDate } from "../../utils/dates";
+import { isArmSubgroup, type ArmSubgroup } from "../../data/armSubgroups";
+import { useCustomExercises } from "../../hooks/useExercises";
 import type { MaterialIconName } from "../../components/ui/iconName";
 
 const NO_WORKOUTS: never[] = [];
@@ -52,12 +54,18 @@ export default function Analytics() {
   const [period, setPeriod] = useState<AnalyticsPeriod>("week");
   const [refreshing, setRefreshing] = useState(false);
 
-  const stats = useMemo(() => analyzePeriod(workouts, period, todayKey), [workouts, period, todayKey]);
+  // Your own arm exercises are saved under their tile (Biceps, Triceps, Forearms); Analytics splits Arms by it.
+  const customs = useCustomExercises().data;
+  const customArms = useMemo(
+    () => new Map((customs ?? []).filter((c) => isArmSubgroup(c.category)).map((c) => [c.name.trim().toLowerCase(), c.category as ArmSubgroup])),
+    [customs],
+  );
+  const stats = useMemo(() => analyzePeriod(workouts, period, todayKey, customArms), [workouts, period, todayKey, customArms]);
   const lifts = useMemo(() => bestLifts(exerciseIndexFor(workouts).index, stats.start, stats.end), [workouts, stats.start, stats.end]);
   const records = useMemo(() => prsInRange(prEventsFor(workouts), stats.start, stats.end), [workouts, stats.start, stats.end]);
   const reach = useMemo(() => withinReach(exerciseIndexFor(workouts).index, todayKey, toKg(weightStep(unit), unit)), [workouts, todayKey, unit]);
-  const muscles = useMemo(() => muscleWeeks(workouts, stats, todayKey), [workouts, stats, todayKey]);
-  const groupExercises = useMemo(() => exercisesByCategory(workouts, stats.start, stats.end), [workouts, stats.start, stats.end]);
+  const muscles = useMemo(() => muscleWeeks(workouts, stats, todayKey, customArms), [workouts, stats, todayKey, customArms]);
+  const groupExercises = useMemo(() => exercisesByCategory(workouts, stats.start, stats.end, customArms), [workouts, stats.start, stats.end, customArms]);
   const headline = useMemo(() => headlineFor(workouts, period, stats, records, todayKey, PHRASE[period], unit), [workouts, period, stats, records, todayKey, unit]);
 
   const onRefresh = async () => {

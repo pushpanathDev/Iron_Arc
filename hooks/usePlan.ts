@@ -155,6 +155,10 @@ export function usePlanChat(planId: string | undefined) {
         if (response.planUpdated) {
           queryClient.invalidateQueries({ queryKey: PLANS_KEY });
         }
+        // New training days: Home, reminders and the profile follow the profile query.
+        if (response.profileUpdated) {
+          queryClient.invalidateQueries({ queryKey: ["profile"] });
+        }
       } catch (e) {
         console.warn("[Coach] reply received but updating the cached plan failed:", e);
       }

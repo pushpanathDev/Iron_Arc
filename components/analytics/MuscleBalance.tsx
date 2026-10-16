@@ -4,7 +4,7 @@ import { Pressable, Text, View } from "react-native";
 import { displayCategory } from "../../hooks/workoutDraft";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, typography } from "../../theme/tokens";
-import { WEEKLY_SETS_RANGE, type MuscleWeek } from "../../utils/analytics";
+import { MAIN_GROUPS, WEEKLY_SETS_RANGE, type MuscleWeek } from "../../utils/analytics";
 import type { BodyMapGroup } from "../muscle/musclePaths";
 import { BodyMap, BodyMapLegend, muscleTone, type GroupState } from "./BodyMap";
 
@@ -12,7 +12,7 @@ export type MuscleBalanceProps = {
   rows: MuscleWeek[];
   /** "This week" counts sets so far; longer periods show a weekly average. */
   average: boolean;
-  /** Sets outside the six groups (Full Body, Cardio), so they aren't silently missing. */
+  /** Sets outside the main groups (Full Body, Cardio, unknown arm exercises), so they aren't silently missing. */
   others?: { category: string; sets: number }[];
   /** The period's exercises per category, shown when a group is tapped. */
   exercises: Map<string, { exercise: string; sets: number }[]>;
@@ -138,10 +138,9 @@ export function MuscleBalance({ rows, average, others = [], exercises, onOpenExe
   );
 }
 
-const ORDER = ["Chest", "Back", "Shoulders", "Arms", "Legs", "Abs"];
 const order = (c: string) => {
-  const i = ORDER.indexOf(c);
-  return i < 0 ? ORDER.length : i;
+  const i = (MAIN_GROUPS as readonly string[]).indexOf(c);
+  return i < 0 ? MAIN_GROUPS.length : i;
 };
 
 function sinceText(days: number | null) {

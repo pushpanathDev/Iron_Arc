@@ -6,6 +6,7 @@ import { useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../../theme/theme";
 import { motion, radius, size, spacing, touchTarget, typography } from "../../theme/tokens";
+import { GlossFill } from "./GlossFill";
 import { PressableScale } from "./PressableScale";
 
 export type AppTabBarProps = BottomTabBarProps & {
@@ -17,7 +18,7 @@ export type AppTabBarProps = BottomTabBarProps & {
  * so it never rides up over the keyboard.
  */
 export function AppTabBar({ state, descriptors, navigation, onLogPress }: AppTabBarProps) {
-  const { colors } = useTheme();
+  const { colors, gloss } = useTheme();
   const insets = useSafeAreaInsets();
   const keyboardVisible = useKeyboardState((s) => s.isVisible);
 
@@ -79,8 +80,10 @@ export function AppTabBar({ state, descriptors, navigation, onLogPress }: AppTab
           alignItems: "center",
           justifyContent: "center",
           backgroundColor: pressed ? colors.accentPressed : colors.accent,
+          overflow: gloss ? "hidden" : undefined,
         })}
       >
+        {gloss && <GlossFill gloss={gloss} accent={colors.accent} />}
         <Ionicons name="add" size={size.iconLg} color={colors.onAccent} />
       </PressableScale>
     </View>

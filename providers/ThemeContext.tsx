@@ -15,9 +15,13 @@ interface ThemeContextValue {
   preference: ThemePreference;
   resolved: ResolvedTheme;
   setPreference: (pref: ThemePreference) => Promise<void>;
+  /** Development builds only: an accent palette to try (theme/accentPreviews). */
+  accentPreview: string;
+  setAccentPreview: (key: string) => void;
 }
 
 const STORAGE_KEY = "@theme_preference";
+const ACCENT_PREVIEW_KEY = "@accent_preview";
 
 /** While true the app always renders dark and Profile hides the theme picker. */
 export const FORCE_DARK = true;
@@ -26,6 +30,8 @@ const ThemeContext = createContext<ThemeContextValue>({
   preference: "system",
   resolved: "dark",
   setPreference: async () => {},
+  accentPreview: "mint",
+  setAccentPreview: () => {},
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
@@ -46,6 +52,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.setItem(STORAGE_KEY, pref);
   }, []);
 
+  const [accentPreview, setAccentPreviewState] = useState("mint");
+  useEffect(() => {
+    if (!__DEV__) return;
+    void AsyncStorage.getItem(ACCENT_PREVIEW_KEY).then((k) => k && setAccentPreviewState(k));
+  }, []);
+  const setAccentPreview = useCallback((key: string) => {
+    setAccentPreviewState(key);
+    void AsyncStorage.setItem(ACCENT_PREVIEW_KEY, key);
+  }, []);
+
   // Dark-only until a light palette is designed. The stored preference and
   // the system setting are kept (and still saved) but ignored for now.
   const resolved: ResolvedTheme = FORCE_DARK
@@ -57,7 +73,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       : preference;
 
   return (
-    <ThemeContext.Provider value={{ preference, resolved, setPreference }}>
+    <ThemeContext.Provider value={{ preference, resolved, setPreference, accentPreview: __DEV__ ? accentPreview : "mint", setAccentPreview }}>
       {children}
     </ThemeContext.Provider>
   );

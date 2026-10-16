@@ -12,7 +12,7 @@ import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { aiErrorMessage } from "../components/plans/PlanActions";
+import { aiErrorMessage } from "../utils/aiErrors";
 import { useToast } from "../providers/ToastContext";
 import { requestPlanDay } from "../hooks/planDayRequest";
 import { usePlan, usePlanChat } from "../hooks/usePlan";

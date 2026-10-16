@@ -31,6 +31,8 @@ import { WEEKDAYS } from "../../components/home/homeShared";
 import { TodayCard } from "../../components/home/TodayCard";
 import { WeekCard, StreakCard } from "../../components/home/WeekCards";
 import { YourPlanCard, AIPlanCard } from "../../components/home/PlanCards";
+import { StartNextWeek } from "../../components/plans/StartNextWeek";
+import { readyForNextWeek } from "../../utils/planCalendar";
 import { RecentCard } from "../../components/home/RecentCard";
 import { HomeSkeleton } from "../../components/home/HomeSkeleton";
 
@@ -65,6 +67,10 @@ export default function Home() {
   const plansQuery = usePlans();
   const activePlanMeta = plansQuery.data?.find((p) => p.isActive);
   const activePlanQuery = usePlan(activePlanMeta?.id);
+
+  const [nextWeekOpen, setNextWeekOpen] = useState(false);
+  const activePlan = activePlanQuery.data ?? null;
+  const nextWeekReady = !!activePlan && readyForNextWeek(activePlan);
 
   const [refreshing, setRefreshing] = useState(false);
   const verification = useEmailVerificationGrace(user);
@@ -261,6 +267,7 @@ export default function Home() {
                   name={activePlanMeta.name}
                   weekNumber={activePlanQuery.data?.weekNumber ?? activePlanMeta.weekNumber}
                   days={planWeekDays}
+                  onStartNextWeek={nextWeekReady ? () => setNextWeekOpen(true) : undefined}
                 />
               ) : (
                 <AIPlanCard savedPlans={plansQuery.data?.length ?? 0} weeklyGoal={weeklyGoal} />
@@ -343,6 +350,7 @@ export default function Home() {
       />
 
       <ResumeWorkoutSheet from="home" />
+      <StartNextWeek plan={activePlan} visible={nextWeekOpen} onClose={() => setNextWeekOpen(false)} />
     </>
   );
 }

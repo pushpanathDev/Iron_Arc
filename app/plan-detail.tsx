@@ -2,6 +2,8 @@
  * Plan day view (AI Plans - Plan Detail Day View mockup): pick a weekday,
  * see its exercises (sets × reps, target or last time, rest), swap any of
  * them, and start that session in the log. Coach chat opens from the header.
+ * The plan's current week sits on this calendar week: logged days get a ✓,
+ * and starting an earlier day asks which day it was done (planCalendar).
  * Navigate here with /plan-detail?id=<planId>.
  */
 import { MaterialIcons } from "@expo/vector-icons";
@@ -10,7 +12,9 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { aiErrorMessage, PlanActions } from "../components/plans/PlanActions";
+import { PlanActions } from "../components/plans/PlanActions";
+import { StartNextWeek } from "../components/plans/StartNextWeek";
+import { aiErrorMessage } from "../utils/aiErrors";
 import { Button } from "../components/ui/Button";
 import { Sheet } from "../components/ui/Sheet";
 import { SkeletonBlock } from "../components/ui/Skeleton";
@@ -19,6 +23,7 @@ import { useToast } from "../providers/ToastContext";
 import { takePlanDayRequest } from "../hooks/planDayRequest";
 import { useExerciseIndex } from "../hooks/useWorkoutData";
 import { usePlan, useSubstituteExercise } from "../hooks/usePlan";
+import { useAllWorkouts } from "../hooks/useWorkouts";
 import { useStartPlanSession } from "../hooks/useStartPlanSession";
 import { useUnitPreference } from "../hooks/useUnitPreference";
 import type { Plan } from "../services/api";
@@ -39,12 +44,12 @@ import {
   type PlanExercise,
 } from "../utils/planData";
 import { weightLabel, type WeightUnit } from "../utils/unitConversion";
+import { dateOfWeekday, doneWeekdays, isLighterWeek, planLength, readyForNextWeek, todayWeekday } from "../utils/planCalendar";
+import { shortDate } from "../utils/dates";
 
 const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const WEEKDAY_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const REASON_MAX = 150;
-/** Today as 0 = Monday … 6 = Sunday. */
-const todayIndex = () => (new Date().getDay() + 6) % 7;
 
 export default function PlanDetailScreen() {
   const { colors } = useTheme();
@@ -82,15 +87,22 @@ function DayView({ plan }: { plan: Plan }) {
   const { summaries } = useExerciseIndex();
   const startSession = useStartPlanSession();
   const substitute = useSubstituteExercise();
+  const workouts = useAllWorkouts().data;
 
   const weeks = planWeekCount(plan.planData);
-  const [week, setWeek] = useState(Math.min(Math.max(plan.weekNumber || 1, 1), weeks));
+  const totalWeeks = planLength(plan.planData);
+  const currentWeek = plan.weekNumber || 1;
+  const [week, setWeek] = useState(Math.min(Math.max(currentWeek, 1), weeks));
   const days = useMemo(() => daysByWeekday(getPlanWeekDays(plan.planData, week)), [plan.planData, week]);
   const trainingCount = days.filter(isTrainingDay).length;
+  const lighter = isLighterWeek(plan.planData, week);
+  // Only the current week sits on this calendar week, so only it shows done days.
+  const isCurrentWeek = week === currentWeek;
+  const done = useMemo(() => (isCurrentWeek ? doneWeekdays(days, workouts ?? []) : new Set<number>()), [isCurrentWeek, days, workouts]);
 
   // Start on today; on a rest day, the next training day.
   const [selected, setSelected] = useState(() => {
-    const t = todayIndex();
+    const t = todayWeekday();
     for (let i = 0; i < 7; i++) if (isTrainingDay(days[(t + i) % 7])) return (t + i) % 7;
     return t;
   });
@@ -106,6 +118,9 @@ function DayView({ plan }: { plan: Plan }) {
   );
 
   const [menuOpen, setMenuOpen] = useState(false);
+  const [nextWeekOpen, setNextWeekOpen] = useState(false);
+  // Starting an earlier day of this week: logged then, or today?
+  const [askDay, setAskDay] = useState(false);
   const [swapTarget, setSwapTarget] = useState<PlanExercise | null>(null);
   // Shown inside the sheet: a toast would be hidden behind it.
   const [swapError, setSwapError] = useState<string | null>(null);
@@ -116,8 +131,14 @@ function DayView({ plan }: { plan: Plan }) {
   const restNote = days[selected]?.recoveryNote?.trim();
   const training = isTrainingDay(day);
   const exercises = training ? (day.exercises ?? []).filter((e) => e.name) : [];
-  const isToday = selected === todayIndex() && week === (plan.weekNumber || 1);
+  const isToday = selected === todayWeekday() && isCurrentWeek;
   const short = training ? planDayShortName(day) : "Rest";
+  const dayDone = done.has(selected);
+
+  const start = (date?: string) =>
+    startSession(exercises.map((e) => ({ name: e.name, sets: e.sets, restSeconds: e.restSeconds })), day?.targetMuscles, date);
+  // An earlier day of this week that isn't logged yet may have been done on that day.
+  const onStart = () => (isCurrentWeek && selected < todayWeekday() && !dayDone ? setAskDay(true) : start());
 
   const swap = () => {
     const ex = swapTarget;
@@ -145,7 +166,8 @@ function DayView({ plan }: { plan: Plan }) {
             {plan.name}
           </Text>
           <Text style={[typography.labelSm, { color: colors.textSecondary }]}>
-            Week {week} · {trainingCount} training {trainingCount === 1 ? "day" : "days"}
+            Week {week} of {totalWeeks} · {trainingCount} training {trainingCount === 1 ? "day" : "days"}
+            {lighter ? " · Lighter week" : ""}
             {plan.isActive ? " · Active" : ""}
           </Text>
         </View>
@@ -180,7 +202,7 @@ function DayView({ plan }: { plan: Plan }) {
         {/* Day tabs */}
         <View style={{ flexDirection: "row", gap: spacing.xs }}>
           {days.map((d, i) => (
-            <DayTab key={i} index={i} day={d} selected={i === selected} today={i === todayIndex()} onPress={() => setSelected(i)} />
+            <DayTab key={i} index={i} day={d} selected={i === selected} today={isCurrentWeek && i === todayWeekday()} done={done.has(i)} onPress={() => setSelected(i)} />
           ))}
         </View>
 
@@ -188,6 +210,7 @@ function DayView({ plan }: { plan: Plan }) {
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm, borderBottomWidth: size.divider, borderBottomColor: colors.surfaceContainerHigh }}>
           <Text style={[typography.bodyMdMedium, { flex: 1, color: colors.text }]}>
             {WEEKDAY_LONG[selected]} · {short}
+            {dayDone ? <Text style={{ color: colors.accent }}> · Done</Text> : null}
             {training ? (
               <Text style={[typography.labelMd, { color: colors.textSecondary }]}>
                 {"  "}· {exercises.length} exercises, {daySetCount(day)} sets
@@ -210,6 +233,8 @@ function DayView({ plan }: { plan: Plan }) {
             </Text>
           </View>
         )}
+
+        {isCurrentWeek && <NextWeekCard plan={plan} totalWeeks={totalWeeks} onStart={() => setNextWeekOpen(true)} />}
       </ScrollView>
 
       {/* Start this session */}
@@ -218,7 +243,7 @@ function DayView({ plan }: { plan: Plan }) {
           <Button
             title={isToday ? `Start today's ${short} session` : `Start ${WEEKDAY_SHORT[selected]} · ${short}`}
             icon="play"
-            onPress={() => startSession(exercises.map((e) => ({ name: e.name, sets: e.sets, restSeconds: e.restSeconds })), day.targetMuscles)}
+            onPress={onStart}
             fullWidth
           />
         </View>
@@ -251,6 +276,31 @@ function DayView({ plan }: { plan: Plan }) {
         />
       </Sheet>
 
+      {/* Which day was this session? */}
+      <Sheet visible={askDay} onClose={() => setAskDay(false)} title="When did you do this session?" subtitle="It's saved on that day, so the plan and your history match.">
+        <View style={{ gap: spacing.sm }}>
+          <Button
+            title={`${WEEKDAY_LONG[selected]}, ${shortDate(dateOfWeekday(selected))}`}
+            icon="calendar"
+            fullWidth
+            onPress={() => {
+              setAskDay(false);
+              start(dateOfWeekday(selected));
+            }}
+          />
+          <Button
+            title={`Today, ${shortDate(dateOfWeekday(todayWeekday()))}`}
+            variant="tonal"
+            fullWidth
+            onPress={() => {
+              setAskDay(false);
+              start();
+            }}
+          />
+        </View>
+      </Sheet>
+
+      <StartNextWeek plan={plan} visible={nextWeekOpen} onClose={() => setNextWeekOpen(false)} />
       <PlanActions plan={menuOpen ? plan : null} onClose={() => setMenuOpen(false)} leaveOnDelete />
     </View>
   );
@@ -280,7 +330,7 @@ function BackHeader() {
   );
 }
 
-const DayTab = memo(function DayTab({ index, day, selected, today, onPress }: { index: number; day: PlanDay | null; selected: boolean; today: boolean; onPress: () => void }) {
+const DayTab = memo(function DayTab({ index, day, selected, today, done, onPress }: { index: number; day: PlanDay | null; selected: boolean; today: boolean; done: boolean; onPress: () => void }) {
   const { colors } = useTheme();
   const training = isTrainingDay(day);
   const label = training ? planDayShortName(day) : "Rest";
@@ -289,7 +339,7 @@ const DayTab = memo(function DayTab({ index, day, selected, today, onPress }: { 
       onPress={onPress}
       accessibilityRole="tab"
       accessibilityState={{ selected }}
-      accessibilityLabel={`${WEEKDAY_LONG[index]}: ${training ? label : "rest day"}${today ? ", today" : ""}`}
+      accessibilityLabel={`${WEEKDAY_LONG[index]}: ${training ? label : "rest day"}${done ? ", done" : ""}${today ? ", today" : ""}`}
       style={({ pressed }) => ({
         flex: 1,
         minHeight: size.exerciseRow,
@@ -306,10 +356,41 @@ const DayTab = memo(function DayTab({ index, day, selected, today, onPress }: { 
       <Text style={[typography.labelMd, { color: selected ? colors.accent : training ? colors.text : colors.textMuted }]} numberOfLines={1}>
         {label}
       </Text>
-      <View style={{ width: size.dot, height: size.dot, borderRadius: radius.full, backgroundColor: training ? (selected ? colors.accent : colors.textSecondary) : "transparent" }} />
+      {done ? (
+        <MaterialIcons name="check" size={size.iconXs} color={colors.accent} />
+      ) : (
+        <View style={{ width: size.dot, height: size.dot, borderRadius: radius.full, backgroundColor: training ? (selected ? colors.accent : colors.textSecondary) : "transparent" }} />
+      )}
     </Pressable>
   );
 });
+
+/** Under the current week: move on to the next one, or the plan is finished. */
+function NextWeekCard({ plan, totalWeeks, onStart }: { plan: Plan; totalWeeks: number; onStart: () => void }) {
+  const { colors } = useTheme();
+  const current = plan.weekNumber || 1;
+  const last = current >= totalWeeks;
+  const newWeek = readyForNextWeek(plan);
+  const title = last ? "Last week of the plan" : newWeek ? "A new week has started" : `Week ${current} of ${totalWeeks}`;
+  const message = last
+    ? "Finish this week, then generate a new plan to keep progressing."
+    : `Move on whenever you're ready. The coach sets up week ${current + 1} from what you logged; days you skipped are fine.`;
+
+  return (
+    <View style={{ gap: spacing.md, padding: spacing.lg, borderRadius: radius.xl, backgroundColor: colors.raised }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+        <MaterialIcons name={last ? "flag" : "update"} size={size.icon} color={colors.accent} />
+        <Text style={[typography.bodyMdMedium, { flex: 1, color: colors.text }]}>{title}</Text>
+      </View>
+      <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>{message}</Text>
+      {last ? (
+        <Button title="New plan" icon="sparkles" variant="tonal" onPress={() => router.navigate("/ai-plan")} fullWidth />
+      ) : (
+        <Button title={`Start week ${current + 1}`} icon="play-forward" variant={newWeek ? "primary" : "tonal"} onPress={onStart} fullWidth />
+      )}
+    </View>
+  );
+}
 
 const ExerciseCard = memo(function ExerciseCard({ exercise, unit, summary, onSwap }: { exercise: PlanExercise; unit: WeightUnit; summary?: ExerciseSummary; onSwap?: () => void }) {
   const { colors } = useTheme();

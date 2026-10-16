@@ -9,7 +9,8 @@ import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { GeneratingOverlay } from "../components/plans/GeneratingOverlay";
-import { aiErrorMessage, PlanActions } from "../components/plans/PlanActions";
+import { PlanActions } from "../components/plans/PlanActions";
+import { aiErrorMessage } from "../utils/aiErrors";
 import { PlanSettingsSheet } from "../components/plans/PlanSettingsSheet";
 import { Button } from "../components/ui/Button";
 import { Reveal } from "../components/ui/Reveal";

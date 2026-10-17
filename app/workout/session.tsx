@@ -1,5 +1,5 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import type { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { useQueryClient } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
@@ -36,6 +36,7 @@ import { allSets, checkPR, indexAsOf, prDetail, exerciseKey, formatSet, type Log
 import { perfEndAfterFrame, perfStart } from "../../utils/perf";
 import { toKg } from "../../utils/unitConversion";
 import { formatDate, parseLocalDate, FIRST_DAY_OF_WEEK } from "../../utils/dates";
+import { ThemedDateTimePicker } from "../../components/ui/ThemedDateTimePicker";
 
 /** Horizontal swipe on the exercise view: start tracking / switch exercise. */
 const SWIPE_ACTIVATE = 24;
@@ -349,7 +350,7 @@ export default function WorkoutSession() {
       </View>
 
       {datePickerValue && (
-        <DateTimePicker
+        <ThemedDateTimePicker
           value={datePickerValue}
           mode="date"
           firstDayOfWeek={FIRST_DAY_OF_WEEK}

@@ -2,7 +2,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useAuth } from "../../providers/AuthContext";
 import { ExportSheet } from "../../components/profile/ExportSheet";
 import { MonthCalendar } from "../../components/history/MonthCalendar";
@@ -31,6 +31,7 @@ import { createPageLogger } from "../../utils/logger";
 import { perfStart } from "../../utils/perf";
 import { formatDate, parseLocalDate, dayLabel } from "../../utils/dates";
 import type { MaterialIconName } from "../../components/ui/iconName";
+import { usePullToRefresh } from "../../hooks/usePullToRefresh";
 
 const log = createPageLogger("History");
 const NO_WORKOUTS: never[] = [];
@@ -57,7 +58,6 @@ export default function History() {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [category, setCategory] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   // Swiped session awaiting confirmation (and how to snap its card back).
   const [confirm, setConfirm] = useState<{ group: SessionGroup; close: () => void } | null>(null);
@@ -118,14 +118,7 @@ export default function History() {
   }, []);
   const toggleExpanded = useCallback((key: string) => setExpanded((cur) => (cur === key ? null : key)), []);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await refetch();
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  const refreshControl = usePullToRefresh(() => refetch());
 
   // Delete a whole session (through the delete queue)
   const deleteSession = useCallback(
@@ -181,7 +174,7 @@ export default function History() {
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: spacing.xxl, gap: spacing.md }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} progressBackgroundColor={colors.card} />}
+        refreshControl={refreshControl}
       >
         {isLoading && workouts.length === 0 ? (
           <HistorySkeleton />

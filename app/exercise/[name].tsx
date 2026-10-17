@@ -1,7 +1,7 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useMemo, useState, type ReactNode } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ProgressChart, type ProgressPoint } from "../../components/analytics/ProgressChart";
 import { Button } from "../../components/ui/Button";
@@ -27,6 +27,7 @@ import {
 } from "../../utils/exerciseHistory";
 import { toKg, weightLabel, weightStep } from "../../utils/unitConversion";
 import { formatDate, parseLocalDate } from "../../utils/dates";
+import { BackButton } from "../../components/ui/IconButton";
 
 const NO_WORKOUTS: never[] = [];
 const MAX_POINTS = 30;
@@ -93,14 +94,7 @@ export default function ExerciseProgress() {
     <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
       {/* Header */}
       <View style={{ height: size.appBar, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.xs }}>
-        <Pressable
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          style={({ pressed }) => ({ width: size.control, height: size.control, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.surfaceContainerHigh : "transparent" })}
-        >
-          <MaterialIcons name="arrow-back" size={size.iconLg} color={colors.text} />
-        </Pressable>
+        <BackButton />
         <View style={{ flex: 1 }}>
           <Text style={[typography.headlineSm, { color: colors.text }]} numberOfLines={1} accessibilityRole="header">
             {name}

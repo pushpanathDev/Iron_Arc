@@ -5,6 +5,7 @@ import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import type { Headline } from "../../utils/analytics";
 import { ProgressRing } from "../ui/ProgressRing";
+import { VerticalDivider } from "../ui/VerticalDivider";
 
 export type HeadlineCardProps = {
   headline: Headline;
@@ -69,9 +70,9 @@ export function HeadlineCard({ headline, overline, workouts, records, sets, plan
       {/* The numbers */}
       <View style={{ flexDirection: "row", borderTopWidth: size.divider, borderTopColor: colors.border }}>
         <Stat label="Workouts" value={workouts} />
-        <Divider />
+        <VerticalDivider />
         <Stat label="Records" value={records} star={records > 0} />
-        <Divider />
+        <VerticalDivider />
         <Stat label="Sets" value={sets} />
       </View>
     </View>
@@ -89,9 +90,4 @@ function Stat({ label, value, star }: { label: string; value: number; star?: boo
       <Text style={[typography.labelSm, { color: colors.textSecondary }]}>{label}</Text>
     </View>
   );
-}
-
-function Divider() {
-  const { colors } = useTheme();
-  return <View style={{ width: size.divider, marginVertical: spacing.md, backgroundColor: colors.border }} />;
 }

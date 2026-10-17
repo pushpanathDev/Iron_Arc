@@ -1,9 +1,9 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import { router } from "expo-router";
 import type { ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
+import { BackButton } from "../ui/IconButton";
 
 /** Header (back, title, "Saved" badge) around the content. */
 export function SettingsFrame({ insets, saved, children }: { insets: { top: number }; saved: boolean; children: ReactNode }) {
@@ -11,14 +11,7 @@ export function SettingsFrame({ insets, saved, children }: { insets: { top: numb
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
       <View style={{ height: size.appBar, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.xs, paddingRight: spacing.screen }}>
-        <Pressable
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          style={({ pressed }) => ({ width: size.control, height: size.control, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.surfaceContainerHigh : "transparent" })}
-        >
-          <MaterialIcons name="arrow-back" size={size.iconLg} color={colors.text} />
-        </Pressable>
+        <BackButton />
         <Text style={[typography.headlineMd, { flex: 1, color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]} accessibilityRole="header">
           Notifications
         </Text>

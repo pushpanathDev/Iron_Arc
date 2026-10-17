@@ -85,11 +85,10 @@ const asyncStoragePersister = createAsyncStoragePersister({
   throttleTime: 1000,
 });
 
-// Release builds keep warnings and errors but drop debug logs (some name the account).
+// Release builds log nothing. babel.config.js already removes console calls;
+// this also quiets any that reach the console another way.
 if (!__DEV__) {
-  console.log = () => {};
-  console.info = () => {};
-  console.debug = () => {};
+  for (const level of ["log", "info", "debug", "warn", "error"] as const) console[level] = () => {};
 }
 
 // The native splash stays until the fonts load (see RootLayout).

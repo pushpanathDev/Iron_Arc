@@ -1,8 +1,8 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import type { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { router } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { RefreshControl, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { useAuth } from "../../providers/AuthContext";
 import { Avatar } from "../../components/ui/Avatar";
 import { Button } from "../../components/ui/Button";
@@ -30,6 +30,8 @@ import { changeOver, formatValue, fromDisplay, toDisplay, towardGoal } from "../
 import { createPageLogger } from "../../utils/logger";
 import { weightLabel } from "../../utils/unitConversion";
 import { formatDate, getWeekStart, parseLocalDate, FIRST_DAY_OF_WEEK, dayLabel, shortDate } from "../../utils/dates";
+import { ThemedDateTimePicker } from "../../components/ui/ThemedDateTimePicker";
+import { usePullToRefresh } from "../../hooks/usePullToRefresh";
 
 const log = createPageLogger("BodyWeight");
 
@@ -72,7 +74,6 @@ export default function BodyWeightScreen() {
   const [range, setRange] = useState<TrendRange>("30D");
   const [goalOpen, setGoalOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
 
   const save = async () => {
     const { value, error, logDate, existing, selectedDate } = entry;
@@ -100,14 +101,7 @@ export default function BodyWeightScreen() {
     [setSelectedDate],
   );
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await refetch();
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  const refreshControl = usePullToRefresh(() => refetch());
 
   // Derived
   const latest = history[0] ?? null;
@@ -141,7 +135,7 @@ export default function BodyWeightScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: spacing.xxl, gap: spacing.md }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} progressBackgroundColor={colors.card} />}
+        refreshControl={refreshControl}
       >
         {isLoading && raw.length === 0 ? (
           <WeightSkeleton />
@@ -271,7 +265,7 @@ export default function BodyWeightScreen() {
       <GoalSheet visible={goalOpen} onClose={() => setGoalOpen(false)} unit={unit} goalKg={goalKg} latestKg={latest?.weight ?? null} />
 
       {datePickerOpen && (
-        <DateTimePicker
+        <ThemedDateTimePicker
           value={entry.selectedDate}
           mode="date"
           firstDayOfWeek={FIRST_DAY_OF_WEEK}

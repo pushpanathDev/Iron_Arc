@@ -11,6 +11,7 @@ import { alpha, radius, size, spacing, tracking, typography, withAlpha } from ".
 import { perfStart } from "../../utils/perf";
 import { displayWeight, weightLabel } from "../../utils/unitConversion";
 import { formatDate } from "../../utils/dates";
+import { exerciseMatchKey } from "../../utils/planCalendar";
 import { useCountUp, sessionName } from "./homeShared";
 
 const MAX_CHIPS = 6;
@@ -102,9 +103,9 @@ export function TodayCard({
 
   if (trainingToday && planDay) {
     const planned = (planDay.exercises ?? []).filter((e) => e.name);
-    const logged = new Set((todaySession?.exercises ?? []).map(normalizeExercise));
+    const logged = new Set((todaySession?.exercises ?? []).map(exerciseMatchKey));
     const isLogged = (e: PlanExercise) =>
-      logged.has(normalizeExercise(e.name ?? "")) || (!!e.exerciseId && logged.has(normalizeExercise(e.exerciseId)));
+      logged.has(exerciseMatchKey(e.name ?? "")) || (!!e.exerciseId && logged.has(exerciseMatchKey(e.exerciseId)));
     const doneCount = planned.filter(isLogged).length;
     title = planDay.name || formatMuscles(planDay.targetMuscles) || "Workout";
 
@@ -221,11 +222,6 @@ function HeroGlow() {
       style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
     />
   );
-}
-
-/** Case/punctuation-insensitive key for matching plan exercises to logged ones. */
-function normalizeExercise(name: string) {
-  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 /** "2 exercises · 6 sets · 900 kg" (volume omitted for bodyweight-only sessions). */

@@ -2,33 +2,20 @@ import { router } from "expo-router";
 import { useState } from "react";
 import { View } from "react-native";
 import { useToast } from "../../providers/ToastContext";
-import { useActivatePlan, useDeletePlan, useRecalibratePlan, useRenamePlan } from "../../hooks/usePlan";
-import { ApiError, type Plan } from "../../services/api";
+import { useActivatePlan, useDeletePlan, useRenamePlan } from "../../hooks/usePlan";
+import type { Plan } from "../../services/api";
+import { aiErrorMessage } from "../../utils/aiErrors";
 import { motion, spacing } from "../../theme/tokens";
 import { SettingsGroup, SettingsRow } from "../profile/Settings";
 import { Button } from "../ui/Button";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { Sheet } from "../ui/Sheet";
 import { TextField } from "../ui/TextField";
-import { GeneratingOverlay } from "./GeneratingOverlay";
+import { dayAndDate } from "../../utils/dates";
+import { nextWeekStartsOn, planLength, readyForNextWeek } from "../../utils/planCalendar";
+import { StartNextWeek } from "./StartNextWeek";
 
 const NAME_MAX = 60;
-
-/** Plain words for AI request failures (the server rate-limits generate, recalibrate, swap and chat). */
-export function aiErrorMessage(e: unknown): string {
-  if (e instanceof ApiError) {
-    if (e.kind === "network") return "Couldn't reach the server. Check your connection and try again.";
-    if (e.kind === "timeout") return "The AI took too long. If a plan was made, it will appear in your list.";
-    // The server's reason when it gives one ("Plan generation limit reached…").
-    if (e.message && !/^request failed|^http \d+|internal server error|^error$/i.test(e.message)) return e.message;
-    if (e.status === 429) return "You've reached the AI limit for now. Try again in a little while.";
-    if (__DEV__) console.warn(`[AI] ${e.status} ${e.message}`);
-    // The status helps tell a server failure (5xx) from anything else.
-    return `Something went wrong (${e.status}). Please try again.`;
-  }
-  if (__DEV__) console.warn("[AI] request failed:", e);
-  return "Something went wrong. Please try again.";
-}
 
 export type PlanActionsProps = {
   /** The plan whose menu is open (null = closed). */
@@ -42,14 +29,15 @@ export type PlanActionsProps = {
 export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) {
   const { showToast } = useToast();
   const rename = useRenamePlan();
-  const recalibrate = useRecalibratePlan();
   const activate = useActivatePlan();
   const remove = useDeletePlan();
 
   const [target, setTarget] = useState<Plan | null>(null);
   const [mode, setMode] = useState<"rename" | "recalibrate" | "delete" | null>(null);
   const [name, setName] = useState("");
-  const [recalibrating, setRecalibrating] = useState(false);
+  const hasNextWeek = !!plan && (plan.weekNumber || 1) < planLength(plan.planData);
+  // The next week starts on the Monday after this one (development builds can start it early to test).
+  const canStartNextWeek = !!plan && hasNextWeek && (readyForNextWeek(plan) || __DEV__);
 
   const choose = (m: "rename" | "recalibrate" | "delete") => {
     if (!plan) return;
@@ -69,13 +57,17 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
       <Sheet visible={!!plan} onClose={onClose} title={plan?.name ?? ""}>
         <SettingsGroup>
           <SettingsRow icon="edit" label="Rename" kind="action" onPress={() => choose("rename")} />
-          <SettingsRow
-            icon="update"
-            label="Start next week"
-            detail={`Move to week ${(plan?.weekNumber || 1) + 1}, tuned to what you logged this week`}
-            kind="action"
-            onPress={() => choose("recalibrate")}
-          />
+          {canStartNextWeek ? (
+            <SettingsRow
+              icon="update"
+              label="Start next week"
+              detail={`Move to week ${(plan?.weekNumber || 1) + 1}, tuned to what you logged this week`}
+              kind="action"
+              onPress={() => choose("recalibrate")}
+            />
+          ) : hasNextWeek && plan ? (
+            <SettingsRow icon="update" label={`Week ${(plan.weekNumber || 1) + 1} starts ${dayAndDate(nextWeekStartsOn(plan))}`} detail="The coach sets it up from this week's log" kind="action" disabled />
+          ) : null}
           {plan && !plan.isActive ? (
             <SettingsRow
               icon="check-circle"
@@ -84,13 +76,7 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
               kind="action"
               busy={activate.isPending}
               onPress={() =>
-                activate.mutate(plan.id, {
-                  onSuccess: () => {
-                    showToast({ type: "success", message: `${plan.name} is now active` });
-                    onClose();
-                  },
-                  onError: (e) => showToast({ type: "error", message: "Couldn't make it active", subtitle: aiErrorMessage(e) }),
-                })
+                activate.mutate(plan, { onSuccess: onClose })
               }
             />
           ) : null}
@@ -127,34 +113,8 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
         </View>
       </Sheet>
 
-      {/* Recalibrate */}
-      <ConfirmDialog
-        visible={mode === "recalibrate"}
-        icon="update"
-        title={`Start week ${(target?.weekNumber || 1) + 1}?`}
-        message="The coach looks at what you logged in the last 7 days and tunes next week's sets and reps. Your training days stay the same, and the change is noted in the coach chat."
-        confirmLabel="Start next week"
-        onCancel={done}
-        onConfirm={() => {
-          if (!target) return;
-          setMode(null);
-          setRecalibrating(true);
-          recalibrate.mutate(target.id, {
-            onSuccess: (p) => showToast({ type: "success", message: `Week ${p.weekNumber} is ready`, subtitle: "See what changed in the coach chat." }),
-            onError: (e) => showToast({ type: "error", message: "Couldn't start next week", subtitle: aiErrorMessage(e) }),
-            onSettled: () => {
-              setRecalibrating(false);
-              setTarget(null);
-            },
-          });
-        }}
-      />
-      <GeneratingOverlay
-        visible={recalibrating}
-        title="Preparing next week…"
-        inputs={["What you logged in the last 7 days", `This week of ${target?.name ?? ""}`]}
-        onStopWaiting={() => setRecalibrating(false)}
-      />
+      {/* Next week */}
+      <StartNextWeek plan={target} visible={mode === "recalibrate"} onClose={done} />
 
       {/* Delete */}
       <ConfirmDialog

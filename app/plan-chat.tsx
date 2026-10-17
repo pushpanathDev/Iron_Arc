@@ -7,19 +7,21 @@
  */
 import { MaterialIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { aiErrorMessage } from "../components/plans/PlanActions";
+import { aiErrorMessage } from "../utils/aiErrors";
 import { useToast } from "../providers/ToastContext";
 import { requestPlanDay } from "../hooks/planDayRequest";
 import { usePlan, usePlanChat } from "../hooks/usePlan";
 import type { ChatMessage } from "../services/api";
 import { diffPlanWeek, type PlanChange } from "../utils/planData";
+import { dayAndDate } from "../utils/dates";
 import { useTheme } from "../theme/theme";
 import { radius, size, spacing, typography } from "../theme/tokens";
+import { BackButton } from "../components/ui/IconButton";
 
 type Message = ChatMessage & { changes?: PlanChange[]; failed?: boolean; local?: boolean };
 
@@ -103,14 +105,7 @@ export default function PlanChatScreen() {
     <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
       {/* Header */}
       <View style={{ minHeight: size.appBar, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.xs, paddingRight: spacing.screen }}>
-        <Pressable
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          style={({ pressed }) => ({ width: size.control, height: size.control, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.surfaceContainerHigh : "transparent" })}
-        >
-          <MaterialIcons name="arrow-back" size={size.iconLg} color={colors.text} />
-        </Pressable>
+        <BackButton />
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <Text style={[typography.headlineSm, { color: colors.text }]} accessibilityRole="header">
@@ -134,15 +129,17 @@ export default function PlanChatScreen() {
       <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingVertical: spacing.lg, gap: spacing.md }} keyboardShouldPersistTaps="handled">
           {shown.map((m, i) => (
-            <Bubble
-              key={`${m.timestamp}-${i}`}
-              message={m}
-              onRetry={m.failed ? () => send(m.content, i - 1) : undefined}
-              onViewPlan={() => {
-                if (id && m.changes?.length) requestPlanDay(id, m.changes[0].dayIndex);
-                router.back();
-              }}
-            />
+            <Fragment key={`${m.timestamp}-${i}`}>
+              {m.kind === "nextWeek" && <WeekDivider message={m} />}
+              <Bubble
+                message={m}
+                onRetry={m.failed ? () => send(m.content, i - 1) : undefined}
+                onViewPlan={() => {
+                  if (id && m.changes?.length) requestPlanDay(id, m.changes[0].dayIndex);
+                  router.back();
+                }}
+              />
+            </Fragment>
           ))}
           {chat.isPending && <Thinking />}
         </ScrollView>
@@ -204,6 +201,22 @@ export default function PlanChatScreen() {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+    </View>
+  );
+}
+
+/** "— Week 2 · from Mon 19 Oct —" where the chat moves on to a new plan week. */
+function WeekDivider({ message }: { message: Message }) {
+  const { colors } = useTheme();
+  // Older entries carry the week only in their text ("Moved to week 2.").
+  const week = message.week ?? Number(message.content.match(/Moved to week (\d+)/)?.[1]);
+  if (!week) return null;
+  const label = message.weekStartsOn ? `Week ${week} · from ${dayAndDate(message.weekStartsOn)}` : `Week ${week}`;
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xs }} accessibilityRole="header">
+      <View style={{ flex: 1, height: size.divider, backgroundColor: colors.border }} />
+      <Text style={[typography.labelSm, { color: colors.textSecondary }]}>{label}</Text>
+      <View style={{ flex: 1, height: size.divider, backgroundColor: colors.border }} />
     </View>
   );
 }

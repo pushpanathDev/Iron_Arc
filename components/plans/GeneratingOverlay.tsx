@@ -22,7 +22,7 @@ export type GeneratingOverlayProps = {
 };
 
 /**
- * While the AI builds or recalibrates a plan (one request, 10–60 s). No
+ * While the AI builds or recalibrates a plan (usually about 10 s; up to a minute when the AI is busy). No
  * percentage: the server answers in one go, so the bar only shows activity.
  * "Stop waiting" closes this; the request still finishes and the plan appears.
  */
@@ -84,13 +84,13 @@ export function GeneratingOverlay({ visible, title, inputs, onStopWaiting }: Gen
         <View style={{ flex: 1, justifyContent: "center", gap: spacing.xl }}>
           <View style={{ alignItems: "center", gap: spacing.lg }}>
             <Animated.View style={[{ width: size.ring, height: size.ring, borderRadius: radius.full, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: colors.accent, backgroundColor: colors.accentTint }, emblem]}>
-              <MaterialIcons name="bolt" size={size.iconLg * 2} color={colors.accent} />
+              <MaterialIcons name="flash-on" size={size.iconLg * 2} color={colors.accent} />
             </Animated.View>
             <View style={{ alignItems: "center", gap: spacing.xs }} accessibilityLiveRegion="polite">
               <Text style={[typography.headlineLg, { color: colors.text, textAlign: "center" }]} accessibilityRole="header">
                 {title}
               </Text>
-              <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center" }]}>This can take up to a minute.</Text>
+              <Text style={[typography.bodyMd, { color: colors.textSecondary, textAlign: "center" }]}>Usually about 10 seconds.</Text>
             </View>
           </View>
 

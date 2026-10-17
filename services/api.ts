@@ -1,4 +1,5 @@
 import { auth } from "./firebase";
+import { formatDate } from "../utils/dates";
 
 const DEFAULT_BASE_URL = __DEV__
   ? "http://10.0.2.2:3000"
@@ -429,11 +430,16 @@ export interface ChatMessage {
   changes?: { dayIndex: number; text: string }[];
   /** "swap" or "nextWeek" for changes made outside the chat. */
   kind?: "swap" | "nextWeek";
+  /** On "nextWeek" entries: the week it moved to, and that week's Monday ("YYYY-MM-DD"). */
+  week?: number;
+  weekStartsOn?: string;
 }
 
 export interface PlanChatResponse {
   message: string;
   planUpdated: boolean;
+  /** The coach moved the active plan's training days; the profile now has them too. */
+  profileUpdated?: boolean;
   chatHistory: ChatMessage[];
   planData: unknown;
 }
@@ -468,13 +474,14 @@ export const plansApi = {
       "/api/plans/generate",
       {
         method: "POST",
-        body: criteria ? JSON.stringify({ criteria }) : undefined,
+        // Today on the phone places week 1 on the calendar.
+        body: JSON.stringify({ ...(criteria ? { criteria } : {}), today: formatDate(new Date()) }),
       },
       AI_REQUEST_TIMEOUT_MS,
     ),
 
   recalibrate: (planId: string) =>
-    request<Plan>(`/api/plans/${planId}/recalibrate`, { method: "POST" }, AI_REQUEST_TIMEOUT_MS),
+    request<Plan>(`/api/plans/${planId}/recalibrate`, { method: "POST", body: JSON.stringify({ today: formatDate(new Date()) }) }, AI_REQUEST_TIMEOUT_MS),
 
   substitute: (planId: string, exerciseId: string, reason?: string) =>
     request<Plan>(
@@ -503,7 +510,8 @@ export const plansApi = {
       `/api/plans/${planId}/chat`,
       {
         method: "POST",
-        body: JSON.stringify({ message }),
+        // Today's date on the phone, so the coach knows where in the week you are.
+        body: JSON.stringify({ message, today: formatDate(new Date()) }),
       },
       AI_REQUEST_TIMEOUT_MS,
     ),

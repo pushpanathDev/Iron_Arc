@@ -1,8 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { plansApi, type PlanCriteriaPayload } from "../services/api";
+import { useToast } from "../providers/ToastContext";
+import { plansApi, type Plan, type PlanCriteriaPayload } from "../services/api";
+import { aiErrorMessage } from "../utils/aiErrors";
 import { ACHIEVEMENTS_KEY, useAchievementUnlockHandler } from "./useAchievements";
 
 const PLANS_KEY = ["plans"] as const;
+
+/** After a plan is activated or deleted: the plan list and the profile (it names the active plan). */
+function refreshPlansAndProfile(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: PLANS_KEY });
+  queryClient.invalidateQueries({ queryKey: ["profile"] });
+}
 
 export function usePlans() {
   return useQuery({
@@ -93,16 +101,19 @@ export function useRenamePlan() {
   });
 }
 
+/** Makes a plan the active one and says how it went. */
 export function useActivatePlan() {
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
 
   return useMutation({
-    mutationFn: (planId: string) => plansApi.activate(planId),
+    mutationFn: (plan: Pick<Plan, "id" | "name">) => plansApi.activate(plan.id),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: PLANS_KEY });
-      queryClient.invalidateQueries({ queryKey: ["profile"] });
+    onSuccess: (_, plan) => {
+      refreshPlansAndProfile(queryClient);
+      showToast({ type: "success", message: `${plan.name} is now active` });
     },
+    onError: (e) => showToast({ type: "error", message: "Couldn't make it active", subtitle: aiErrorMessage(e) }),
   });
 }
 
@@ -112,10 +123,7 @@ export function useDeletePlan() {
   return useMutation({
     mutationFn: (planId: string) => plansApi.delete(planId),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ACHIEVEMENTS_KEY }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: PLANS_KEY });
-      queryClient.invalidateQueries({ queryKey: ["profile"] });
-    },
+    onSuccess: () => refreshPlansAndProfile(queryClient),
   });
 }
 
@@ -154,6 +162,10 @@ export function usePlanChat(planId: string | undefined) {
         });
         if (response.planUpdated) {
           queryClient.invalidateQueries({ queryKey: PLANS_KEY });
+        }
+        // New training days: Home, reminders and the profile follow the profile query.
+        if (response.profileUpdated) {
+          queryClient.invalidateQueries({ queryKey: ["profile"] });
         }
       } catch (e) {
         console.warn("[Coach] reply received but updating the cached plan failed:", e);

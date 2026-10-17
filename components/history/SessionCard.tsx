@@ -11,6 +11,7 @@ import { displayWeightRounded, formatWeightValue } from "../../utils/exerciseHis
 import { displayWeight, weightLabel, type WeightUnit } from "../../utils/unitConversion";
 import { Button } from "../ui/Button";
 import { PRBadge } from "../workout/ExerciseRow";
+import { SwipeDeleteAction } from "../ui/SwipeDeleteAction";
 
 export type SessionCardProps = {
   group: SessionGroup;
@@ -66,12 +67,7 @@ export const SessionCard = memo(function SessionCard({ group, sessionKey, unit, 
       rightThreshold={size.control}
       overshootRight={false}
       onSwipeableOpen={() => onDelete(group, () => swipeRef.current?.close())}
-      renderRightActions={() => (
-        <View style={{ width: size.iconBadge + spacing.xl, marginLeft: spacing.sm, borderRadius: radius.lg, alignItems: "center", justifyContent: "center", gap: spacing.xxs, backgroundColor: colors.dangerSubtle }}>
-          <MaterialIcons name="delete-outline" size={size.iconLg} color={colors.danger} />
-          <Text style={[typography.labelMd, { color: colors.danger }]}>Delete</Text>
-        </View>
-      )}
+      renderRightActions={() => <SwipeDeleteAction />}
     >
       <View style={{ borderRadius: radius.lg, backgroundColor: colors.raised, overflow: "hidden" }}>
         <Pressable

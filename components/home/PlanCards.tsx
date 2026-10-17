@@ -1,7 +1,7 @@
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { Text, View } from "react-native";
-import { Card } from "../ui";
+import { Button, Card } from "../ui";
 import { planDayShortName, type PlanDay } from "../../utils/planData";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
@@ -11,7 +11,23 @@ const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const MAX_UPCOMING = 3;
 
-export function YourPlanCard({ planId, name, weekNumber, days }: { planId: string; name: string; weekNumber: number; days: PlanDay[] }) {
+/**
+ * The active plan's next sessions. In a new calendar week, before the plan has
+ * moved on, it also offers the next week (`onStartNextWeek`).
+ */
+export function YourPlanCard({
+  planId,
+  name,
+  weekNumber,
+  days,
+  onStartNextWeek,
+}: {
+  planId: string;
+  name: string;
+  weekNumber: number;
+  days: PlanDay[];
+  onStartNextWeek?: () => void;
+}) {
   const { colors } = useTheme();
   // Next training days after today, following the plan's weekday template.
   const todayIndex = new Date().getDay();
@@ -43,6 +59,12 @@ export function YourPlanCard({ planId, name, weekNumber, days }: { planId: strin
                   <Text style={[typography.labelSm, { color: colors.text }]}>{label}</Text>
                 </View>
               ))}
+            </View>
+          )}
+          {onStartNextWeek && (
+            <View style={{ gap: spacing.sm }}>
+              <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>A new week has started. The coach sets up week {weekNumber + 1} from what you logged.</Text>
+              <Button title={`Start week ${weekNumber + 1}`} icon="play-forward" variant="tonal" onPress={onStartNextWeek} fullWidth />
             </View>
           )}
         </View>

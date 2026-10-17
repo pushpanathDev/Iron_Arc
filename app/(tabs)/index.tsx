@@ -1,7 +1,7 @@
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
-import { RefreshControl, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { useAuth } from "../../providers/AuthContext";
 import { EmailVerificationPrompt } from "../../components/auth/EmailVerificationPrompt";
 import { CyclingHeadline } from "../../components/home/CyclingHeadline";
@@ -31,8 +31,12 @@ import { WEEKDAYS } from "../../components/home/homeShared";
 import { TodayCard } from "../../components/home/TodayCard";
 import { WeekCard, StreakCard } from "../../components/home/WeekCards";
 import { YourPlanCard, AIPlanCard } from "../../components/home/PlanCards";
+import { StartNextWeek } from "../../components/plans/StartNextWeek";
+import { readyForNextWeek } from "../../utils/planCalendar";
 import { RecentCard } from "../../components/home/RecentCard";
 import { HomeSkeleton } from "../../components/home/HomeSkeleton";
+import { homeHeadlines } from "../../components/home/headlines";
+import { usePullToRefresh } from "../../hooks/usePullToRefresh";
 
 
 export default function Home() {
@@ -66,7 +70,10 @@ export default function Home() {
   const activePlanMeta = plansQuery.data?.find((p) => p.isActive);
   const activePlanQuery = usePlan(activePlanMeta?.id);
 
-  const [refreshing, setRefreshing] = useState(false);
+  const [nextWeekOpen, setNextWeekOpen] = useState(false);
+  const activePlan = activePlanQuery.data ?? null;
+  const nextWeekReady = !!activePlan && readyForNextWeek(activePlan);
+
   const verification = useEmailVerificationGrace(user);
   const daysLeft = verification.daysLeft;
   const [dismissVerificationBanner, setDismissVerificationBanner] = useState(false);
@@ -93,16 +100,7 @@ export default function Home() {
     ]);
   }, [workoutsQuery, profileQuery, plansQuery, activePlanQuery, activePlanMeta]);
 
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await Promise.all([refetchAll(), verification.reload()]);
-    } catch (error) {
-      console.log("Refresh error:", error);
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  const refreshControl = usePullToRefresh(() => Promise.all([refetchAll(), verification.reload()]));
 
   // Screen state
   const planLoading = plansQuery.isLoading || (!!activePlanMeta && activePlanQuery.isLoading);
@@ -125,28 +123,14 @@ export default function Home() {
   const initials = nameSource ? getInitials(nameSource) : "";
 
   // Header messages: only those that apply, in this order (max 5).
-  const headlines = [
-    `${getGreeting()}${firstName ? `, ${firstName}` : ""}`,
-    todaySession ? "Nice work today" : "Ready for your session?",
-    week.goal ? `${week.daysTrained} of ${week.goal} days this week` : null,
-    suggestion ? `${suggestion.label} is up next` : null,
-    streak.current >= 1 ? `${streak.current}-week streak` : null,
-  ].filter((m): m is string => !!m);
+  const headlines = homeHeadlines({ firstName, trainedToday: !!todaySession, week, suggestion: suggestion?.label ?? null, streak: streak.current });
 
   return (
     <>
       <ScrollView
         style={{ flex: 1, backgroundColor: colors.bg }}
         contentContainerStyle={{ padding: spacing.screen, paddingBottom: spacing.xxl, gap: spacing.lg }}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor={colors.accent}
-            colors={[colors.accent]}
-            progressBackgroundColor={colors.card}
-          />
-        }
+        refreshControl={refreshControl}
       >
         {/* Header */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
@@ -261,6 +245,7 @@ export default function Home() {
                   name={activePlanMeta.name}
                   weekNumber={activePlanQuery.data?.weekNumber ?? activePlanMeta.weekNumber}
                   days={planWeekDays}
+                  onStartNextWeek={nextWeekReady ? () => setNextWeekOpen(true) : undefined}
                 />
               ) : (
                 <AIPlanCard savedPlans={plansQuery.data?.length ?? 0} weeklyGoal={weeklyGoal} />
@@ -343,6 +328,7 @@ export default function Home() {
       />
 
       <ResumeWorkoutSheet from="home" />
+      <StartNextWeek plan={activePlan} visible={nextWeekOpen} onClose={() => setNextWeekOpen(false)} />
     </>
   );
 }
@@ -352,11 +338,4 @@ function lastTrainedText(daysAgo: number | null) {
   if (daysAgo === 0) return "Last trained today";
   if (daysAgo === 1) return "Last trained yesterday";
   return `Last trained ${daysAgo} days ago`;
-}
-
-function getGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return "Good morning";
-  if (hour < 17) return "Good afternoon";
-  return "Good evening";
 }

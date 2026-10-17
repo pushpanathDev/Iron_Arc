@@ -1,10 +1,9 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useAuth } from "../../providers/AuthContext";
 import { EmailVerificationPrompt } from "../../components/auth/EmailVerificationPrompt";
-import { AccentPreviewPicker } from "../../components/profile/AccentPreviewPicker";
 import { ExportSheet } from "../../components/profile/ExportSheet";
 import { GOALS } from "../../data/fitnessGoals";
 import { ProfileEditSheets } from "../../components/profile/ProfileEditSheets";
@@ -12,6 +11,7 @@ import { ProfileHeader } from "../../components/profile/ProfileHeader";
 import { ReauthSheet } from "../../components/profile/ReauthSheet";
 import { SettingsGroup, SettingsRow } from "../../components/profile/Settings";
 import { ProfileStatus } from "../../components/profile/ProfileStatus";
+import { ThemePicker } from "../../components/profile/ThemePicker";
 import { OfflineState } from "../../components/ui";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Reveal } from "../../components/ui/Reveal";
@@ -38,6 +38,7 @@ import { UnitSwitch } from "../../components/profile/UnitSwitch";
 import { ProfileSkeleton } from "../../components/profile/ProfileSkeleton";
 import { PERF_OPEN } from "../../components/onboarding/HeightRuler";
 import { perfStart } from "../../utils/perf";
+import { usePullToRefresh } from "../../hooks/usePullToRefresh";
 
 const NO_WORKOUTS: never[] = [];
 
@@ -62,7 +63,6 @@ export default function ProfileScreen() {
   const account = useAccountActions();
   const verification = useEmailVerificationGrace(user);
   const notifications = useNotificationStatus();
-  const [refreshing, setRefreshing] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [confirm, setConfirm] = useState<"logout" | "delete" | null>(null);
 
@@ -71,14 +71,7 @@ export default function ProfileScreen() {
   const unlocked = achievements ? achievements.filter((a) => a.unlockedAt).length : null;
   const activePlan = plans?.find((p) => p.isActive) ?? null;
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await Promise.all([refetchProfile(), verification.reload(), notifications.reload()]);
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  const refreshControl = usePullToRefresh(() => Promise.all([refetchProfile(), verification.reload(), notifications.reload()]));
 
   // States before the profile is available
   if (!profile && connection.state !== "online") {
@@ -139,7 +132,7 @@ export default function ProfileScreen() {
         style={{ flex: 1 }}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: spacing.xxl, gap: spacing.xl }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} progressBackgroundColor={colors.card} />}
+        refreshControl={refreshControl}
       >
         {isError && (
           <ProfileStatus compact title="Showing saved profile" message="The server is unavailable. Changes may not save until you reconnect." onRetry={() => void refetchProfile()} />
@@ -287,8 +280,15 @@ export default function ProfileScreen() {
           </SettingsGroup>
         </Reveal>
 
+        {/* Appearance */}
+        <Reveal index={5}>
+          <SettingsGroup title="Appearance">
+            <ThemePicker />
+          </SettingsGroup>
+        </Reveal>
+
         {/* Account */}
-        <Reveal index={5} style={{ gap: spacing.md }}>
+        <Reveal index={6} style={{ gap: spacing.md }}>
           <SettingsGroup title="Account">
             <SettingsRow icon="ios-share" label="Export your data" detail="Workouts and body weight as CSV or PDF" kind="action" onPress={() => setExportOpen(true)} />
             <SettingsRow icon="logout" label="Log out" value={profile.displayName || undefined} kind="action" onPress={() => setConfirm("logout")} />
@@ -297,9 +297,6 @@ export default function ProfileScreen() {
             <SettingsRow icon="delete-forever" label="Delete account" value="Irreversible" tone="danger" busy={account.deleting} kind="action" onPress={() => setConfirm("delete")} />
           </SettingsGroup>
         </Reveal>
-
-        {/* Development builds only, for trying accent colours. */}
-        {__DEV__ && <AccentPreviewPicker />}
 
         <Text style={[typography.labelSm, { color: colors.textMuted, textAlign: "center" }]}>Iron Arc {getVersionLabel()}</Text>
       </ScrollView>

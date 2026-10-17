@@ -42,7 +42,7 @@ describe("analyzePeriod", () => {
     w("a", "2026-10-05", "Bench Press", [[80, 8], [80, 8]]), // last Monday
     w("b", "2026-10-12", "Bench Press", [[85, 8], [85, 8], [85, 6]]), // this Monday
     w("c", "2026-10-12", "Row", [[60, 10]], "Back", "10:20"), // same session
-    w("d", "2026-10-12", "Curl", [[15, 12]], "Arms", "18:00"), // 8 h later: second session
+    w("d", "2026-10-12", "Barbell Curl", [[15, 12]], "Arms", "18:00"), // 8 h later: second session
     w("e", "2026-10-14", "Squat", [[100, 5], [100, 5]], "Legs"),
   ];
   const week = analyzePeriod(history, "week", TODAY);
@@ -71,21 +71,38 @@ describe("analyzePeriod", () => {
     expect(analyzePeriod([w("x", TODAY, "Bench Press", [[50, 5]])], "week", TODAY).compare?.volumePct).toBeNull();
   });
 
-  test("muscle balance lists the six main groups, busiest first, with shares of sets", () => {
+  test("muscle balance lists the main groups, arms split by exercise, busiest first, with shares of sets", () => {
     expect(week.balance.map((r) => [r.category, r.sets, r.share])).toEqual([
       ["Chest", 3, 43],
       ["Legs", 2, 29],
       ["Back", 1, 14],
-      ["Arms", 1, 14],
+      ["Biceps", 1, 14],
       ["Shoulders", 0, 0],
+      ["Triceps", 0, 0],
+      ["Forearms", 0, 0],
       ["Abs", 0, 0],
     ]);
+  });
+
+  test("arm work counts for biceps, triceps or forearms; an unknown arm exercise stays Arms", () => {
+    const arms = [
+      w("1", "2026-10-13", "Tricep Pushdown", [[20, 12], [20, 12]], "Arms"),
+      w("2", "2026-10-13", "Hammer Curl", [[12, 10]], "Arms"),
+      w("3", "2026-10-13", "Wrist Curl", [[10, 15]], "Arms"),
+      w("4", "2026-10-13", "Mystery Arm Thing", [[10, 10]], "Arms"),
+      w("5", "2026-10-13", "My Cable Curl", [[10, 10]], "Arms"),
+    ];
+    const custom = new Map([["my cable curl", "Biceps" as const]]);
+    const sets = (stats: ReturnType<typeof analyzePeriod>, g: string) => stats.balance.find((r) => r.category === g)?.sets;
+    const stats = analyzePeriod(arms, "week", TODAY, custom);
+    expect([sets(stats, "Triceps"), sets(stats, "Biceps"), sets(stats, "Forearms"), sets(stats, "Arms")]).toEqual([2, 2, 1, 1]);
   });
 
   test("names untrained groups once there is enough to judge", () => {
     expect(week.leastTrained).toBeNull(); // 7 sets: too little to call
     const more = [...history, w("f", "2026-10-13", "Press", [[40, 8], [40, 8], [40, 8]], "Shoulders")];
-    expect(analyzePeriod(more, "week", TODAY).leastTrained).toEqual({ categories: ["Abs"], untrained: true });
+    // Forearms aren't warned about: pulling and gripping train them.
+    expect(analyzePeriod(more, "week", TODAY).leastTrained).toEqual({ categories: ["Triceps", "Abs"], untrained: true });
   });
 
   test("month buckets are weeks clipped to the month", () => {
@@ -211,16 +228,18 @@ describe("exercisesByCategory", () => {
   test("sets per exercise within the period, busiest first", () => {
     const m = exercisesByCategory(
       [
-        w("1", "2026-10-12", "Curl", [[15, 12], [15, 12]], "Arms"),
-        w("2", "2026-10-13", "Pushdown", [[20, 12], [20, 12], [20, 10]], "Arms"),
-        w("3", "2026-10-01", "Curl", [[15, 12]], "Arms"), // before the period
+        w("1", "2026-10-12", "Barbell Curl", [[15, 12], [15, 12]], "Arms"),
+        w("2", "2026-10-13", "Dumbbell Curl", [[12, 12], [12, 12], [12, 10]], "Arms"),
+        w("3", "2026-10-01", "Barbell Curl", [[15, 12]], "Arms"), // before the period
+        w("4", "2026-10-13", "Tricep Pushdown", [[20, 12]], "Arms"),
       ],
       "2026-10-12",
       TODAY,
     );
-    expect(m.get("Arms")).toEqual([
-      { exercise: "Pushdown", sets: 3 },
-      { exercise: "Curl", sets: 2 },
+    expect(m.get("Biceps")).toEqual([
+      { exercise: "Dumbbell Curl", sets: 3 },
+      { exercise: "Barbell Curl", sets: 2 },
     ]);
+    expect(m.get("Triceps")).toEqual([{ exercise: "Tricep Pushdown", sets: 1 }]);
   });
 });

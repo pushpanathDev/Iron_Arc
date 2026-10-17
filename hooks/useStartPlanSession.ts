@@ -3,7 +3,8 @@ import { useCallback } from "react";
 import { useAuth } from "../providers/AuthContext";
 import { armSubgroupOf } from "../data/armSubgroups";
 import { EXERCISES, type ExerciseCategory } from "../data/exercises";
-import { addExercises, beginDraft, createDraft, getDraft, updateDraft, type NewExercise } from "./workoutDraft";
+import { formatDate } from "../utils/dates";
+import { addExercises, beginDraft, createDraft, getDraft, setDate, updateDraft, type NewExercise } from "./workoutDraft";
 import { historyPrefill, useExerciseIndex } from "./useWorkoutData";
 import { useUnitPreference } from "./useUnitPreference";
 
@@ -46,9 +47,11 @@ export function categoryForPlanExercise(name: string, targetMuscles: string[] = 
 }
 
 /**
- * Home's Start / Continue workout and History's Repeat: opens the session with the
- * (remaining) exercises in order, each with its planned number of empty
- * sets. A session already in progress is reopened instead of replaced.
+ * Home's Start / Continue workout, the plan's Start and History's Repeat: opens
+ * the session with the (remaining) exercises in order, each with its planned
+ * number of empty sets. `date` ("YYYY-MM-DD") logs it on an earlier day, e.g.
+ * Monday's plan session done on Monday but logged later. A session already in
+ * progress is reopened instead of replaced.
  */
 export function useStartPlanSession() {
   const { user } = useAuth();
@@ -56,7 +59,7 @@ export function useStartPlanSession() {
   const { index } = useExerciseIndex();
 
   return useCallback(
-    (exercises: PlanSessionExercise[], targetMuscles: string[] = []) => {
+    (exercises: PlanSessionExercise[], targetMuscles: string[] = [], date?: string) => {
       if (!user) return;
       const existing = getDraft();
       if (!existing || existing.userId !== user.uid || existing.exercises.length === 0) {
@@ -71,6 +74,8 @@ export function useStartPlanSession() {
           }));
         beginDraft(createDraft(user.uid, unit));
         updateDraft((d) => addExercises(d, items, historyPrefill(index, unit)));
+        // The draft treats no date as today.
+        if (date && date !== formatDate(new Date())) updateDraft((d) => setDate(d, date));
       }
       router.push("/workout/session");
     },

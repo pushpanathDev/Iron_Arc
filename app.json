@@ -3,13 +3,13 @@
     "name": "Iron Arc",
     "slug": "GymTracker",
     "platforms": ["android"],
-    "version": "1.2.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "ironarc",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#111417",
-    "primaryColor": "#5CDDA6",
+    "primaryColor": "#22D47F",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
@@ -46,16 +46,16 @@
         {
           "android": {
             "datePicker": {
-              "colorAccent": { "light": "#5CDDA6", "dark": "#5CDDA6" },
+              "colorAccent": { "light": "#5E6670", "dark": "#5E6670" },
               "windowBackground": { "light": "#191C1F", "dark": "#191C1F" },
               "textColorPrimary": { "light": "#E1E2E7", "dark": "#E1E2E7" },
               "textColorSecondary": { "light": "#BCCAC0", "dark": "#BCCAC0" }
             },
             "timePicker": {
               "background": { "light": "#191C1F", "dark": "#191C1F" },
-              "headerBackground": { "light": "#5CDDA6", "dark": "#5CDDA6" },
+              "headerBackground": { "light": "#323538", "dark": "#323538" },
               "numbersBackgroundColor": { "light": "#272A2E", "dark": "#272A2E" },
-              "numbersSelectorColor": { "light": "#5CDDA6", "dark": "#5CDDA6" },
+              "numbersSelectorColor": { "light": "#5E6670", "dark": "#5E6670" },
               "numbersTextColor": { "light": "#E1E2E7", "dark": "#E1E2E7" }
             }
           }
@@ -67,7 +67,7 @@
         "expo-notifications",
         {
           "icon": "./assets/images/splash-icon.png",
-          "color": "#5CDDA6"
+          "color": "#22D47F"
         }
       ],
       "expo-secure-store",

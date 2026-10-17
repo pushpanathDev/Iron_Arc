@@ -61,7 +61,7 @@ export type ColorTokens = {
   dangerGradientTop: string;
   dangerGradientBottom: string;
   onDanger: string;
-  /** Same value as accent by design: there is one green. */
+  /** Always green, whatever the theme (the Emerald accent). */
   success: string;
   /** Progress colours (weight changes): toward the goal / away from it. Brighter than accent/danger; used only for change values. */
   trendGood: string;
@@ -81,12 +81,13 @@ export const darkColors: ColorTokens = {
   text: "#E1E2E7",
   textSecondary: "#BCCAC0",
   textMuted: "#8A939C",
-  accent: "#5CDDA6",
-  accentPressed: "#4CC492",
-  accentContainer: "#22B07D",
-  accentSubtle: "#123A2C",
-  accentTint: "#172423",
-  onAccent: "#003825",
+  // Emerald, the default theme; the others swap these six (themes.ts).
+  accent: "#22D47F",
+  accentPressed: "#1CB96E",
+  accentContainer: "#14A05E",
+  accentSubtle: "#0F3B26",
+  accentTint: "#13241B",
+  onAccent: "#00240F",
   amber: "#F5A524",
   tierBronze: "#D08B5B",
   tierSilver: "#B9C3CC",
@@ -102,7 +103,7 @@ export const darkColors: ColorTokens = {
   dangerGradientTop: "#4A2427",
   dangerGradientBottom: "#33191C",
   onDanger: "#111417",
-  success: "#5CDDA6",
+  success: "#22D47F",
   trendGood: "#3EE08F",
   trendBad: "#FF6B6B",
   scrim: "rgba(0, 0, 0, 0.6)",

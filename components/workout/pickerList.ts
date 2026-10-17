@@ -16,8 +16,6 @@ const RECENT_COUNT = 5;
 export type PickerItem =
   | { type: "header"; key: string; title: string; right?: string; sticky: boolean }
   | { type: "row"; key: string; ex: CatalogExercise };
-export type PickerHeader = Extract<PickerItem, { type: "header" }>;
-
 export const countLabel = (n: number) => `${n} ${n === 1 ? "exercise" : "exercises"}`;
 const header = (key: string, title: string, right: string | undefined, sticky: boolean): PickerItem => ({ type: "header", key, title, right, sticky });
 const rows = (prefix: string, list: CatalogExercise[]): PickerItem[] => list.map((ex) => ({ type: "row", key: `${prefix}:${ex.name}`, ex }));

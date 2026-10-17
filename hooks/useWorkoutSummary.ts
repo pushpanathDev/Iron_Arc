@@ -213,8 +213,6 @@ export function summarizeWorkouts(workouts: Workout[], weeklyGoal: number | null
   return { sessions, todaySession, week, streak, suggestion, volume, recent: sessions.slice(0, MAX_RECENT) };
 }
 
-export type WorkoutSummary = ReturnType<typeof summarizeWorkouts>;
-
 /** Home's view of the shared workouts query. */
 export function useWorkoutSummary(weeklyGoal: number | null) {
   const query = useAllWorkouts();

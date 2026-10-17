@@ -117,7 +117,7 @@ export function Button({
         style,
       ]}
     >
-      {glossy && <GlossFill gloss={gloss} accent={colors.accent} />}
+      {glossy && <GlossFill gloss={gloss} />}
       {gradient && (
         <LinearGradient
           pointerEvents="none"

@@ -1,4 +1,4 @@
-import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import type { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { useCallback, useRef, useState } from "react";
 import { Linking, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,6 +21,7 @@ import { COPY, REST_MAX_SECONDS, REST_MIN_SECONDS, type NotificationType } from 
 import type { NotificationPreferences } from "../notifications/notificationService";
 import { useTheme } from "../theme/theme";
 import { size, spacing, tracking, typography } from "../theme/tokens";
+import { ThemedDateTimePicker } from "../components/ui/ThemedDateTimePicker";
 
 type TimeKey = "dailyReminderTime" | "streakReminderTime" | "weighInTime";
 type Section = "workout" | "progress" | "rest" | "weighin";
@@ -263,7 +264,7 @@ export default function NotificationSettingsScreen() {
         </View>
       </ScrollView>
 
-      {timePicker && <DateTimePicker value={timePicker} mode="time" onChange={onTimePicked} />}
+      {timePicker && <ThemedDateTimePicker value={timePicker} mode="time" onChange={onTimePicked} />}
     </SettingsFrame>
   );
 }

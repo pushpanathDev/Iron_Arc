@@ -194,7 +194,7 @@ function DefaultRepsChip({ current, onUse }: { current: number | null; onUse: (r
             backgroundColor: pressed ? colors.surfaceContainerHigh : applied ? colors.accentSubtle : "transparent",
           })}
         >
-          <MaterialIcons name={defaultReps != null ? "bolt" : "add"} size={size.iconXs} color={tint} />
+          <MaterialIcons name={defaultReps != null ? "flash-on" : "add"} size={size.iconXs} color={tint} />
           <Text style={[typography.labelMd, { color: applied ? colors.accent : colors.textSecondary }]}>
             {defaultReps != null ? `${defaultReps} reps` : "Default reps"}
           </Text>

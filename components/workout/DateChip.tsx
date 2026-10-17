@@ -2,20 +2,12 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { Pressable, Text } from "react-native";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, typography } from "../../theme/tokens";
-import { formatDate, parseLocalDate } from "../../utils/dates";
-
-const MINUTE_MS = 60_000;
+import { dayLabel, formatDate } from "../../utils/dates";
 
 export function DateChip({ date, onPress }: { date: string | null; onPress: () => void }) {
   const { colors } = useTheme();
   const today = formatDate(new Date());
-  const yesterday = formatDate(new Date(Date.now() - 24 * 60 * MINUTE_MS));
-  const label =
-    !date || date === today
-      ? "Today"
-      : date === yesterday
-        ? "Yesterday"
-        : parseLocalDate(date).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  const label = dayLabel(date ?? today, today);
   return (
     <Pressable
       onPress={onPress}

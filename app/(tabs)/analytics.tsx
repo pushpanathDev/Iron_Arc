@@ -1,7 +1,7 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
-import { RefreshControl, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { ActivityChart } from "../../components/analytics/ActivityChart";
 import { BestLiftsCard } from "../../components/analytics/BestLiftsCard";
 import { HeadlineCard } from "../../components/analytics/HeadlineCard";
@@ -25,9 +25,9 @@ import { exerciseIndexFor, prEventsFor } from "../../utils/exerciseHistory";
 import { perfStart } from "../../utils/perf";
 import { toKg, weightLabel, weightStep } from "../../utils/unitConversion";
 import { formatDate, parseLocalDate } from "../../utils/dates";
-import { isArmSubgroup, type ArmSubgroup } from "../../data/armSubgroups";
-import { useCustomExercises } from "../../hooks/useExercises";
+import { useCustomArms } from "../../hooks/useExercises";
 import type { MaterialIconName } from "../../components/ui/iconName";
+import { usePullToRefresh } from "../../hooks/usePullToRefresh";
 
 const NO_WORKOUTS: never[] = [];
 
@@ -52,14 +52,9 @@ export default function Analytics() {
   const todayKey = formatDate(new Date());
 
   const [period, setPeriod] = useState<AnalyticsPeriod>("week");
-  const [refreshing, setRefreshing] = useState(false);
 
   // Your own arm exercises are saved under their tile (Biceps, Triceps, Forearms); Analytics splits Arms by it.
-  const customs = useCustomExercises().data;
-  const customArms = useMemo(
-    () => new Map((customs ?? []).filter((c) => isArmSubgroup(c.category)).map((c) => [c.name.trim().toLowerCase(), c.category as ArmSubgroup])),
-    [customs],
-  );
+  const customArms = useCustomArms();
   const stats = useMemo(() => analyzePeriod(workouts, period, todayKey, customArms), [workouts, period, todayKey, customArms]);
   const lifts = useMemo(() => bestLifts(exerciseIndexFor(workouts).index, stats.start, stats.end), [workouts, stats.start, stats.end]);
   const records = useMemo(() => prsInRange(prEventsFor(workouts), stats.start, stats.end), [workouts, stats.start, stats.end]);
@@ -68,14 +63,7 @@ export default function Analytics() {
   const groupExercises = useMemo(() => exercisesByCategory(workouts, stats.start, stats.end, customArms), [workouts, stats.start, stats.end, customArms]);
   const headline = useMemo(() => headlineFor(workouts, period, stats, records, todayKey, PHRASE[period], unit), [workouts, period, stats, records, todayKey, unit]);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await query.refetch();
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  const refreshControl = usePullToRefresh(() => query.refetch());
 
   const phrase = PHRASE[period];
   const goal = effectiveWeeklyGoal(profile);
@@ -117,7 +105,7 @@ export default function Analytics() {
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: spacing.xxl, gap: spacing.md }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} progressBackgroundColor={colors.card} />}
+        refreshControl={refreshControl}
       >
         {query.isLoading && workouts.length === 0 ? (
           <AnalyticsSkeleton />

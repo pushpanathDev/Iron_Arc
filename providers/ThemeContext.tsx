@@ -7,6 +7,7 @@ import React, {
   useState,
 } from "react";
 import { useColorScheme } from "react-native";
+import { DEFAULT_THEME, isThemeKey, type ThemeKey } from "../theme/themes";
 
 export type ThemePreference = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
@@ -15,23 +16,23 @@ interface ThemeContextValue {
   preference: ThemePreference;
   resolved: ResolvedTheme;
   setPreference: (pref: ThemePreference) => Promise<void>;
-  /** Development builds only: an accent palette to try (theme/accentPreviews). */
-  accentPreview: string;
-  setAccentPreview: (key: string) => void;
+  /** The colour theme picked in Profile (theme/themes), saved on this device. */
+  theme: ThemeKey;
+  setTheme: (key: ThemeKey) => void;
 }
 
 const STORAGE_KEY = "@theme_preference";
-const ACCENT_PREVIEW_KEY = "@accent_preview";
+const COLOR_THEME_KEY = "@color_theme";
 
-/** While true the app always renders dark and Profile hides the theme picker. */
+/** While true the app always renders dark and Profile offers no light/dark choice. */
 export const FORCE_DARK = true;
 
 const ThemeContext = createContext<ThemeContextValue>({
   preference: "system",
   resolved: "dark",
   setPreference: async () => {},
-  accentPreview: "mint",
-  setAccentPreview: () => {},
+  theme: DEFAULT_THEME,
+  setTheme: () => {},
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
@@ -52,14 +53,14 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.setItem(STORAGE_KEY, pref);
   }, []);
 
-  const [accentPreview, setAccentPreviewState] = useState("mint");
+  const [theme, setThemeState] = useState<ThemeKey>(DEFAULT_THEME);
   useEffect(() => {
-    if (!__DEV__) return;
-    void AsyncStorage.getItem(ACCENT_PREVIEW_KEY).then((k) => k && setAccentPreviewState(k));
+    // A theme that no longer exists falls back to the default.
+    void AsyncStorage.getItem(COLOR_THEME_KEY).then((k) => isThemeKey(k) && setThemeState(k));
   }, []);
-  const setAccentPreview = useCallback((key: string) => {
-    setAccentPreviewState(key);
-    void AsyncStorage.setItem(ACCENT_PREVIEW_KEY, key);
+  const setTheme = useCallback((key: ThemeKey) => {
+    setThemeState(key);
+    void AsyncStorage.setItem(COLOR_THEME_KEY, key);
   }, []);
 
   // Dark-only until a light palette is designed. The stored preference and
@@ -73,7 +74,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       : preference;
 
   return (
-    <ThemeContext.Provider value={{ preference, resolved, setPreference, accentPreview: __DEV__ ? accentPreview : "mint", setAccentPreview }}>
+    <ThemeContext.Provider value={{ preference, resolved, setPreference, theme, setTheme }}>
       {children}
     </ThemeContext.Provider>
   );

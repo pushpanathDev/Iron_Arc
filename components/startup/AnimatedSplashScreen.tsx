@@ -26,7 +26,7 @@ interface AnimatedSplashScreenProps {
   isAppReady: boolean;
 }
 
-const MIN_VISIBLE_MS = 1200;
+const MIN_VISIBLE_MS = 2000;
 /** Opens the app anyway if startup stalls. */
 const MAX_VISIBLE_MS = 15000;
 
@@ -87,7 +87,7 @@ export function AnimatedSplashScreen({
     textTranslateY.value = withDelay(300, withSpring(0, { damping: 16, stiffness: 120 }));
     pulseScale.value = withDelay(700, withSequence(withTiming(1.03, { duration: 250 }), withTiming(1, { duration: 250 })));
     particlesOpacity.value = withDelay(200, withTiming(1, { duration: 600 }));
-    particlesDrift.value = withDelay(200, withTiming(-16, { duration: 1200, easing: Easing.out(Easing.quad) }));
+    particlesDrift.value = withDelay(200, withTiming(-16, { duration: MIN_VISIBLE_MS, easing: Easing.out(Easing.quad) }));
     creditsOpacity.value = withDelay(500, withTiming(1, { duration: 400, easing: Easing.out(Easing.cubic) }));
     // Shared values are stable, so this still runs once.
   }, [backgroundOpacity, creditsOpacity, logoOpacity, logoScale, particlesDrift, particlesOpacity, pulseScale, textOpacity, textTranslateY]);

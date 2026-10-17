@@ -4,7 +4,7 @@ import { Pressable, Text, View } from "react-native";
 import { displayCategory } from "../../hooks/workoutDraft";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, typography } from "../../theme/tokens";
-import { MAIN_GROUPS, WEEKLY_SETS_RANGE, type MuscleWeek } from "../../utils/analytics";
+import { groupOrder, WEEKLY_SETS_RANGE, type MuscleWeek } from "../../utils/analytics";
 import type { BodyMapGroup } from "../muscle/musclePaths";
 import { BodyMap, BodyMapLegend, muscleTone, type GroupState } from "./BodyMap";
 
@@ -31,7 +31,7 @@ const COLUMNS = 3;
  */
 export function MuscleBalance({ rows, average, others = [], exercises, onOpenExercise }: MuscleBalanceProps) {
   const { colors } = useTheme();
-  const ordered = [...rows].sort((a, b) => order(a.category) - order(b.category));
+  const ordered = [...rows].sort((a, b) => groupOrder(a.category) - groupOrder(b.category));
   const [open, setOpen] = useState<string | null>(null);
   const list = open ? (exercises.get(open) ?? []) : [];
   const valueOf = (r: MuscleWeek) => (average ? r.perWeek : r.sets);
@@ -137,11 +137,6 @@ export function MuscleBalance({ rows, average, others = [], exercises, onOpenExe
     </View>
   );
 }
-
-const order = (c: string) => {
-  const i = (MAIN_GROUPS as readonly string[]).indexOf(c);
-  return i < 0 ? MAIN_GROUPS.length : i;
-};
 
 function sinceText(days: number | null) {
   if (days == null) return "Not trained yet";

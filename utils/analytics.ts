@@ -81,6 +81,12 @@ export interface PeriodStats {
  */
 export const MAIN_GROUPS = ["Chest", "Back", "Shoulders", "Biceps", "Triceps", "Forearms", "Legs", "Abs"] as const;
 
+/** Sort position of a group: the main groups in their order, any other group after them. */
+export function groupOrder(category: string): number {
+  const i = (MAIN_GROUPS as readonly string[]).indexOf(category);
+  return i < 0 ? MAIN_GROUPS.length : i;
+}
+
 /** Arm muscles of the user's own exercises, by lower-case name (they're saved under their tile). */
 export type CustomArms = Map<string, ArmSubgroup>;
 
@@ -248,18 +254,14 @@ export function analyzePeriod(workouts: Workout[], period: AnalyticsPeriod, toda
   }
 
   // Muscle balance: the main groups always (0% shows a gap), others only when trained.
-  const order = (c: string) => {
-    const i = (MAIN_GROUPS as readonly string[]).indexOf(c);
-    return i < 0 ? MAIN_GROUPS.length : i;
-  };
   const categories = new Set<string>([...MAIN_GROUPS, ...perCategory.keys()]);
   const balance: BalanceRow[] = [...categories]
     .map((category) => {
       const n = perCategory.get(category) ?? 0;
       return { category, sets: n, share: sets > 0 ? Math.round((n / sets) * 100) : 0 };
     })
-    .filter((r) => r.sets > 0 || order(r.category) < MAIN_GROUPS.length)
-    .sort((a, b) => b.sets - a.sets || order(a.category) - order(b.category));
+    .filter((r) => r.sets > 0 || groupOrder(r.category) < MAIN_GROUPS.length)
+    .sort((a, b) => b.sets - a.sets || groupOrder(a.category) - groupOrder(b.category));
 
   let leastTrained: PeriodStats["leastTrained"] = null;
   if (sessions >= BALANCE_MIN_SESSIONS && sets >= BALANCE_MIN_SETS) {

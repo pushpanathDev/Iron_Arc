@@ -11,7 +11,8 @@ import { Button } from "../ui/Button";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { Sheet } from "../ui/Sheet";
 import { TextField } from "../ui/TextField";
-import { planLength } from "../../utils/planCalendar";
+import { dayAndDate } from "../../utils/dates";
+import { nextWeekStartsOn, planLength, readyForNextWeek } from "../../utils/planCalendar";
 import { StartNextWeek } from "./StartNextWeek";
 
 const NAME_MAX = 60;
@@ -35,6 +36,8 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
   const [mode, setMode] = useState<"rename" | "recalibrate" | "delete" | null>(null);
   const [name, setName] = useState("");
   const hasNextWeek = !!plan && (plan.weekNumber || 1) < planLength(plan.planData);
+  // The next week starts on the Monday after this one (development builds can start it early to test).
+  const canStartNextWeek = !!plan && hasNextWeek && (readyForNextWeek(plan) || __DEV__);
 
   const choose = (m: "rename" | "recalibrate" | "delete") => {
     if (!plan) return;
@@ -54,7 +57,7 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
       <Sheet visible={!!plan} onClose={onClose} title={plan?.name ?? ""}>
         <SettingsGroup>
           <SettingsRow icon="edit" label="Rename" kind="action" onPress={() => choose("rename")} />
-          {hasNextWeek ? (
+          {canStartNextWeek ? (
             <SettingsRow
               icon="update"
               label="Start next week"
@@ -62,6 +65,8 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
               kind="action"
               onPress={() => choose("recalibrate")}
             />
+          ) : hasNextWeek && plan ? (
+            <SettingsRow icon="update" label={`Week ${(plan.weekNumber || 1) + 1} starts ${dayAndDate(nextWeekStartsOn(plan))}`} detail="The coach sets it up from this week's log" kind="action" disabled />
           ) : null}
           {plan && !plan.isActive ? (
             <SettingsRow
@@ -71,13 +76,7 @@ export function PlanActions({ plan, onClose, leaveOnDelete }: PlanActionsProps) 
               kind="action"
               busy={activate.isPending}
               onPress={() =>
-                activate.mutate(plan.id, {
-                  onSuccess: () => {
-                    showToast({ type: "success", message: `${plan.name} is now active` });
-                    onClose();
-                  },
-                  onError: (e) => showToast({ type: "error", message: "Couldn't make it active", subtitle: aiErrorMessage(e) }),
-                })
+                activate.mutate(plan, { onSuccess: onClose })
               }
             />
           ) : null}

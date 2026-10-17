@@ -73,6 +73,3 @@ export function SkeletonBlock({ width = "100%", height = 16, radius = "md", styl
   );
 }
 
-/** @deprecated use SkeletonBlock */
-export const Skeleton = SkeletonBlock;
-export type SkeletonProps = SkeletonBlockProps;

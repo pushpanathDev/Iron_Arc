@@ -5,6 +5,7 @@ import type { StreakSummary, WeekSummary, WeekVolume } from "../../hooks/useWork
 import { useTheme } from "../../theme/theme";
 import { alpha, radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import { displayWeight, weightLabel } from "../../utils/unitConversion";
+import { GoalMetTick } from "./GoalMetTick";
 import { useCountUp } from "./homeShared";
 
 const WEEK_LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
@@ -36,8 +37,8 @@ export function WeekCard({ week, volume, unit }: { week: WeekSummary; volume: We
             trackColor={colors.surfaceContainerHighest}
             accessibilityLabel={`${daysTrained} of ${goal} training days this week${met ? ", goal met" : ""}`}
           >
-            {/* Always shown; lights up once the goal is met. */}
-            <MaterialIcons name="check" size={size.iconXs} color={met ? colors.accent : colors.textSecondary} />
+            {/* Always shown; becomes a glossy badge once the goal is met. */}
+            {met ? <GoalMetTick /> : <MaterialIcons name="check" size={size.iconXs} color={colors.textSecondary} />}
           </ProgressRing>
         )}
       </View>

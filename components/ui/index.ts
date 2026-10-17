@@ -8,7 +8,7 @@ export type { IconName } from "./iconName";
 export { OfflineState, type OfflineStateProps } from "./OfflineState";
 export { ProgressRing, type ProgressRingProps } from "./ProgressRing";
 export { SectionHeader, type SectionHeaderProps } from "./SectionHeader";
-export { Skeleton, SkeletonBlock, type SkeletonBlockProps, type SkeletonProps } from "./Skeleton";
+export { SkeletonBlock, type SkeletonBlockProps } from "./Skeleton";
 export { StatTile, type StatTileProps, type StatTone } from "./StatTile";
 export { TextField, type TextFieldProps } from "./TextField";
 export { GoogleLogo } from "./GoogleLogo";

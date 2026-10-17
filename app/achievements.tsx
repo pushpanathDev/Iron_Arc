@@ -4,9 +4,8 @@
  * them, shows how far along each locked badge is, and opens the badge sheet.
  */
 import { MaterialIcons } from "@expo/vector-icons";
-import { router } from "expo-router";
 import { memo, useMemo, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { BadgeSheet } from "../components/achievements/BadgeSheet";
@@ -21,6 +20,8 @@ import type { Achievement } from "../services/api";
 import { useTheme } from "../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../theme/tokens";
 import type { WeightUnit } from "../utils/unitConversion";
+import { BackButton } from "../components/ui/IconButton";
+import { usePullToRefresh } from "../hooks/usePullToRefresh";
 
 const NO_BADGES: Achievement[] = [];
 
@@ -33,7 +34,6 @@ export default function AchievementsScreen() {
 
   const [filter, setFilter] = useState<string | null>(null);
   const [open, setOpen] = useState<Achievement | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
 
   // Known categories in order, then anything new the server adds.
   const categories = useMemo(() => {
@@ -49,27 +49,13 @@ export default function AchievementsScreen() {
   const unlocked = badges.filter((b) => b.unlockedAt).length;
   const pct = badges.length ? Math.round((unlocked / badges.length) * 100) : 0;
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await refetch();
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  const refreshControl = usePullToRefresh(() => refetch());
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
       {/* Header */}
       <View style={{ height: size.appBar, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.xs, paddingRight: spacing.screen }}>
-        <Pressable
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          style={({ pressed }) => ({ width: size.control, height: size.control, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.surfaceContainerHigh : "transparent" })}
-        >
-          <MaterialIcons name="arrow-back" size={size.iconLg} color={colors.text} />
-        </Pressable>
+        <BackButton />
         <Text style={[typography.headlineMd, { flex: 1, color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]} accessibilityRole="header">
           Achievements
         </Text>
@@ -109,7 +95,7 @@ export default function AchievementsScreen() {
       ) : (
         <ScrollView
           contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: insets.bottom + spacing.xxl, gap: spacing.xl }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} progressBackgroundColor={colors.card} />}
+          refreshControl={refreshControl}
         >
           {/* Overall progress */}
           <Reveal index={0} style={{ gap: spacing.sm }}>

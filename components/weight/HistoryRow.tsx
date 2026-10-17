@@ -9,6 +9,7 @@ import { radius, size, spacing, typography } from "../../theme/tokens";
 import { formatValue, toDisplay } from "../../utils/bodyWeightRules";
 import { weightLabel, type WeightUnit } from "../../utils/unitConversion";
 import { dayLabel, timeOf } from "../../utils/dates";
+import { SwipeDeleteAction } from "../ui/SwipeDeleteAction";
 
 export const HistoryRow = memo(function HistoryRow({
   item,
@@ -36,12 +37,7 @@ export const HistoryRow = memo(function HistoryRow({
       rightThreshold={size.control}
       overshootRight={false}
       onSwipeableOpen={() => onDelete(item)}
-      renderRightActions={() => (
-        <View style={{ width: size.iconBadge + spacing.xl, marginLeft: spacing.sm, borderRadius: radius.lg, alignItems: "center", justifyContent: "center", gap: spacing.xxs, backgroundColor: colors.dangerSubtle }}>
-          <MaterialIcons name="delete-outline" size={size.iconLg} color={colors.danger} />
-          <Text style={[typography.labelMd, { color: colors.danger }]}>Delete</Text>
-        </View>
-      )}
+      renderRightActions={() => <SwipeDeleteAction />}
     >
       <Pressable
         onPress={() => onEdit(item)}

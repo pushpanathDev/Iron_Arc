@@ -5,7 +5,7 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { GeneratingOverlay } from "../components/plans/GeneratingOverlay";
@@ -26,6 +26,8 @@ import { radius, size, spacing, tracking, typography } from "../theme/tokens";
 import { planSummary } from "../utils/planData";
 import { DAY_MS } from "../utils/dates";
 import type { MaterialIconName } from "../components/ui/iconName";
+import { BackButton } from "../components/ui/IconButton";
+import { usePullToRefresh } from "../hooks/usePullToRefresh";
 
 
 /** "today", "yesterday", "3 days ago", "12 Sep". */
@@ -53,7 +55,6 @@ export default function AIPlanScreen() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const [menuFor, setMenuFor] = useState<Plan | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
 
   const plans = useMemo(() => [...(data ?? [])].sort((a, b) => Number(b.isActive) - Number(a.isActive) || b.updatedAt.localeCompare(a.updatedAt)), [data]);
   const active = plans.find((p) => p.isActive) ?? null;
@@ -84,27 +85,13 @@ export default function AIPlanScreen() {
     });
   };
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await refetch();
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  const refreshControl = usePullToRefresh(() => refetch());
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
       {/* Header */}
       <View style={{ height: size.appBar, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.xs, paddingRight: spacing.screen }}>
-        <Pressable
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          style={({ pressed }) => ({ width: size.control, height: size.control, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.surfaceContainerHigh : "transparent" })}
-        >
-          <MaterialIcons name="arrow-back" size={size.iconLg} color={colors.text} />
-        </Pressable>
+        <BackButton />
         <Text style={[typography.headlineMd, { flex: 1, color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]} accessibilityRole="header">
           AI plans
         </Text>
@@ -124,7 +111,7 @@ export default function AIPlanScreen() {
       ) : (
         <ScrollView
           contentContainerStyle={{ paddingHorizontal: spacing.screen, paddingBottom: spacing.xxl, gap: spacing.lg }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} progressBackgroundColor={colors.card} />}
+          refreshControl={refreshControl}
         >
           {isError && plans.length === 0 ? (
             <EmptyCard icon="cloud-off" title="Couldn't load your plans" body="Check your connection and pull down to try again." />
@@ -149,13 +136,8 @@ export default function AIPlanScreen() {
                   key={p.id}
                   plan={p}
                   onMenu={() => setMenuFor(p)}
-                  activating={activate.isPending && activate.variables === p.id}
-                  onActivate={() =>
-                    activate.mutate(p.id, {
-                      onSuccess: () => showToast({ type: "success", message: `${p.name} is now active` }),
-                      onError: (e) => showToast({ type: "error", message: "Couldn't make it active", subtitle: aiErrorMessage(e) }),
-                    })
-                  }
+                  activating={activate.isPending && activate.variables?.id === p.id}
+                  onActivate={() => activate.mutate(p)}
                 />
               ))}
             </Reveal>

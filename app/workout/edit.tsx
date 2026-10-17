@@ -1,5 +1,5 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import type { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import type { NavigationAction } from "@react-navigation/native";
 import { useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams, useNavigation } from "expo-router";
@@ -22,7 +22,9 @@ import { scheduleWorkoutDelete, UNDO_WINDOW_MS, undoWorkoutDelete } from "../../
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import { displayWeight, toKg, weightLabel, weightStep } from "../../utils/unitConversion";
-import { formatDate, parseLocalDate, FIRST_DAY_OF_WEEK, dayLabel } from "../../utils/dates";
+import { formatDate, parseLocalDate, FIRST_DAY_OF_WEEK } from "../../utils/dates";
+import { ThemedDateTimePicker } from "../../components/ui/ThemedDateTimePicker";
+import { DateChip } from "../../components/workout/DateChip";
 
 const MAX_WEIGHT = 9999;
 const MAX_REPS = 999;
@@ -151,8 +153,6 @@ export default function EditWorkout() {
     leave();
   };
 
-  const todayKey = formatDate(new Date());
-
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
       {/* Header */}
@@ -168,28 +168,7 @@ export default function EditWorkout() {
         <Text style={[typography.headlineSm, { flex: 1, color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]} accessibilityRole="header">
           Edit workout
         </Text>
-        {date && (
-          <Pressable
-            onPress={() => setDateOpen(true)}
-            accessibilityRole="button"
-            accessibilityLabel={`Workout date: ${dayLabel(date, todayKey)}`}
-            accessibilityHint="Change the date (past dates allowed)"
-            style={({ pressed }) => ({
-              minHeight: size.control,
-              flexDirection: "row",
-              alignItems: "center",
-              gap: spacing.xxs,
-              paddingLeft: spacing.md,
-              paddingRight: spacing.sm,
-              marginRight: spacing.sm,
-              borderRadius: radius.lg,
-              backgroundColor: pressed ? colors.surfaceContainerHighest : colors.surfaceContainerHigh,
-            })}
-          >
-            <Text style={[typography.labelLg, { color: colors.text }]}>{dayLabel(date, todayKey)}</Text>
-            <MaterialIcons name="arrow-drop-down" size={size.iconLg} color={colors.textSecondary} />
-          </Pressable>
-        )}
+        {date && <DateChip date={date} onPress={() => setDateOpen(true)} />}
       </View>
 
       {!workout || !loaded ? (
@@ -277,7 +256,7 @@ export default function EditWorkout() {
       )}
 
       {dateOpen && date && (
-        <DateTimePicker
+        <ThemedDateTimePicker
           value={parseLocalDate(date)}
           mode="date"
           firstDayOfWeek={FIRST_DAY_OF_WEEK}

@@ -133,6 +133,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 
   const setSimulation = useCallback(
     (s: ServerSimulation) => {
+      // Development builds only; release bundles drop the rest, key included.
+      if (!__DEV__) return;
       simulationRef.current = s;
       setSimulationState(s);
       AsyncStorage.setItem(SIMULATION_KEY, s).catch(() => {});

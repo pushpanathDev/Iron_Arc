@@ -5,6 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, tracking, typography } from "../../theme/tokens";
 import { formatDate } from "../../utils/dates";
+import { IconButton } from "../ui/IconButton";
 
 const WEEK_LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
 const CELL = size.control - spacing.sm;
@@ -54,8 +55,8 @@ export const MonthCalendar = memo(function MonthCalendar({ month, onPrev, onNext
           {monthName} <Text style={{ color: colors.textSecondary }}>{year}</Text>
         </Text>
         <View style={{ flexDirection: "row" }}>
-          <NavButton icon="chevron-left" label="Previous month" onPress={onPrev} />
-          <NavButton icon="chevron-right" label="Next month" onPress={onNext} disabled={isCurrentMonth} />
+          <IconButton strong icon="chevron-left" label="Previous month" onPress={onPrev} />
+          <IconButton strong icon="chevron-right" label="Next month" onPress={onNext} disabled={isCurrentMonth} />
         </View>
       </View>
 
@@ -101,29 +102,6 @@ export const MonthCalendar = memo(function MonthCalendar({ month, onPrev, onNext
     </View>
   );
 });
-
-function NavButton({ icon, label, onPress, disabled }: { icon: "chevron-left" | "chevron-right"; label: string; onPress: () => void; disabled?: boolean }) {
-  const { colors } = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled }}
-      style={({ pressed }) => ({
-        width: size.control,
-        height: size.control,
-        borderRadius: radius.full,
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: pressed ? colors.surfaceContainerHigh : "transparent",
-      })}
-    >
-      <MaterialIcons name={icon} size={size.iconLg} color={disabled ? colors.textMuted : colors.text} />
-    </Pressable>
-  );
-}
 
 const DayCell = memo(function DayCell({
   dateKey,

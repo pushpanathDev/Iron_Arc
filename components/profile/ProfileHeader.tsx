@@ -7,6 +7,7 @@ import { radius, size, spacing, tracking, typography } from "../../theme/tokens"
 import { Button } from "../ui/Button";
 import { TextField } from "../ui/TextField";
 import type { MaterialIconName } from "../ui/iconName";
+import { VerticalDivider } from "../ui/VerticalDivider";
 
 const NAME_MAX = 40;
 /** Gap between the photo and its accent ring. */
@@ -135,9 +136,9 @@ export function ProfileHeader(p: ProfileHeaderProps) {
       {/* The numbers */}
       <View style={{ flexDirection: "row", borderTopWidth: size.divider, borderTopColor: colors.border }}>
         <Stat label="Workouts" value={String(p.workouts)} />
-        <Divider />
+        <VerticalDivider />
         <Stat label="Week streak" value={p.streak == null ? "—" : String(p.streak)} icon={p.streak ? "local-fire-department" : undefined} />
-        <Divider />
+        <VerticalDivider />
         <Stat label="Badges" value={p.badges == null ? "—" : String(p.badges)} icon={p.badges ? "emoji-events" : undefined} onPress={p.onOpenBadges} />
       </View>
     </View>
@@ -177,9 +178,4 @@ function Stat({ label, value, icon, onPress }: { label: string; value: string; i
       {body}
     </View>
   );
-}
-
-function Divider() {
-  const { colors } = useTheme();
-  return <View style={{ width: size.divider, marginVertical: spacing.md, backgroundColor: colors.border }} />;
 }

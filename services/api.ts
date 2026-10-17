@@ -430,6 +430,9 @@ export interface ChatMessage {
   changes?: { dayIndex: number; text: string }[];
   /** "swap" or "nextWeek" for changes made outside the chat. */
   kind?: "swap" | "nextWeek";
+  /** On "nextWeek" entries: the week it moved to, and that week's Monday ("YYYY-MM-DD"). */
+  week?: number;
+  weekStartsOn?: string;
 }
 
 export interface PlanChatResponse {
@@ -471,13 +474,14 @@ export const plansApi = {
       "/api/plans/generate",
       {
         method: "POST",
-        body: criteria ? JSON.stringify({ criteria }) : undefined,
+        // Today on the phone places week 1 on the calendar.
+        body: JSON.stringify({ ...(criteria ? { criteria } : {}), today: formatDate(new Date()) }),
       },
       AI_REQUEST_TIMEOUT_MS,
     ),
 
   recalibrate: (planId: string) =>
-    request<Plan>(`/api/plans/${planId}/recalibrate`, { method: "POST" }, AI_REQUEST_TIMEOUT_MS),
+    request<Plan>(`/api/plans/${planId}/recalibrate`, { method: "POST", body: JSON.stringify({ today: formatDate(new Date()) }) }, AI_REQUEST_TIMEOUT_MS),
 
   substitute: (planId: string, exerciseId: string, reason?: string) =>
     request<Plan>(

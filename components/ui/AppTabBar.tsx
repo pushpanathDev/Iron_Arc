@@ -83,7 +83,7 @@ export function AppTabBar({ state, descriptors, navigation, onLogPress }: AppTab
           overflow: gloss ? "hidden" : undefined,
         })}
       >
-        {gloss && <GlossFill gloss={gloss} accent={colors.accent} />}
+        {gloss && <GlossFill gloss={gloss} />}
         <Ionicons name="add" size={size.iconLg} color={colors.onAccent} />
       </PressableScale>
     </View>

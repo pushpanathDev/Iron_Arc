@@ -5,6 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import { displayCategory } from "../../hooks/workoutDraft";
 import { useTheme } from "../../theme/theme";
 import { radius, size, spacing, typography } from "../../theme/tokens";
+import { IconButton } from "../ui/IconButton";
 
 export type PickerExercise = { name: string; category: string; subgroup?: string };
 
@@ -70,21 +71,7 @@ function ExerciseRowImpl<T extends PickerExercise>({ item, last, recentPR, added
         </Text>
       </View>
       {onMore && (
-        <Pressable
-          onPress={() => onMore(item)}
-          accessibilityRole="button"
-          accessibilityLabel={`Options for ${item.name}`}
-          style={({ pressed }) => ({
-            width: size.control,
-            height: size.control,
-            borderRadius: radius.full,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: pressed ? colors.surfaceContainerHigh : "transparent",
-          })}
-        >
-          <MaterialIcons name="more-vert" size={size.icon} color={colors.textSecondary} />
-        </Pressable>
+        <IconButton icon="more-vert" label={`Options for ${item.name}`} onPress={() => onMore(item)} />
       )}
       <View
         style={{

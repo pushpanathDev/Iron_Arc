@@ -2,8 +2,9 @@
  * Plan day view (AI Plans - Plan Detail Day View mockup): pick a weekday,
  * see its exercises (sets × reps, target or last time, rest), swap any of
  * them, and start that session in the log. Coach chat opens from the header.
- * The plan's current week sits on this calendar week: logged days get a ✓,
- * and starting an earlier day asks which day it was done (planCalendar).
+ * Plan weeks are calendar weeks (planCalendar): logged days get a ✓, starting
+ * an earlier day of this week asks which day it was done, and the next week
+ * can start from the Monday after.
  * Navigate here with /plan-detail?id=<planId>.
  */
 import { MaterialIcons } from "@expo/vector-icons";
@@ -44,8 +45,9 @@ import {
   type PlanExercise,
 } from "../utils/planData";
 import { weightLabel, type WeightUnit } from "../utils/unitConversion";
-import { dateOfWeekday, doneWeekdays, isLighterWeek, planLength, readyForNextWeek, todayWeekday, weekStartedAt } from "../utils/planCalendar";
-import { shortDate } from "../utils/dates";
+import { dateOfWeekday, doneWeekdays, isLighterWeek, mondayOf, nextWeekStartsOn, planLength, readyForNextWeek, todayWeekday, weekStartsOn } from "../utils/planCalendar";
+import { dayAndDate, shortDate } from "../utils/dates";
+import { BackButton, IconButton } from "../components/ui/IconButton";
 
 const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const WEEKDAY_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -98,11 +100,10 @@ function DayView({ plan }: { plan: Plan }) {
   const lighter = isLighterWeek(plan.planData, week);
   // Only the current week sits on this calendar week, so only it shows done days.
   const isCurrentWeek = week === currentWeek;
-  const startedAt = weekStartedAt(plan);
-  const done = useMemo(
-    () => (isCurrentWeek ? doneWeekdays(days, workouts ?? [], new Date(), startedAt) : new Set<number>()),
-    [isCurrentWeek, days, workouts, startedAt],
-  );
+  // The current plan week's Monday; it's "this week" while that's this calendar week.
+  const monday = weekStartsOn(plan);
+  const isThisWeek = isCurrentWeek && monday === mondayOf(new Date());
+  const done = useMemo(() => (isCurrentWeek ? doneWeekdays(days, workouts ?? [], monday) : new Set<number>()), [isCurrentWeek, days, workouts, monday]);
 
   // Start on today; on a rest day, the next training day.
   const [selected, setSelected] = useState(() => {
@@ -135,14 +136,22 @@ function DayView({ plan }: { plan: Plan }) {
   const restNote = days[selected]?.recoveryNote?.trim();
   const training = isTrainingDay(day);
   const exercises = training ? (day.exercises ?? []).filter((e) => e.name) : [];
-  const isToday = selected === todayWeekday() && isCurrentWeek;
+  const isToday = selected === todayWeekday() && isThisWeek;
   const short = training ? planDayShortName(day) : "Rest";
   const dayDone = done.has(selected);
 
   const start = (date?: string) =>
     startSession(exercises.map((e) => ({ name: e.name, sets: e.sets, restSeconds: e.restSeconds })), day?.targetMuscles, date);
   // An earlier day of this week that isn't logged yet may have been done on that day.
-  const onStart = () => (isCurrentWeek && selected < todayWeekday() && !dayDone ? setAskDay(true) : start());
+  // An earlier day of this week that isn't logged yet: ask which day it was done.
+  const askWhichDay = isThisWeek && selected < todayWeekday() && !dayDone;
+  const onStart = () => (askWhichDay ? setAskDay(true) : start());
+  // Any other day that isn't today (a later day, or another week) is logged today: the button says so.
+  const startTitle = isToday
+    ? `Start today's ${short} session`
+    : askWhichDay
+      ? `Start ${WEEKDAY_SHORT[selected]} · ${short}`
+      : `Start ${WEEKDAY_SHORT[selected]} · ${short} (logged today)`;
 
   const swap = () => {
     const ex = swapTarget;
@@ -164,7 +173,7 @@ function DayView({ plan }: { plan: Plan }) {
     <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
       {/* Header */}
       <View style={{ minHeight: size.appBar, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.xs, paddingRight: spacing.sm }}>
-        <IconButton icon="arrow-back" label="Back" onPress={() => router.back()} />
+        <BackButton />
         <View style={{ flex: 1 }}>
           <Text style={[typography.headlineMd, { color: colors.text, textTransform: "uppercase", letterSpacing: tracking.headlineWide }]} numberOfLines={1} accessibilityRole="header">
             {plan.name}
@@ -206,7 +215,7 @@ function DayView({ plan }: { plan: Plan }) {
         {/* Day tabs */}
         <View style={{ flexDirection: "row", gap: spacing.xs }}>
           {days.map((d, i) => (
-            <DayTab key={i} index={i} day={d} selected={i === selected} today={isCurrentWeek && i === todayWeekday()} done={done.has(i)} onPress={() => setSelected(i)} />
+            <DayTab key={i} index={i} day={d} selected={i === selected} today={isThisWeek && i === todayWeekday()} done={done.has(i)} onPress={() => setSelected(i)} />
           ))}
         </View>
 
@@ -245,7 +254,7 @@ function DayView({ plan }: { plan: Plan }) {
       {training && (
         <View style={{ paddingHorizontal: spacing.screen, paddingTop: spacing.sm, paddingBottom: insets.bottom + spacing.sm, backgroundColor: colors.bg }}>
           <Button
-            title={isToday ? `Start today's ${short} session` : `Start ${WEEKDAY_SHORT[selected]} · ${short}`}
+            title={startTitle}
             icon="play"
             onPress={onStart}
             fullWidth
@@ -284,16 +293,16 @@ function DayView({ plan }: { plan: Plan }) {
       <Sheet visible={askDay} onClose={() => setAskDay(false)} title="When did you do this session?" subtitle="It's saved on that day, so the plan and your history match.">
         <View style={{ gap: spacing.sm }}>
           <Button
-            title={`${WEEKDAY_LONG[selected]}, ${shortDate(dateOfWeekday(selected))}`}
+            title={`${WEEKDAY_LONG[selected]}, ${shortDate(dateOfWeekday(selected, monday))}`}
             icon="calendar"
             fullWidth
             onPress={() => {
               setAskDay(false);
-              start(dateOfWeekday(selected));
+              start(dateOfWeekday(selected, monday));
             }}
           />
           <Button
-            title={`Today, ${shortDate(dateOfWeekday(todayWeekday()))}`}
+            title={`Today, ${shortDate(dateOfWeekday(todayWeekday(), monday))}`}
             variant="tonal"
             fullWidth
             onPress={() => {
@@ -312,24 +321,10 @@ function DayView({ plan }: { plan: Plan }) {
 
 // Pieces
 
-function IconButton({ icon, label, onPress }: { icon: "arrow-back" | "forum" | "settings"; label: string; onPress: () => void }) {
-  const { colors } = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => ({ width: size.control, height: size.control, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.surfaceContainerHigh : "transparent" })}
-    >
-      <MaterialIcons name={icon} size={icon === "arrow-back" ? size.iconLg : size.icon} color={icon === "arrow-back" ? colors.text : colors.textSecondary} />
-    </Pressable>
-  );
-}
-
 function BackHeader() {
   return (
     <View style={{ height: size.appBar, flexDirection: "row", alignItems: "center", marginLeft: -spacing.sm }}>
-      <IconButton icon="arrow-back" label="Back" onPress={() => router.back()} />
+      <BackButton />
     </View>
   );
 }
@@ -369,16 +364,24 @@ const DayTab = memo(function DayTab({ index, day, selected, today, done, onPress
   );
 });
 
-/** Under the current week: move on to the next one, or the plan is finished. */
+/**
+ * Under the current week: the next week starts on the Monday after this one,
+ * when the coach sets it up from the whole week; or the plan is finished.
+ * Development builds can start it early for testing (the local backend allows
+ * it with ALLOW_EARLY_NEXT_WEEK).
+ */
 function NextWeekCard({ plan, totalWeeks, onStart }: { plan: Plan; totalWeeks: number; onStart: () => void }) {
   const { colors } = useTheme();
   const current = plan.weekNumber || 1;
   const last = current >= totalWeeks;
-  const newWeek = readyForNextWeek(plan);
-  const title = last ? "Last week of the plan" : newWeek ? "A new week has started" : `Week ${current} of ${totalWeeks}`;
+  const ready = readyForNextWeek(plan);
+  const startsOn = dayAndDate(nextWeekStartsOn(plan));
+  const title = last ? "Last week of the plan" : ready ? "A new week has started" : `Week ${current + 1} starts ${startsOn}`;
   const message = last
     ? "Finish this week, then generate a new plan to keep progressing."
-    : `Move on whenever you're ready. The coach sets up week ${current + 1} from what you logged; days you skipped are fine.`;
+    : ready
+      ? `Start week ${current + 1}: the coach sets it up from what you logged. Days you skipped are fine.`
+      : `The coach sets it up then, from everything you log this week.`;
 
   return (
     <View style={{ gap: spacing.md, padding: spacing.lg, borderRadius: radius.xl, backgroundColor: colors.raised }}>
@@ -389,9 +392,11 @@ function NextWeekCard({ plan, totalWeeks, onStart }: { plan: Plan; totalWeeks: n
       <Text style={[typography.bodyMd, { color: colors.textSecondary }]}>{message}</Text>
       {last ? (
         <Button title="New plan" icon="sparkles" variant="tonal" onPress={() => router.navigate("/ai-plan")} fullWidth />
-      ) : (
-        <Button title={`Start week ${current + 1}`} icon="play-forward" variant={newWeek ? "primary" : "tonal"} onPress={onStart} fullWidth />
-      )}
+      ) : ready ? (
+        <Button title={`Start week ${current + 1}`} icon="play-forward" onPress={onStart} fullWidth />
+      ) : __DEV__ ? (
+        <Button title={`Start week ${current + 1} now (test)`} icon="play-forward" variant="tonal" onPress={onStart} fullWidth />
+      ) : null}
     </View>
   );
 }

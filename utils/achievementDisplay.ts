@@ -17,7 +17,7 @@ const BADGE_ICONS: Record<string, MaterialIconName> = {
   streak_7: "military-tech",
   streak_14: "whatshot",
   streak_30: "workspace-premium",
-  streak_60: "bolt",
+  streak_60: "flash-on",
   streak_100: "emoji-events",
   weekly_4x_once: "calendar-month",
   weekly_4x_4: "event-repeat",
